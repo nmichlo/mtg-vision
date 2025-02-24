@@ -24,7 +24,7 @@ import base64
 from math import ceil
 import cv2
 import numpy as np
-from mtg_vision._old.util import asrt_float
+from mtgvision._old.util import asrt_float
 
 # ========================================================================= #
 # VARS                                                                      #
