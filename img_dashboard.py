@@ -231,7 +231,7 @@ class TensorBoardMatch(tf.keras.callbacks.Callback):
 
         writer = tf.summary.FileWriter(self.log_dir)
 
-        encoder = tf.keras.backend.function([self.model.layers[0].input], [self.encoding_layer.output])
+        encoder = tf.keras.backend.function([self.model.layers[0].input], [self.encoding_layer])
         images = MtgLocalFiles(img_type='small', x_size=self.x_size, y_size=self.x_size)
 
         if self.indices is None:

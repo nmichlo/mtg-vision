@@ -20,19 +20,18 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 
+import tensorflow as tf
 from tensorflow.keras.callbacks import TensorBoard, ReduceLROnPlateau, ModelCheckpoint
 from tensorflow.core.protobuf.config_pb2 import ConfigProto
-import util
-from model_builder_tf import ModelBuilderTf
-import tensorflow as tf
+from tensorflow.keras.models import load_model
 from tensorflow.python import Session
+from model_builder_tf import ModelBuilderTf
+import numpy as np
 import os
+import util
+import time
 from datasets import DATASETS_ROOT, MtgImages, MtgLocalFiles
 from img_dashboard import TensorBoardOutputImages, TensorBoardMatch
-import time
-import keras
-from keras.models import load_model
-
 
 # ========================================================================= #
 # MAIN                                                                      #
@@ -50,39 +49,85 @@ def create_model(x_size, y_size, batch_size):
     # https://www.jeremyjordan.me/convnet-architectures/
     # ================================= #
 
-    b.conv_in(64, (11, 11))
-    b.conv(80, (9, 9))
+    # b.conv_in(64, (11, 11))
+    # b.conv(80, (9, 9))
+    # b.pool()  # (192, 128) -> (96, 64)
+    # b.conv(96, (7, 7))
+    # b.conv(128, (5, 5))
+    # b.pool()  # (96, 64) -> (48, 32)
+    # b.conv(128)
+    # b.conv(192)
+    # b.pool()  # (48, 32) -> (24, 16)
+    # b.conv(192)
+    # b.conv(256)
+    # b.pool()  # (24, 16) -> (12, 8)
+    #
+    # b.conv(10, name='encoded')
+    # encoding_layer = b.last()
+    #
+    # b.grow()  # (12, 8) -> (24, 16)
+    # b.conv(256)
+    # b.conv(192)
+    # b.grow()  # (24, 16) -> (48, 32)
+    # b.conv(192)
+    # b.conv(128)
+    # b.grow()  # (48, 32) -> (96, 64)
+    # b.conv(128)
+    # b.conv(96)
+    # b.conv(80, (5, 5))
+    # b.conv(64, (7, 7))
+    # b.conv(48, (9, 9))
+    #
+    # b.conv_out()
+
+    # ================================= #
+
+    # a = [24, 36, 48, 60, 72,  96, 120]
+    # b = [32, 48, 64, 80, 96, 128, 160]
+
+    def incept(a, A):
+        b.incept(A, a, A, a, A, a)
+
+    # b.conv(32, 5)
+    b.conv(48, 5)
+    b.conv(48, 3)
     b.pool()  # (192, 128) -> (96, 64)
-    b.conv(96, (7, 7))
-    b.conv(128, (5, 5))
+    incept(48, 64)
     b.pool()  # (96, 64) -> (48, 32)
-    b.conv(128)
-    b.conv(192)
+    incept(48, 64)
     b.pool()  # (48, 32) -> (24, 16)
-    b.conv(192)
-    b.conv(256)
+    incept(48, 64)
     b.pool()  # (24, 16) -> (12, 8)
+    incept(60, 80)
+    b.pool()  # (12, 8) -> (6, 4)
+    incept(72, 96)
+    b.pool()  # (6, 4) -> (3, 2)
+    incept(128, 256)
+    b.pool((3, 2))  # (3, 2) -> (1, 1)
 
-    b.conv(10, name='encoded')
-    encoding_layer = b.last()
+    b.conv(960, 1) #, name='encoded')
+    encoding_layer = b.last
 
+    b.grow((3, 2))  # (1, 1) -> (3, 2)
+    b.conv(128, 3)
+    b.grow()  # (3, 2) -> (6, 4)
+    b.conv(96, 3)
+    b.grow()  # (6, 4) -> (12, 8)
+    b.conv(80, 3)
     b.grow()  # (12, 8) -> (24, 16)
-    b.conv(256)
-    b.conv(192)
+    b.conv(64, 3)
     b.grow()  # (24, 16) -> (48, 32)
-    b.conv(192)
-    b.conv(128)
+    b.conv(64, 3)
     b.grow()  # (48, 32) -> (96, 64)
-    b.conv(128)
-    b.conv(96)
-    b.conv(80, (5, 5))
-    b.conv(64, (7, 7))
-    b.conv(48, (9, 9))
+    b.conv(64, 3)
+    b.grow()  # (96, 64) -> (192, 128)
+    b.conv(48, 3)
+    b.conv(48, 5)
 
     b.conv_out()
+
     # ================================= #
     return b.get_model(), encoding_layer
-
 
 # ========================================================================= #
 # MAIN                                                                      #
@@ -93,15 +138,16 @@ def create_model(x_size, y_size, batch_size):
 
 if __name__ == "__main__":
     # CONSTS
-    x_size, y_size = (192, 128), (192//2, 128//2)
+    # x_size, y_size = (192, 128), (192//2, 128//2)
+    x_size, y_size = (192, 128), (192, 128)
     # x_size, y_size = (640, 448), (640, 448)
 
     # VARS
     print('Dataset Root:', DATASETS_ROOT)
 
     opt_runs = os.getenv('RUNS', 512)
-    opt_epochs = os.getenv('EPOCHS', 16)
-    opt_samples = os.getenv('SAMPLES', 2048)
+    opt_epochs = os.getenv('EPOCHS', 32)
+    opt_samples = os.getenv('SAMPLES', 4096)
     opt_batch_size = os.getenv('BATCH_SIZE', 16)
     opt_test_size = os.getenv('TEST_SIZE', 128)
     opt_vis_size = os.getenv('VIS_SIZE', 20)
@@ -109,7 +155,7 @@ if __name__ == "__main__":
     opt_model = os.getenv('MODEL', None)
 
     # CONFIG
-    # os.environ['TF_ENABLE_AUTO_MIXED_PRECISION'] = '1'
+    os.environ['TF_ENABLE_AUTO_MIXED_PRECISION'] = '1'
     config = ConfigProto()
     config.gpu_options.allow_growth = True
     if opt_jit is not None: config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
@@ -131,8 +177,9 @@ if __name__ == "__main__":
             print('Made:')
 
         # COMPILE & LOSS:
-        optimizer = keras.optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, amsgrad=False)
+        optimizer = tf.keras.optimizers.Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, amsgrad=False)
         model.compile(loss='binary_crossentropy', optimizer=optimizer)
+        # model.compile(loss='mse', optimizer=optimizer)
         model.summary()
 
         # DATA:
@@ -142,16 +189,17 @@ if __name__ == "__main__":
         # CALLBACKS:
         log_dir = './cache/tensorboard/{}'.format(time_str)
         callbacks = [
-            TensorBoard(log_dir=log_dir, histogram_freq=0, batch_size=opt_batch_size, write_graph=False, write_grads=False, write_images=False),
-            ReduceLROnPlateau(factor=0.95, patience=8, cooldown=5),
+            TensorBoard(log_dir=log_dir, histogram_freq=0, batch_size=opt_batch_size, write_graph=True, write_grads=False, write_images=False),
+            # ReduceLROnPlateau(factor=0.95, patience=8, cooldown=5),
             TensorBoardOutputImages(x_test=out_x, y_test=out_y, x_orig=out_o, log_dir=log_dir),
-            TensorBoardMatch(encoding_layer, n=opt_vis_size, x_size=x_size, y_size=y_size, log_dir=log_dir)
+            # TensorBoardMatch(encoding_layer, n=opt_vis_size, x_size=x_size, y_size=y_size, log_dir=log_dir)
         ]
 
         # TRAIN:
         for run in range(opt_runs):
             print('\nRUN: {:02d}'.format(run))
             x_train, y_train = dataset.gen_warp_crop_set(opt_samples + opt_test_size, save=False)
+
             model.fit(
                 x_train, y_train,
                 validation_split=opt_test_size/(opt_samples+opt_test_size),

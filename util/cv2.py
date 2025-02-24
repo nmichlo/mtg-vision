@@ -60,7 +60,7 @@ def cv2_quad_flip_upright(quad):
     return quad.reshape(shape)
 
 
-def cv2_poly_exapand(poly, ratio=0.05):
+def cv2_poly_expand(poly, ratio=0.05):
     assert len(poly) > 0
     shape = poly.shape
     poly = poly.reshape((-1, 2))
