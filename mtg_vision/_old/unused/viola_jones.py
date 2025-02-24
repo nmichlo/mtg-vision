@@ -34,10 +34,10 @@
 import os
 import time
 import cv2
-import util
-from datasets import MtgLocalFiles
-from util import GLOBAL_RAN, JsonPickler
-from unused.viola_jones_classifiers import SampleImg, ClassifierCascade
+from mtg_vision._old import util
+from mtg_vision._old.datasets import MtgLocalFiles
+from mtg_vision._old.util import GLOBAL_RAN, JsonPickler
+from mtg_vision._old.unused.viola_jones_classifiers import SampleImg, ClassifierCascade
 
 # ========================================================================= #
 # MAIN                                                                      #

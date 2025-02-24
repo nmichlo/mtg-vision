@@ -26,7 +26,7 @@ from math import ceil
 import random
 from termcolor import cprint
 import util
-from util import default, ApplyChoice, ApplyOrdered, ApplyShuffled, JsonCache, Proxy, asrt_in, asrt
+from util import default, ApplyChoice, ApplyOrdered, ApplyShuffled, JsonCache, Proxy, asrt_in
 import os
 from tqdm import tqdm
 from mtgtools.MtgDB import MtgDB
@@ -49,7 +49,7 @@ class Mutate:
 
     @staticmethod
     def rotate_bounded(img, deg_min=0, deg_max=360):
-        return util.rotate_bounded(img, deg_min + np.random.random()*(deg_max - deg_min))
+        return util.rotate_bounded(img, deg_min + np.random.random() * (deg_max - deg_min))
 
     @staticmethod
     def upsidedown(img):
@@ -97,7 +97,7 @@ class Mutate:
     def tint(img, amount=0.15):
         for i in range(3):
             r = 1 + amount * (2*np.random.random()-1)
-            img[:,:,i] = util.clip(r * img[:,:,i])
+            img[:,:,i] = util.clip(r * img[:, :, i])
         return img
 
     @staticmethod
@@ -260,7 +260,8 @@ class MtgImages(util.LazyList):
         if predownload:
             download = [(u, f) for u, f in resources if not os.path.exists(f)]
             print('PREDOWNLOADING DOWNLOADING: {} of {}'.format(len(download), len(resources)))
-            dirs = [util.init_dir(d) for d in { os.path.dirname(f)  for u, f in download } if not os.path.exists(d)]
+            dirs = [
+                util.init_dir(d) for d in { os.path.dirname(f)  for u, f in download} if not os.path.exists(d)]
             print('MADE DIRECTORIES: {}'.format(len(dirs)))
             prox.downloadThreaded(download)
             super().__init__([util.Lazy(file, util.imread) for uri, file in resources])

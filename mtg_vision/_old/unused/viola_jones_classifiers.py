@@ -21,10 +21,10 @@
 #  SOFTWARE.
 
 from tqdm import tqdm
-from util import GLOBAL_TIMER
+from mtg_vision._old.util import GLOBAL_TIMER
 import numpy as np
 from math import log
-from util.random import GLOBAL_RAN
+from mtg_vision._old.util.random import GLOBAL_RAN
 import os
 import cv2
 

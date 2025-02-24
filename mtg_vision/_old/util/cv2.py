@@ -22,7 +22,7 @@
 
 import numpy as np
 import cv2
-from util import img_uint8
+from mtg_vision._old.util import img_uint8
 
 
 # ============================================================================ #

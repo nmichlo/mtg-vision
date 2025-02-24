@@ -27,7 +27,7 @@ import tensorflow as tf
 from keras.models import load_model
 from tqdm import tqdm
 import util
-from datasets import DATASETS_ROOT, MtgLocalFiles, MtgHandler, MtgImages
+from datasets import MtgLocalFiles, MtgHandler, MtgImages
 import numpy as np
 import cv2 as cv2
 from sklearn.neighbors import NearestNeighbors
@@ -405,7 +405,8 @@ def main():
             # LOADING BAR
             update_loading_bar()
             mode, color = 'Raw Feed', clr_r if S.matcher.null else clr_b
-            inner_bounds = [util.cv2_poly_exapand(b.copy(), -0.125) for b in S.card_bounds]
+            inner_bounds = [
+                util.cv2_poly_exapand(b.copy(), -0.125) for b in S.card_bounds]
 
             # Modes
             if VIEW == 0:

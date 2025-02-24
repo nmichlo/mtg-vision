@@ -21,17 +21,17 @@
 #  SOFTWARE.
 
 import tensorflow as tf
-from tensorflow.keras.callbacks import TensorBoard, ReduceLROnPlateau, ModelCheckpoint
+from tensorflow.keras.callbacks import TensorBoard, ModelCheckpoint
 from tensorflow.core.protobuf.config_pb2 import ConfigProto
 from tensorflow.keras.models import load_model
 from tensorflow.python import Session
 from model_builder_tf import ModelBuilderTf
-import numpy as np
 import os
 import util
 import time
-from datasets import DATASETS_ROOT, MtgImages, MtgLocalFiles
-from img_dashboard import TensorBoardOutputImages, TensorBoardMatch
+from datasets import DATASETS_ROOT, MtgLocalFiles
+from img_dashboard import TensorBoardOutputImages
+
 
 # ========================================================================= #
 # MAIN                                                                      #

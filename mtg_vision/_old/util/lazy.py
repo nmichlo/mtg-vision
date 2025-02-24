@@ -22,7 +22,7 @@
 
 import os
 import random
-import util
+from .. import util
 from .files import init_dir
 
 # ========================================================================= #
