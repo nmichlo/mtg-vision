@@ -24,14 +24,14 @@ import cv2
 import numpy as np
 from math import ceil
 import random
-from termcolor import cprint
-import util
-from util import default, ApplyChoice, ApplyOrdered, ApplyShuffled, JsonCache, Proxy, asrt_in
 import os
 from tqdm import tqdm
-from mtgtools.MtgDB import MtgDB
 import platform
 import re
+
+import mtgvision._old.util as util
+from mtgdata import ScryfallDataset, ScryfallImageType
+from mtgvision._old.util import default, ApplyChoice, ApplyOrdered, ApplyShuffled, JsonCache, asrt_in
 
 
 # ========================================================================= #
@@ -147,81 +147,83 @@ class Dataset(util.Folder):
 # ========================================================================= #
 
 
-class MtgHandler(object):
-    def __init__(self, force_update=False, force_update_scryfall=False, force_update_mtgio=False):
-        dataset = Dataset('mtgtools')
-
-        print(dataset)
-        print(dataset.to('mtg.db'))
-
-        self.db = MtgDB(dataset.to('mtg.db'))
-        if force_update_scryfall or force_update or len(self.db.root.scryfall_sets) <= 0:
-            self.db.scryfall_update()
-        if force_update_mtgio or force_update:
-            self.db.mtgio_update()
-
-        print('Getting UUIDs')
-        with JsonCache('./cache/mtgtools_uuids.json') as data:
-            if 'uuids' not in data or force_update_scryfall or force_update:
-                data['uuids'] = {}
-                for i, card in enumerate(tqdm(self.scryfall_cards, desc='Caching Card UUIDs')):
-                    data['uuids'][card.id] = i
-            self.scryfall_uuids_to_index = data['uuids']
-            print('UUIDS FOUND: {} of total {}'.format(len(self.scryfall_uuids_to_index), len(self.scryfall_cards)))
-        print('Got UUIDs')
-
-    @property
-    def scryfall_sets(self):
-        return self.db.root.scryfall_sets
-
-    @property
-    def mtgio_sets(self):
-        return self.db.root.mtgio_sets
-
-    @property
-    def scryfall_cards(self):
-        return self.db.root.scryfall_cards
-
-    @property
-    def mtgio_cards(self):
-        return self.db.root.mtgio_cards
-
-    def scryfall_card_from_uuid(self, uuid):
-        if uuid in self.scryfall_uuids_to_index:
-            return self.scryfall_cards[self.scryfall_uuids_to_index[uuid]]
-        return None
-
-    IMG_TYPES = ['small', 'normal', 'large', 'png', 'art_crop', 'border_crop']
-
-    def scryfall_cards_paths_uris(self, img_type='small', force=False):
-        asrt_in(img_type, MtgHandler.IMG_TYPES)
-        root = Dataset('mtg').cd(img_type, init=True)
-        with JsonCache('./cache/mtg_uris_{}.json'.format(img_type), refresh=force) as uris:
-            if 'resources' not in uris:
-                resources = []
-                for s in tqdm(self.scryfall_sets, desc='Building Image URI Cache [{}] ({})'.format(img_type, root)):
-                    if s.api_type != 'scryfall':
-                        continue
-                    for card in s:
-                        uri_file = MtgHandler._card_uri_to_file(card, folder=s.code, img_type=img_type)
-                        if uri_file is not None:
-                            resources.append(uri_file)
-                print('URIS FOUND: {} of {}'.format(len(resources), len(self.scryfall_cards)))
-                uris['resources'] = resources
-            return [(u, root.to(f)) for u, f in uris['resources']]
-
-    @staticmethod
-    def _card_uri_to_file(card, folder, img_type):
-        if card.image_uris is None:
-            return None
-        uri = card.image_uris[img_type]
-        if uri is None:
-            return None
-        # filename:
-        ext = os.path.splitext(uri)[1].split('?')[0]
-        name = re.sub('[^-a-z]', '', card.name.lower().replace(" ", "-"))
-        file = os.path.join(folder, '{}__{}__{}__{}{}'.format(card.set, card.id, name, img_type, ext))
-        return uri, file
+# class MtgHandler(object):
+#     def __init__(self, force_update=False, force_update_scryfall=False, force_update_mtgio=False):
+#         from mtgtools.MtgDB import MtgDB
+#
+#         dataset = Dataset('mtgtools')
+#
+#         print(dataset)
+#         print(dataset.to('mtg.db'))
+#
+#         self.db = MtgDB(dataset.to('mtg.db'))
+#         if force_update_scryfall or force_update or len(self.db.root.scryfall_sets) <= 0:
+#             self.db.scryfall_update()
+#         if force_update_mtgio or force_update:
+#             self.db.mtgio_update()
+#
+#         print('Getting UUIDs')
+#         with JsonCache('./cache/mtgtools_uuids.json') as data:
+#             if 'uuids' not in data or force_update_scryfall or force_update:
+#                 data['uuids'] = {}
+#                 for i, card in enumerate(tqdm(self.scryfall_cards, desc='Caching Card UUIDs')):
+#                     data['uuids'][card.id] = i
+#             self.scryfall_uuids_to_index = data['uuids']
+#             print('UUIDS FOUND: {} of total {}'.format(len(self.scryfall_uuids_to_index), len(self.scryfall_cards)))
+#         print('Got UUIDs')
+#
+#     @property
+#     def scryfall_sets(self):
+#         return self.db.root.scryfall_sets
+#
+#     @property
+#     def mtgio_sets(self):
+#         return self.db.root.mtgio_sets
+#
+#     @property
+#     def scryfall_cards(self):
+#         return self.db.root.scryfall_cards
+#
+#     @property
+#     def mtgio_cards(self):
+#         return self.db.root.mtgio_cards
+#
+#     def scryfall_card_from_uuid(self, uuid):
+#         if uuid in self.scryfall_uuids_to_index:
+#             return self.scryfall_cards[self.scryfall_uuids_to_index[uuid]]
+#         return None
+#
+#     IMG_TYPES = ['small', 'normal', 'large', 'png', 'art_crop', 'border_crop']
+#
+#     def scryfall_cards_paths_uris(self, img_type='small', force=False):
+#         asrt_in(img_type, MtgHandler.IMG_TYPES)
+#         root = Dataset('mtg').cd(img_type, init=True)
+#         with JsonCache('./cache/mtg_uris_{}.json'.format(img_type), refresh=force) as uris:
+#             if 'resources' not in uris:
+#                 resources = []
+#                 for s in tqdm(self.scryfall_sets, desc='Building Image URI Cache [{}] ({})'.format(img_type, root)):
+#                     if s.api_type != 'scryfall':
+#                         continue
+#                     for card in s:
+#                         uri_file = MtgHandler._card_uri_to_file(card, folder=s.code, img_type=img_type)
+#                         if uri_file is not None:
+#                             resources.append(uri_file)
+#                 print('URIS FOUND: {} of {}'.format(len(resources), len(self.scryfall_cards)))
+#                 uris['resources'] = resources
+#             return [(u, root.to(f)) for u, f in uris['resources']]
+#
+#     @staticmethod
+#     def _card_uri_to_file(card, folder, img_type):
+#         if card.image_uris is None:
+#             return None
+#         uri = card.image_uris[img_type]
+#         if uri is None:
+#             return None
+#         # filename:
+#         ext = os.path.splitext(uri)[1].split('?')[0]
+#         name = re.sub('[^-a-z]', '', card.name.lower().replace(" ", "-"))
+#         file = os.path.join(folder, '{}__{}__{}__{}{}'.format(card.set, card.id, name, img_type, ext))
+#         return uri, file
 
 
 # ========================================================================= #
@@ -236,11 +238,11 @@ class IlsvrcImages(util.LazyList):
     def __init__(self):
         root = Dataset('ilsvrc').cd('2010')
         if not os.path.isdir(root.path):
-            cprint("MAKE SURE YOU HAVE DOWNLOADED THE ILSVRC 2010 TEST DATASET TO: {}".format(root.path), 'yellow')
-            cprint(" - The images must all be located within: {}".format(root.to('val')), 'yellow')
-            cprint(" - For example: {}".format(root.to('val', 'ILSVRC2010_val_00000001.JPEG')), 'yellow')
-            cprint("The image versions of the ILSVRC Datasets are for educational purposes only, and cannot be redistributed.", 'yellow')
-            cprint("Please visit: www.image-net.org to obtain the download links.", 'yellow')
+            print("MAKE SURE YOU HAVE DOWNLOADED THE ILSVRC 2010 TEST DATASET TO: {}".format(root.path), 'yellow')
+            print(" - The images must all be located within: {}".format(root.to('val')), 'yellow')
+            print(" - For example: {}".format(root.to('val', 'ILSVRC2010_val_00000001.JPEG')), 'yellow')
+            print("The image versions of the ILSVRC Datasets are for educational purposes only, and cannot be redistributed.", 'yellow')
+            print("Please visit: www.image-net.org to obtain the download links.", 'yellow')
         super().__init__([util.Lazy(file, util.imread) for file in util.get_image_paths(root.path, prefixed=True)])
 
 
@@ -251,22 +253,16 @@ class IlsvrcImages(util.LazyList):
 
 class MtgImages(util.LazyList):
 
-    def __init__(self, img_type='normal', predownload=False, handler=None):
-        if handler is None:
-            handler = MtgHandler()
-        resources = handler.scryfall_cards_paths_uris(img_type=img_type) #, force=predownload)
+    def __init__(self, img_type=ScryfallImageType.small, predownload=False, handler=None):
+        self._ds = ScryfallDataset(
+            img_type=img_type,
+            data_root="/Users/nathanmichlo/Desktop/active/mtg/mtg-dataset/mtgdata/data",
+            force_update=False,
+            download_mode='now',
+        )
+        # open PIL.Image.Image
+        super().__init__([util.Lazy(card, lambda x: np.asarray(x.dl_and_open_im()).astype('float32') / 255) for card in self._ds])
 
-        prox = Proxy('cache', default_threads=128, default_attempts=10, logger=tqdm.write)
-        if predownload:
-            download = [(u, f) for u, f in resources if not os.path.exists(f)]
-            print('PREDOWNLOADING DOWNLOADING: {} of {}'.format(len(download), len(resources)))
-            dirs = [
-                util.init_dir(d) for d in { os.path.dirname(f)  for u, f in download} if not os.path.exists(d)]
-            print('MADE DIRECTORIES: {}'.format(len(dirs)))
-            prox.downloadThreaded(download)
-            super().__init__([util.Lazy(file, util.imread) for uri, file in resources])
-        else:
-            super().__init__([util.LazyFile(uri, file, prox.download, util.imread) for uri, file in resources])
 
     _RAN_BG = ApplyShuffled(
         ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
@@ -298,11 +294,14 @@ class MtgImages(util.LazyList):
     @staticmethod
     def make_masked(path_or_img):
         card = util.imread(path_or_img) if (type(path_or_img) == str) else path_or_img
+        print(type(card), card.dtype, card.shape)
+        mask = util.round_rect_mask(card.shape[:2], radius_ratio=0.05)
+        print(type(card), mask.dtype, mask.shape)
         ret = cv2.merge((
             card[:, :, 0],
             card[:, :, 1],
             card[:, :, 2],
-            util.round_rect_mask(card.shape[:2], radius_ratio=0.05)
+            mask,
         ))
         return ret
 
@@ -344,10 +343,12 @@ class MtgImages(util.LazyList):
 # TODO: merge with above
 class MtgLocalFiles(object):
 
-    def __init__(self, img_type='small', x_size=(320, 224), y_size=(204, 144), pregen=False, force=False):
-        self.ds_orig = Dataset('mtg').cd(img_type)
-        self.ds_warp = Dataset('mtg_warp').cd(img_type, '{}_{}'.format(x_size[0], x_size[1]))
-        self.ds_crop = Dataset('mtg_crop').cd(img_type, '{}_{}'.format(y_size[0], y_size[1]))
+    def __init__(self, img_type=ScryfallImageType.small, x_size=(320, 224), y_size=(204, 144), pregen=False, force=False):
+        img_type = ScryfallImageType(img_type)
+
+        self.ds_orig = Dataset('mtg').cd(img_type.value)
+        self.ds_warp = Dataset('mtg_warp').cd(img_type.value, '{}_{}'.format(x_size[0], x_size[1]))
+        self.ds_crop = Dataset('mtg_crop').cd(img_type.value, '{}_{}'.format(y_size[0], y_size[1]))
 
         self.x_size = x_size
         self.y_size = y_size
@@ -438,7 +439,6 @@ class MtgLocalFiles(object):
         return xs, ys, os
 
 
-
 # ========================================================================= #
 # MAIN - TEST                                                               #
 # ========================================================================= #
@@ -446,7 +446,7 @@ class MtgLocalFiles(object):
 
 if __name__ == "__main__":
     orig = MtgImages(img_type='normal')
-    ilsvrc = orig or IlsvrcImages()
+    ilsvrc = IlsvrcImages()
 
     while True:
         o = orig.ran()

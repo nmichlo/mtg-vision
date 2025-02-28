@@ -47,12 +47,8 @@ def asrt_f64(x):
     asrt(type(x) == np.ndarray and x.dtype == np.float64)
     return x
 
-def asrt_f128(x):
-    asrt(type(x) == np.ndarray and x.dtype == np.float128)
-    return x
-
 def asrt_float(x):
-    asrt(type(x) == np.ndarray and x.dtype in [np.float16, np.float32, np.float64, np.float128])
+    asrt(type(x) == np.ndarray and x.dtype in [np.float16, np.float32, np.float64])
     return x
 
 

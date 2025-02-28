@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0" # error
+
+[project]
+name = "mtgvision"
+dynamic = ["version"]  # Version is managed by setuptools_scm
+description = "Realtime MTG detection and recognition."
+readme = "README.md"
+requires-python = ">=3.13"
+license = { file = "LICENSE" }
+authors = [{ name = "Nathan Juraj Michlo", email = "NathanJMichlo@gmail.com" }]
+urls = { Homepage = "https://github.com/nmichlo/mtg-vision" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Science/Research"
+]
+
+dependencies = [
+    "doorway[extras]~=0.6.0",
+    "mtgdata[convert]~=0.2.0",
+    "ultralytics~=8.3.80",
+    "wandb",
+]
+
+
+# extra dependencies
+[project.optional-dependencies]
+
+extra = []

@@ -40,7 +40,7 @@ FLOAT_TYPE = np.float32
 
 
 def imwrite(path, img):
-    if img.dtype in [np.float16, np.float32, np.float64, np.float128]:
+    if img.dtype in [np.float16, np.float32, np.float64]:
         img = (img * 255).astype(np.uint8)
     cv2.imwrite(path, img)
 
@@ -79,7 +79,7 @@ def fxx(*items, float_type=FLOAT_TYPE):
     elif len(items) == 1:
         item = items[0]
         if type(item) == np.ndarray:
-            if item.dtype in [np.float16, np.float32, np.float64, np.float128]:
+            if item.dtype in [np.float16, np.float32, np.float64]:
                 return item.astype(float_type)
             elif item.dtype in [np.uint8, np.int32]:
                 return np.divide(item, 255.0, dtype=float_type) # NORMALISE
@@ -93,7 +93,7 @@ def fxx(*items, float_type=FLOAT_TYPE):
         return np.array(items, dtype=float_type)
 
 def image2base64(img, type='png'):
-    if img.dtype in [np.float16, np.float32, np.float64, np.float128]:
+    if img.dtype in [np.float16, np.float32, np.float64]:
         img = img * 255
     return base64.b64encode(cv2.imencode('.{}'.format(type), img.astype(np.uint8))[1])
 
@@ -103,7 +103,7 @@ def image2base64(img, type='png'):
 
 
 def clip(img: np.ndarray):
-    if img.dtype in [np.float16, np.float32, np.float64, np.float128]:
+    if img.dtype in [np.float16, np.float32, np.float64]:
         return np.clip(img, 0, 1)
     elif img.dtype in [np.uint8, np.int32]:
         return np.clip(img, 0, 255)
@@ -114,7 +114,7 @@ def clip(img: np.ndarray):
 def img_uint8(img):
     if img.dtype in [np.uint8]:
         return img
-    elif img.dtype in [np.float16, np.float32, np.float64, np.float128]:
+    elif img.dtype in [np.float16, np.float32, np.float64]:
         return np.clip(img * 255, 0, 255).astype(np.uint8)
     elif img.dtype in [np.int32]:
         return np.clip(img, 0, 255).astype(np.uint8)
@@ -124,7 +124,7 @@ def img_uint8(img):
 def img_float32(img):
     if img.dtype in [np.float32]:
         return img
-    elif img.dtype in [np.float16, np.float64, np.float128]:
+    elif img.dtype in [np.float16, np.float64]:
         return np.clip(img.astype(np.float32), 0, 1)
     elif img.dtype in [np.uint8, np.int32]:
         return np.divide(np.clip(img, 0, 255), 255.0, dtype=np.float32)

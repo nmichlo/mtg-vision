@@ -20,9 +20,11 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 
-from datasets import MtgLocalFiles, MtgImages, IlsvrcImages, MtgHandler
-from mtg_detect import CardMatcher
-from util import Proxy
+from datasets import MtgLocalFiles, MtgImages, IlsvrcImages
+
+# from mtg_detect import CardMatcher
+# from util import Proxy
+
 import tensorflow as tf
 
 if __name__ == "__main__":
@@ -40,9 +42,9 @@ if __name__ == "__main__":
 
     # MTG DETECTOR
 
-    with tf.Session() as sess:
-        matcher = CardMatcher('weights.03-0.5411.hdf5')
-        matcher.initialise()
+    # with tf.Session() as sess:
+    #     matcher = CardMatcher('weights.03-0.5411.hdf5')
+    #     matcher.initialise()
 
     # LOCAL FILES
 

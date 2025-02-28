@@ -196,7 +196,7 @@ class TensorBoardOutputImages(tf.keras.callbacks.Callback):
         Copied from https://github.com/lanpa/tensorboard-pytorch/
         """
         height, width, channel = tensor.shape
-        if tensor.dtype in [np.float16, np.float32, np.float64, np.float128]:
+        if tensor.dtype in [np.float16, np.float32, np.float64]:
             tensor = (255 * tensor).astype(np.uint8)
         image = Image.fromarray(tensor)
         output = io.BytesIO()

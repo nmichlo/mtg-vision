@@ -36,7 +36,7 @@ def join(itr, sep='x'):
 def p(string):
     return (string + '_') if string is not None else ''
 
-# PyTorch equivalents of TensorFlow conv layers
+# PyTorch conv helpers with explicit in_channels
 conv1x1 = partial(nn.Conv2d, kernel_size=1)
 conv3x3 = partial(nn.Conv2d, kernel_size=3, padding=1)
 conv1x3 = partial(nn.Conv2d, kernel_size=(1, 3), padding=(0, 1))
@@ -56,7 +56,6 @@ class ModelBuilder(nn.Module):
         self._j = 0  # Layer index within stage
         self._begun_layer = False
 
-        # Define layers explicitly (PyTorch doesn’t use functional API like TF)
         # Stage 0: conv(64, (7, 7))
         self.conv_0_0 = nn.Conv2d(3, 64, kernel_size=7, padding=3, bias=False)
         self.bn_0_1 = nn.BatchNorm2d(64)
@@ -66,14 +65,15 @@ class ModelBuilder(nn.Module):
         self.pool_1_0 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
         # Stage 2: incept(128, 128, 192, 32, 96, 64)
-        self.incept_1x1 = conv1x1(128, bias=False)
-        self.incept_3x3_1 = conv1x1(128, bias=False)
-        self.incept_3x3_2 = conv3x1(192, bias=False)
-        self.incept_3x3_3 = conv1x3(192, bias=False)
-        self.incept_5x5_1 = conv1x1(32, bias=False)
-        self.incept_5x5_2 = conv1x5(96, bias=False)
-        self.incept_5x5_3 = conv5x1(96, bias=False)
-        self.incept_pool_1 = conv1x1(64, bias=False)
+        # Input to inception is 64 channels from previous pool
+        self.incept_1x1 = conv1x1(in_channels=64, out_channels=128, bias=False)
+        self.incept_3x3_1 = conv1x1(in_channels=64, out_channels=128, bias=False)
+        self.incept_3x3_2 = conv3x1(in_channels=128, out_channels=192, bias=False)
+        self.incept_3x3_3 = conv1x3(in_channels=192, out_channels=192, bias=False)
+        self.incept_5x5_1 = conv1x1(in_channels=64, out_channels=32, bias=False)
+        self.incept_5x5_2 = conv1x5(in_channels=32, out_channels=96, bias=False)
+        self.incept_5x5_3 = conv5x1(in_channels=96, out_channels=96, bias=False)
+        self.incept_pool_1 = conv1x1(in_channels=64, out_channels=64, bias=False)
         self.incept_pool_2 = nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
         self.incept_relu = nn.ReLU(inplace=True)  # Inception uses ReLU
 
@@ -92,7 +92,6 @@ class ModelBuilder(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def _begin_layer(self, stage_name):
-        """Track stage progression similar to TF’s begin_layer"""
         if not self._begun_layer:
             self._begun_layer = True
             self._j = 0
@@ -167,7 +166,7 @@ class ModelBuilder(nn.Module):
         # Shape: (1, 480, 96, 64) - Concat: 128 + 192 + 96 + 64 = 480 channels
         self._l += 9  # 8 convs + 1 pool
         self._j += 9
-        self.encoded = x  # Store encoded output (matches your TF code’s end)
+        self.encoded = x
         self._end_layer(reset)
 
         # Stage 3: pool((3, 3), 2)
@@ -178,7 +177,6 @@ class ModelBuilder(nn.Module):
         self._j += 1
         self._end_layer(reset)
 
-        # Note: TF code ends here, so output matches (batch, 48, 32, 480) in NHWC -> (1, 480, 48, 32) in NCHW
         return x
 
 def create_model(x_size, y_size):
@@ -190,13 +188,13 @@ def create_model(x_size, y_size):
 
 
 if __name__ == '__main__':
-    x_size = (1, 192, 128, 3)  # NHWC format
-    y_size = (1, 48, 32, 480)  # NHWC format, matches TF output
+    x_size = (16, 192, 128, 3)  # NHWC format
+    y_size = (16, 48, 32, 480)  # NHWC format, matches TF output
 
     model, encoding_layer = create_model(x_size, y_size)
     device = torch.device("mps")  # MPS for Apple Silicon
     model = model.to(device)
-    dummy_input = torch.randn(1, 192, 128, 3).to(device)  # NHWC format
+    dummy_input = torch.randn(16, 192, 128, 3).to(device)  # NHWC format
 
     # Warm-up
     with torch.no_grad():

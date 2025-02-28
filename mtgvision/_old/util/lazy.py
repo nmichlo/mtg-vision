@@ -90,6 +90,7 @@ class LazyList(object):
     def ran(self):
         return random.choice(self)
 
+
 class PregenList(object):
     def __init__(self, items):
         self._items = items
