@@ -1,6 +1,7 @@
+#  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 #  MIT License
 #
-#  Copyright (c) 2019 Nathan Juraj Michlo
+#  Copyright (c) 2025 Nathan Juraj Michlo
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -9,8 +10,8 @@
 #  copies of the Software, and to permit persons to whom the Software is
 #  furnished to do so, subject to the following conditions:
 #
-#  The above copyright notice and this permission notice shall be included in all
-#  copies or substantial portions of the Software.
+#  The above copyright notice and this permission notice shall be included in
+#  all copies or substantial portions of the Software.
 #
 #  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 #  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -19,10 +20,12 @@
 #  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
+#  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
+
 
 import numpy as np
 import cv2
-from mtgvision._old.util import img_uint8
+import mtgvision.util.values as uimg
 
 
 # ============================================================================ #
@@ -84,7 +87,7 @@ def cv2_warp_imgs_onto(img, cards, bounds):
         scnvs = img.shape
         scard = card.shape
 
-        card = img_uint8(card)
+        card = uimg.img_uint8(card)
 
         src_pts = np.array([(0, 0), (0, scard[0]), (scard[1], scard[0]), (scard[1], 0)], dtype=np.float32)
         dst_pts = np.array([p[0] for p in bound], dtype=np.float32)

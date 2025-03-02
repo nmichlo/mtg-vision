@@ -1,6 +1,7 @@
+#  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 #  MIT License
 #
-#  Copyright (c) 2019 Nathan Juraj Michlo
+#  Copyright (c) 2025 Nathan Juraj Michlo
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -9,8 +10,8 @@
 #  copies of the Software, and to permit persons to whom the Software is
 #  furnished to do so, subject to the following conditions:
 #
-#  The above copyright notice and this permission notice shall be included in all
-#  copies or substantial portions of the Software.
+#  The above copyright notice and this permission notice shall be included in
+#  all copies or substantial portions of the Software.
 #
 #  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 #  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -19,12 +20,15 @@
 #  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
+#  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
+
 
 import base64
 from math import ceil
 import cv2
 import numpy as np
-from mtgvision._old.util import asrt_float
+import mtgvision.util.values as uval
+
 
 # ========================================================================= #
 # VARS                                                                      #
@@ -250,7 +254,7 @@ def round_rect_mask(size, radius=None, radius_ratio=0.045, dtype=FLOAT_TYPE):
 # ========================================================================= #
 
 def noise_speckle(img, strength=0.1):
-    out = np.copy(asrt_float(img))
+    out = np.copy(uval.asrt_float(img))
     gauss = np.random.randn(*(img.shape[0], img.shape[1], 3))
     gauss = gauss.reshape((img.shape[0], img.shape[1], 3))
     out[:,:,:3] = img[:,:,:3] * (1 + gauss * strength)
@@ -259,7 +263,7 @@ def noise_speckle(img, strength=0.1):
     return ret
 
 def noise_gaussian(img, mean=0, var=0.5):
-    out = np.copy(asrt_float(img))
+    out = np.copy(uval.asrt_float(img))
     sigma = var ** 0.5
     gauss = np.random.normal(mean, sigma, (img.shape[0], img.shape[1], 3))
     gauss = gauss.reshape((img.shape[0], img.shape[1], 3))
@@ -269,7 +273,7 @@ def noise_gaussian(img, mean=0, var=0.5):
     return ret
 
 def noise_salt_pepper(img, strength=0.1, svp=0.5):
-    out = np.copy(asrt_float(img))
+    out = np.copy(uval.asrt_float(img))
     if img.shape[2] > 3:
         alpha = img[:, :, 3]
     # Salt mode
@@ -287,7 +291,7 @@ def noise_salt_pepper(img, strength=0.1, svp=0.5):
     return ret
 
 def noise_poisson(img, peak=0.1, amount=0.25):
-    img = clip(asrt_float(img))
+    img = clip(uval.asrt_float(img))
     noise = np.zeros_like(img)
     noise[:,:,:3] = np.random.poisson(img[:,:,:3]*peak) / peak
     ret = clip((1-amount)*img + amount*noise)

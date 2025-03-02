@@ -1,6 +1,7 @@
+#  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 #  MIT License
 #
-#  Copyright (c) 2019 Nathan Juraj Michlo
+#  Copyright (c) 2025 Nathan Juraj Michlo
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -9,8 +10,8 @@
 #  copies of the Software, and to permit persons to whom the Software is
 #  furnished to do so, subject to the following conditions:
 #
-#  The above copyright notice and this permission notice shall be included in all
-#  copies or substantial portions of the Software.
+#  The above copyright notice and this permission notice shall be included in
+#  all copies or substantial portions of the Software.
 #
 #  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 #  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -19,6 +20,8 @@
 #  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
+#  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
+
 
 import cv2
 import numpy as np
@@ -29,9 +32,12 @@ from tqdm import tqdm
 import platform
 import re
 
-import mtgvision._old.util as util
 from mtgdata import ScryfallDataset, ScryfallImageType
-from mtgvision._old.util import default, ApplyChoice, ApplyOrdered, ApplyShuffled, JsonCache, asrt_in
+import mtgvision.util.image as uimg
+import mtgvision.util.values as uval
+import mtgvision.util.random as uran
+import mtgvision.util.files as ufls
+import mtgvision.util.lazy as ulzy
 
 
 # ========================================================================= #
@@ -45,11 +51,11 @@ class Mutate:
 
     @staticmethod
     def flip(img, horr=True, vert=True):
-        return util.flip(img, horr=horr and (random.random() >= 0.5), vert=vert and (random.random() >= 0.5))
+        return uimg.flip(img, horr=horr and (random.random() >= 0.5), vert=vert and (random.random() >= 0.5))
 
     @staticmethod
     def rotate_bounded(img, deg_min=0, deg_max=360):
-        return util.rotate_bounded(img, deg_min + np.random.random() * (deg_max - deg_min))
+        return uimg.rotate_bounded(img, deg_min + np.random.random() * (deg_max - deg_min))
 
     @staticmethod
     def upsidedown(img):
@@ -59,9 +65,9 @@ class Mutate:
     def warp(img, warp_ratio=0.15, warp_ratio_min=-0.05):
         # [top left, top right, bottom left, bottom right]
         (h, w) = (img.shape[0]-1, img.shape[1]-1)
-        src_pts = util.fxx((0, 0), (0, w), (h, 0), (h, w))
+        src_pts = uimg.fxx((0, 0), (0, w), (h, 0), (h, w))
         ran = warp_ratio_min + np.random.rand(4, 2) * (abs(warp_ratio-warp_ratio_min)*0.5)
-        dst_pts = util.fxx(ran * util.fxx((h, w), (h, -w), (-h, w), (-h, -w)) + src_pts)
+        dst_pts = uimg.fxx(ran * uimg.fxx((h, w), (h, -w), (-h, w), (-h, -w)) + src_pts)
         # transform matrix
         transform = cv2.getPerspectiveTransform(src_pts, dst_pts)
         # warp
@@ -75,13 +81,13 @@ class Mutate:
     def noise(img, amount=0.75):
         noise_type = random.choice(['speckle', 'gaussian', 'pepper', 'poisson'])
         if noise_type == 'speckle':
-            noisy = util.noise_speckle(img, strength=0.3)
+            noisy = uimg.noise_speckle(img, strength=0.3)
         elif noise_type == 'gaussian':
-            noisy = util.noise_gaussian(img, mean=0, var=0.05)
+            noisy = uimg.noise_gaussian(img, mean=0, var=0.05)
         elif noise_type == 'pepper':
-            noisy = util.noise_salt_pepper(img, strength=0.1, svp=0.5)
+            noisy = uimg.noise_salt_pepper(img, strength=0.1, svp=0.5)
         elif noise_type == 'poisson':
-            noisy = util.noise_poisson(img, peak=0.8, amount=0.5)
+            noisy = uimg.noise_poisson(img, peak=0.8, amount=0.5)
         else:
             raise Exception('Invalid Choice')
         ratio = np.random.random()*amount
@@ -97,7 +103,7 @@ class Mutate:
     def tint(img, amount=0.15):
         for i in range(3):
             r = 1 + amount * (2*np.random.random()-1)
-            img[:,:,i] = util.clip(r * img[:, :, i])
+            img[:,:,i] = uimg.clip(r * img[:, :, i])
         return img
 
     @staticmethod
@@ -131,9 +137,9 @@ print('DATASETS_ROOT={}'.format(DATASETS_ROOT))
 # ========================================================================= #
 
 
-class Dataset(util.Folder):
+class Dataset(ufls.Folder):
     def __init__(self, name, datasets_root=None):
-        _dataset_root = util.init_dir(default(datasets_root, DATASETS_ROOT), name)
+        _dataset_root = ufls.init_dir(uval.default(datasets_root, DATASETS_ROOT), name)
         self._dataset_name = name
         super().__init__(_dataset_root)
 
@@ -231,7 +237,7 @@ class Dataset(util.Folder):
 # ========================================================================= #
 
 
-class IlsvrcImages(util.LazyList):
+class IlsvrcImages(ulzy.LazyList):
 
     ILSVRC_SET_TYPES = ['val', 'test', 'train']
 
@@ -243,7 +249,7 @@ class IlsvrcImages(util.LazyList):
             print(" - For example: {}".format(root.to('val', 'ILSVRC2010_val_00000001.JPEG')), 'yellow')
             print("The image versions of the ILSVRC Datasets are for educational purposes only, and cannot be redistributed.", 'yellow')
             print("Please visit: www.image-net.org to obtain the download links.", 'yellow')
-        super().__init__([util.Lazy(file, util.imread) for file in util.get_image_paths(root.path, prefixed=True)])
+        super().__init__([ulzy.Lazy(file, uimg.imread) for file in ufls.get_image_paths(root.path, prefixed=True)])
 
 
 # ========================================================================= #
@@ -251,51 +257,51 @@ class IlsvrcImages(util.LazyList):
 # ========================================================================= #
 
 
-class MtgImages(util.LazyList):
+class MtgImages(ulzy.LazyList):
 
-    def __init__(self, img_type=ScryfallImageType.small, predownload=False, handler=None):
+    def __init__(self, img_type=ScryfallImageType.small, predownload=False):
         self._ds = ScryfallDataset(
             img_type=img_type,
             data_root="/Users/nathanmichlo/Desktop/active/mtg/mtg-dataset/mtgdata/data",
             force_update=False,
-            download_mode='now',
+            download_mode='now' if predownload else 'none',
         )
         # open PIL.Image.Image
-        super().__init__([util.Lazy(card, lambda x: np.asarray(x.dl_and_open_im()).astype('float32') / 255) for card in self._ds])
+        super().__init__([ulzy.Lazy(card, lambda x: np.asarray(x.dl_and_open_im()).astype('float32') / 255) for card in self._ds])
 
 
-    _RAN_BG = ApplyShuffled(
-        ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
-        ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
+    _RAN_BG = uran.ApplyShuffled(
+        uran.ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
+        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
     )
-    _RAN_FG = ApplyOrdered(
-        ApplyShuffled(
+    _RAN_FG = uran.ApplyOrdered(
+        uran.ApplyShuffled(
             Mutate.warp,
-            ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
+            uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
         )
     )
-    _RAN_VRTL = ApplyShuffled(
-        ApplyChoice(Mutate.blur, None),
-        ApplyChoice(Mutate.noise, None),
-        ApplyChoice(Mutate.tint, None),
-        ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
+    _RAN_VRTL = uran.ApplyShuffled(
+        uran.ApplyChoice(Mutate.blur, None),
+        uran.ApplyChoice(Mutate.noise, None),
+        uran.ApplyChoice(Mutate.tint, None),
+        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
     )
 
     @staticmethod
     def make_cropped(path_or_img, size=None, half_upsidedown=False):
-        card = util.imread(path_or_img) if (type(path_or_img) == str) else path_or_img
-        ret = util.remove_border_resized(
+        card = uimg.imread(path_or_img) if (type(path_or_img) == str) else path_or_img
+        ret = uimg.remove_border_resized(
             img=card,
             border_width=ceil(max(0.02 * card.shape[0], 0.02 * card.shape[1])),
             size=size
         )
-        return ApplyChoice(Mutate.upsidedown, None)(ret) if half_upsidedown else ret
+        return uran.ApplyChoice(Mutate.upsidedown, None)(ret) if half_upsidedown else ret
 
     @staticmethod
     def make_masked(path_or_img):
-        card = util.imread(path_or_img) if (type(path_or_img) == str) else path_or_img
+        card = uimg.imread(path_or_img) if (type(path_or_img) == str) else path_or_img
         print(type(card), card.dtype, card.shape)
-        mask = util.round_rect_mask(card.shape[:2], radius_ratio=0.05)
+        mask = uimg.round_rect_mask(card.shape[:2], radius_ratio=0.05)
         print(type(card), mask.dtype, mask.shape)
         ret = cv2.merge((
             card[:, :, 0],
@@ -307,30 +313,30 @@ class MtgImages(util.LazyList):
 
     @staticmethod
     def make_bg(bg_path_or_img, size):
-        bg = util.imread(bg_path_or_img) if (type(bg_path_or_img) == str) else bg_path_or_img
+        bg = uimg.imread(bg_path_or_img) if (type(bg_path_or_img) == str) else bg_path_or_img
         bg = MtgImages._RAN_BG(bg)
-        bg = util.crop_to_size(bg, size)
+        bg = uimg.crop_to_size(bg, size)
         return bg
 
     @staticmethod
     def make_virtual(card_path_or_img, bg_path_or_img, size, half_upsidedown=False):
-        card = util.imread(card_path_or_img) if (type(card_path_or_img) == str) else card_path_or_img
-        card = ApplyChoice(Mutate.upsidedown, None)(card) if half_upsidedown else card
+        card = uimg.imread(card_path_or_img) if (type(card_path_or_img) == str) else card_path_or_img
+        card = uran.ApplyChoice(Mutate.upsidedown, None)(card) if half_upsidedown else card
         # fg - card
         fg = MtgImages.make_masked(card)
-        fg = util.crop_to_size(fg, size, pad=True)
+        fg = uimg.crop_to_size(fg, size, pad=True)
         fg = MtgImages._RAN_FG(fg)
         # bg
         bg = MtgImages.make_bg(bg_path_or_img, size)
         # merge
-        virtual = util.rgba_over_rgb(fg, bg)
+        virtual = uimg.rgba_over_rgb(fg, bg)
         virtual = MtgImages._RAN_VRTL(virtual)
         assert virtual.shape[:2] == size
         return virtual
 
     @staticmethod
     def make_virtual_pair(card_path_or_img, bg_path_or_img, x_size, y_size, half_upsidedown=False):
-        card = util.imread(card_path_or_img) if (type(card_path_or_img) == str) else card_path_or_img
+        card = uimg.imread(card_path_or_img) if (type(card_path_or_img) == str) else card_path_or_img
         # only inputs are flipped
         return MtgImages.make_virtual(card, bg_path_or_img, size=x_size, half_upsidedown=half_upsidedown), MtgImages.make_cropped(card, size=y_size)
 
@@ -353,9 +359,9 @@ class MtgLocalFiles(object):
         self.x_size = x_size
         self.y_size = y_size
 
-        self.paths = sorted(util.get_image_paths(self.ds_orig.path, prefixed=False))
-        self.paths_warp = set(util.get_image_paths(self.ds_warp.path, prefixed=False))
-        self.paths_crop = set(util.get_image_paths(self.ds_crop.path, prefixed=False))
+        self.paths = sorted(ufls.get_image_paths(self.ds_orig.path, prefixed=False))
+        self.paths_warp = set(ufls.get_image_paths(self.ds_warp.path, prefixed=False))
+        self.paths_crop = set(ufls.get_image_paths(self.ds_crop.path, prefixed=False))
 
         self.ilsvrc = IlsvrcImages()
 
@@ -381,28 +387,28 @@ class MtgLocalFiles(object):
 
     def _gen_save_warp(self, rel, force=False, save=True, orig_ratio=0.1, regen_rate=0.1, half_upsidedown=True):
         if force or not save or (rel not in self.paths_warp) or random.random() < regen_rate:
-            card = util.imread(self.ds_orig.to(rel))  # some cards are not the same size
+            card = uimg.imread(self.ds_orig.to(rel))  # some cards are not the same size
             if random.random() < orig_ratio:
                 x = MtgImages.make_cropped(card, self.x_size, half_upsidedown=half_upsidedown)
             else:
                 x = MtgImages.make_virtual(card, self.ilsvrc.ran(), size=self.x_size, half_upsidedown=half_upsidedown)
             if save:
-                util.imwrite(self.ds_warp.to(rel, init=True, is_file=True), x)
+                uimg.imwrite(self.ds_warp.to(rel, init=True, is_file=True), x)
                 self.paths_warp.add(rel)
             return x
         else:
-            return util.imread(self.ds_warp.to(rel))
+            return uimg.imread(self.ds_warp.to(rel))
 
     def _gen_save_crop(self, rel, force=False, save=True):
         if force or not save or (rel not in self.paths_crop):
-            card = util.imread(self.ds_orig.to(rel))  # some cards are not the same size
+            card = uimg.imread(self.ds_orig.to(rel))  # some cards are not the same size
             y = MtgImages.make_cropped(card, size=self.y_size)
             if save:
-                util.imwrite(self.ds_crop.to(rel, init=True, is_file=True), y)
+                uimg.imwrite(self.ds_crop.to(rel, init=True, is_file=True), y)
                 self.paths_crop.add(rel)
             return y
         else:
-            return util.imread(self.ds_crop.to(rel))
+            return uimg.imread(self.ds_crop.to(rel))
 
     def gen_warp_crop(self, rel_path=None, force=False, orig_ratio=0.1, regen_rate=0.1, half_upsidedown=False, save=True):
         if rel_path is None:
@@ -454,5 +460,5 @@ if __name__ == "__main__":
 
         x, y = MtgImages.make_virtual_pair(o, l, (192, 128), (192, 128), True)
 
-        util.imshow_loop(x, 'asdf')
-        util.imshow_loop(y, 'asdf')
+        uimg.imshow_loop(x, 'asdf')
+        uimg.imshow_loop(y, 'asdf')
