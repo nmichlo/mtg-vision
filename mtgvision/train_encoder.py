@@ -1,3 +1,5 @@
+import time
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -6,6 +8,8 @@ import numpy as np
 import random
 import wandb
 import coremltools as ct
+from tqdm import tqdm
+
 from mtgvision.models.new_arch3 import create_model
 from mtgvision.datasets import (
     IlsvrcImages, MtgImages,
@@ -117,36 +121,36 @@ def train(seed: int = 42):
 
     # Loss and Optimizer
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(
+    optimizer = optim.RAdam(
         model.parameters(),
         lr=config["learning_rate"],
         weight_decay=config["weight_decay"]
     )
 
     # Training Loop
-    for epoch in range(config["num_epochs"]):
-        model.train()
-        train_loss = 0.0
-        for batch in train_loader:
-            x, y = batch
-            x, y = x.to(device), y.to(device)
-            optimizer.zero_grad()
-            output = model(x)
-            loss = criterion(output, y)
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item()
-        train_loss /= len(train_loader)
-
-        # Log metrics to wandb
-        wandb.log({
-            "train_loss": train_loss,
-            "epoch": epoch,
-        })
-
-        # Log images every 10 epochs
-        if epoch % 10 == 0:
-            log_images(model, vis_batch, device)
+    t0 = time.time()
+    with tqdm(desc=f"training") as pbar:
+        for epoch in range(config["num_epochs"]):
+            pbar.set_postfix({"epoch": epoch})
+            model.train()
+            train_loss = 0.0
+            for batch in train_loader:
+                x, y = batch
+                x, y = x.to(device), y.to(device)
+                optimizer.zero_grad()
+                output = model(x)
+                loss = criterion(output, y)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+                pbar.update()
+                pbar.set_postfix({"loss": loss.item()})
+            train_loss /= len(train_loader)
+            # Log metrics to wandb
+            wandb.log({"train_loss": train_loss, "epoch": epoch})
+            # Log images every 120 seconds
+            if time.time() - t0 > 120:
+                log_images(model, vis_batch, device)
 
     # Save the final model
     torch.save(model.state_dict(), "final_model.pth")

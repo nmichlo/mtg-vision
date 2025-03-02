@@ -187,7 +187,7 @@ class MtgImages(ulzy.LazyList):
 
     @classmethod
     def _get_card(cls, card):
-        return np.asarray(card.dl_and_open_im(), dtype='float32') / 255
+        return np.asarray(card.dl_and_open_im_resized(), dtype='float32') / 255
 
     def _make_lazy_cards(self):
         return [
