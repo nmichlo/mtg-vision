@@ -149,90 +149,6 @@ class Dataset(ufls.Folder):
 
 
 # ========================================================================= #
-# Dataset - MTG Info                                                        #
-# ========================================================================= #
-
-
-# class MtgHandler(object):
-#     def __init__(self, force_update=False, force_update_scryfall=False, force_update_mtgio=False):
-#         from mtgtools.MtgDB import MtgDB
-#
-#         dataset = Dataset('mtgtools')
-#
-#         print(dataset)
-#         print(dataset.to('mtg.db'))
-#
-#         self.db = MtgDB(dataset.to('mtg.db'))
-#         if force_update_scryfall or force_update or len(self.db.root.scryfall_sets) <= 0:
-#             self.db.scryfall_update()
-#         if force_update_mtgio or force_update:
-#             self.db.mtgio_update()
-#
-#         print('Getting UUIDs')
-#         with JsonCache('./cache/mtgtools_uuids.json') as data:
-#             if 'uuids' not in data or force_update_scryfall or force_update:
-#                 data['uuids'] = {}
-#                 for i, card in enumerate(tqdm(self.scryfall_cards, desc='Caching Card UUIDs')):
-#                     data['uuids'][card.id] = i
-#             self.scryfall_uuids_to_index = data['uuids']
-#             print('UUIDS FOUND: {} of total {}'.format(len(self.scryfall_uuids_to_index), len(self.scryfall_cards)))
-#         print('Got UUIDs')
-#
-#     @property
-#     def scryfall_sets(self):
-#         return self.db.root.scryfall_sets
-#
-#     @property
-#     def mtgio_sets(self):
-#         return self.db.root.mtgio_sets
-#
-#     @property
-#     def scryfall_cards(self):
-#         return self.db.root.scryfall_cards
-#
-#     @property
-#     def mtgio_cards(self):
-#         return self.db.root.mtgio_cards
-#
-#     def scryfall_card_from_uuid(self, uuid):
-#         if uuid in self.scryfall_uuids_to_index:
-#             return self.scryfall_cards[self.scryfall_uuids_to_index[uuid]]
-#         return None
-#
-#     IMG_TYPES = ['small', 'normal', 'large', 'png', 'art_crop', 'border_crop']
-#
-#     def scryfall_cards_paths_uris(self, img_type='small', force=False):
-#         asrt_in(img_type, MtgHandler.IMG_TYPES)
-#         root = Dataset('mtg').cd(img_type, init=True)
-#         with JsonCache('./cache/mtg_uris_{}.json'.format(img_type), refresh=force) as uris:
-#             if 'resources' not in uris:
-#                 resources = []
-#                 for s in tqdm(self.scryfall_sets, desc='Building Image URI Cache [{}] ({})'.format(img_type, root)):
-#                     if s.api_type != 'scryfall':
-#                         continue
-#                     for card in s:
-#                         uri_file = MtgHandler._card_uri_to_file(card, folder=s.code, img_type=img_type)
-#                         if uri_file is not None:
-#                             resources.append(uri_file)
-#                 print('URIS FOUND: {} of {}'.format(len(resources), len(self.scryfall_cards)))
-#                 uris['resources'] = resources
-#             return [(u, root.to(f)) for u, f in uris['resources']]
-#
-#     @staticmethod
-#     def _card_uri_to_file(card, folder, img_type):
-#         if card.image_uris is None:
-#             return None
-#         uri = card.image_uris[img_type]
-#         if uri is None:
-#             return None
-#         # filename:
-#         ext = os.path.splitext(uri)[1].split('?')[0]
-#         name = re.sub('[^-a-z]', '', card.name.lower().replace(" ", "-"))
-#         file = os.path.join(folder, '{}__{}__{}__{}{}'.format(card.set, card.id, name, img_type, ext))
-#         return uri, file
-
-
-# ========================================================================= #
 # Dataset - IlsvrcImages                                                    #
 # ========================================================================= #
 
@@ -267,8 +183,16 @@ class MtgImages(ulzy.LazyList):
             download_mode='now' if predownload else 'none',
         )
         # open PIL.Image.Image
-        super().__init__([ulzy.Lazy(card, lambda x: np.asarray(x.dl_and_open_im()).astype('float32') / 255) for card in self._ds])
+        super().__init__(self._make_lazy_cards())
 
+    @classmethod
+    def _get_card(cls, card):
+        return np.asarray(card.dl_and_open_im(), dtype='float32') / 255
+
+    def _make_lazy_cards(self):
+        return [
+            ulzy.Lazy(card, self._get_card) for card in self._ds
+        ]
 
     _RAN_BG = uran.ApplyShuffled(
         uran.ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
@@ -300,9 +224,7 @@ class MtgImages(ulzy.LazyList):
     @staticmethod
     def make_masked(path_or_img):
         card = uimg.imread(path_or_img) if (type(path_or_img) == str) else path_or_img
-        print(type(card), card.dtype, card.shape)
         mask = uimg.round_rect_mask(card.shape[:2], radius_ratio=0.05)
-        print(type(card), mask.dtype, mask.shape)
         ret = cv2.merge((
             card[:, :, 0],
             card[:, :, 1],
