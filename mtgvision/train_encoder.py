@@ -125,17 +125,17 @@ class MtgDataModule(pl.LightningDataModule):
 # Custom callback for periodic image logging
 class ImageLoggingCallback(Callback):
 
-    def __init__(self, vis_batch, log_every_n_seconds=120):
+    def __init__(self, vis_batch, log_every_n_steps=1000):
         self.vis_batch = vis_batch
-        self.log_every_n_seconds = log_every_n_seconds
-        self.last_log_time = time.time()
+        self.log_every_n_steps = log_every_n_steps
+        self.last_steps = -(log_every_n_steps*10)
         self._first_log = True
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        current_time = time.time()
-        if current_time - self.last_log_time >= self.log_every_n_seconds:
+        current_steps = trainer.global_step
+        if current_steps - self.last_steps >= self.log_every_n_steps:
             self.log_images(pl_module, self.vis_batch)
-            self.last_log_time = current_time
+            self.last_steps = current_steps
 
     # Helper function to join images into a row (unchanged)
     @staticmethod
@@ -158,14 +158,18 @@ class ImageLoggingCallback(Callback):
             x_np = np.stack([x for x, _ in vis_batch_np], axis=0)
             y_np = np.stack([y for _, y in vis_batch_np], axis=0)
             x = torch.from_numpy(x_np).float().permute(0, 3, 1, 2).to(model.device)
-            output = model(x)
-            out_np = np.clip(output.cpu().permute(0, 2, 3, 1).numpy(), 0, 1)
+            _, multiscale = model(x)
+            mout_np = []
+            for out in multiscale:
+                mout_np.append(np.clip(out.cpu().permute(0, 2, 3, 1).numpy(), 0, 1))
             # log images
             if self._first_log:
                 logs["images_x"] = wandb.Image(self.join_images_into_row(x_np), caption="Input")
             if self._first_log:
                 logs["images_y"] = wandb.Image(self.join_images_into_row(y_np), caption="Target")
-            logs["images_out"] = wandb.Image(self.join_images_into_row(out_np), caption="Output")
+            for i, out_np in enumerate(mout_np):
+                name = "images_out" if i == 0 else f"images_out_{i+1}"
+                logs[name] = wandb.Image(self.join_images_into_row(out_np), caption=f"Output {i}")
         # stop logging after the first time
         self._first_log = False
 
@@ -217,7 +221,6 @@ def train(seed: int = 42):
         accelerator="mps",
         devices=1,
         # precision="32",
-        log_every_n_steps=1000,
         max_steps=100_000,
     )
 
