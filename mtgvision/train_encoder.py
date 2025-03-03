@@ -225,12 +225,7 @@ def train(seed: int = 42):
         "target_consistency": True,
     }
 
-    # Initialize wandb
-    wandb.init(project="mtgvision_encoder", config=config)
-    wandb_logger = WandbLogger()
-
-    # Initialize model and data module
-    model = MtgVisionEncoder(config)
+    # Initialize model
     data_module = MtgDataModule(batch_size=config["batch_size"])
 
     # Initial batch for visualization
@@ -241,6 +236,13 @@ def train(seed: int = 42):
         data_module.train_dataset.random_img(),
         data_module.train_dataset.random_img(),
     ]
+
+    # Initialize wandb
+    wandb.init(project="mtgvision_encoder", config=config)
+    wandb_logger = WandbLogger()
+
+    # Initialize model
+    model = MtgVisionEncoder(config)
 
     # Set up trainer with optimizations
     trainer = pl.Trainer(
