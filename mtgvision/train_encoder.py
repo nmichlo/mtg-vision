@@ -14,17 +14,12 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import Callback
 
 from mtgvision.models.new_arch1 import Ae1
-from mtgvision.models.new_arch1b import Ae1b
-from mtgvision.models.new_arch3 import Ae3
-from mtgvision.models.new_arch4 import Ae4
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
 
 _MODELS = {
-    Ae1.__name__.lower(): Ae1,
-    Ae1b.__name__.lower(): Ae1b,
-    Ae3.__name__.lower(): Ae3,
-    Ae4.__name__.lower(): Ae4,
+    Ae1.__name__.lower(): functools.partial(Ae1, stn=False),
+    Ae1.__name__.lower() + '_stn': functools.partial(Ae1, stn=True),
 }
 
 
@@ -259,7 +254,7 @@ def train(
         callbacks=[ImageLoggingCallback(vis_batch)],
         accelerator="mps",
         devices=1,
-        # precision="32",
+        precision="mixed",
         max_steps=max_steps,
     )
 

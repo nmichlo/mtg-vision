@@ -260,7 +260,9 @@ class MtgImages(ulzy.LazyList):
     def make_virtual_pair(card_path_or_img, bg_path_or_img, x_size, y_size, half_upsidedown=False):
         card = uimg.imread(card_path_or_img) if (type(card_path_or_img) == str) else card_path_or_img
         # only inputs are flipped
-        return MtgImages.make_virtual(card, bg_path_or_img, size=x_size, half_upsidedown=half_upsidedown), MtgImages.make_cropped(card, size=y_size)
+        x = MtgImages.make_virtual(card, bg_path_or_img, size=x_size, half_upsidedown=half_upsidedown)
+        y = MtgImages.make_cropped(card, size=y_size)
+        return x, y
 
 
 # ========================================================================= #

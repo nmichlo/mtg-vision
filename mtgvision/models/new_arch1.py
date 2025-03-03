@@ -1,7 +1,7 @@
+import kornia.feature
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from tqdm import tqdm
 
 from mtgvision.models.nn import AeBase, DepthwiseSeparableConv, SEBlock
 
@@ -81,15 +81,10 @@ class Ae1(AeBase):
 
         # Encoder: Progressive downsampling for compact representation
         self.stem = DepthwiseSeparableConv(3, 64, kernel_size=7, stride=2, padding=3)
-        """Initial layer with a large kernel to capture broad context from misaligned inputs."""
         self.enc1 = LightInception(64)
-        """First encoder stage using Inception for multi-scale feature extraction."""
         self.enc2 = DepthwiseSeparableConv(304, 128, kernel_size=3, stride=2, padding=1)
-        """Second encoder stage, downsamples and reduces channels for efficiency."""
         self.enc3 = DepthwiseSeparableConv(128, 96, kernel_size=3, stride=2, padding=1)
-        """Third encoder stage, further compresses spatial dimensions."""
         self.enc4 = DepthwiseSeparableConv(96, 64, kernel_size=3, stride=2, padding=1)
-        """Fourth encoder stage, added to reduce bottleneck size further."""
 
         # Bottleneck: Compact representation targeting ≤512 elements
         self.bottleneck = nn.Sequential(
@@ -97,22 +92,14 @@ class Ae1(AeBase):
             nn.AvgPool2d(kernel_size=3, stride=3),
             SEBlock(32)
         )
-        """Bottleneck reduces to (1, 32, 4, 4) = 512 elements with attention for key features."""
 
         # Decoder: Progressive upsampling with residual refinement
         self.dec4_main, self.dec4_residual = _dec_block(32, 64)
-        """Fourth decoder stage, upsamples and refines with a separate residual path."""
         self.dec3_main, self.dec3_residual = _dec_block(64, 96)
-        """Third decoder stage, continues upsampling with a separate residual path."""
         self.dec2_main, self.dec2_residual = _dec_block(96, 64)
-        """Second decoder stage, further upsamples with a separate residual path."""
         self.dec1_main, self.dec1_residual = _dec_block(64, 32)
-        """Third decoder stage, continues upsampling with a separate residual path."""
-        # weird size, should decrease to 16
         self.dec0_main, self.dec0_residual = _dec_block(32, 32)
-        """First decoder stage, prepares for final output with a separate residual path."""
         self.final = nn.Conv2d(32, 3, kernel_size=1, bias=False)
-        """Final layer converts features to 3-channel output matching input resolution."""
 
         self._init_weights()
 
