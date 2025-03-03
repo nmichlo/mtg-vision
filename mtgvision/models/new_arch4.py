@@ -97,10 +97,13 @@ class STN(nn.Module):
 
 class ModelBuilder(nn.Module):
     """Encoder-Decoder model for fast, accurate image reconstruction."""
-    def __init__(self, x_size, y_size):
+
+    OUTPUT_SIZES = [
+        (192, 128)
+    ]
+
+    def __init__(self):
         super(ModelBuilder, self).__init__()
-        self.x_size = x_size  # e.g., (batch, 3, 192, 128) in NCHW
-        self.y_size = y_size  # e.g., (batch, 3, 192, 128) in NCHW
 
         # STN for global alignment
         self.stn = STN(3)
@@ -144,7 +147,7 @@ class ModelBuilder(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, x):
+    def encode(self, x):
         # Handle NHWC input by converting to NCHW
         if x.size(1) != 3:
             if x.size(3) == 3:
@@ -171,9 +174,11 @@ class ModelBuilder(nn.Module):
         x = self.bottleneck(x)
         # Shape: (batch, 32, 4, 4)
         self.encoded = x
+        return x
 
+    def decode(self, z, *, multiscale: bool = True):
         # Decoder
-        x = self.dec4_main(x)
+        x = self.dec4_main(z)
         # Shape: (batch, 32, 8, 8)
         x = self.dec4_conv(x)
         # Shape: (batch, 48, 8, 8)
@@ -193,20 +198,29 @@ class ModelBuilder(nn.Module):
         # Shape: (batch, 3, 64, 64)
         x = F.interpolate(x, size=(192, 128), mode='bilinear', align_corners=False)
         # Shape: (batch, 3, 192, 128)
+        if multiscale:
+            return [x]
+        else:
+            return [x]
 
-        return x
+    def forward(self, x, *, multiscale: bool = True):
+        z = self.encode(x)
+        out = self.decode(z, multiscale=multiscale)
+        return z, out
+
 
 # ========================================================================= #
 # Model Creation and Testing                                                #
 # ========================================================================= #
 
+
 def create_model(x_size, y_size):
     """Create an instance of ModelBuilder with specified input and output sizes."""
     assert len(x_size) == 4 and len(y_size) == 4
-    model_x_size = (x_size[0], x_size[3], x_size[1], x_size[2])  # Convert NHWC to NCHW
-    model_y_size = (y_size[0], y_size[3], y_size[1], y_size[2])  # Convert NHWC to NCHW
-    model = ModelBuilder(model_x_size, model_y_size)
+    assert x_size[1:] == (192, 128, 3) and y_size[1:] == (192, 128, 3)
+    model = ModelBuilder()
     return model, model.encoded
+
 
 if __name__ == '__main__':
     # Define input and output sizes in NHWC format

@@ -3,6 +3,7 @@ import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import IterableDataset, DataLoader
 import numpy as np
 import random
@@ -12,8 +13,16 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import Callback
 
-# from mtgvision.models.new_arch3 import create_model
-from mtgvision.models.new_arch1 import create_model
+import mtgvision.models.new_arch1 as arch1
+import mtgvision.models.new_arch1b as arch1b
+import mtgvision.models.new_arch4 as arch4
+
+_MODELS = {
+    "new_arch1": arch1.create_model,
+    "new_arch1b": arch1b.create_model,
+    # "new_arch4": arch4.create_model,
+}
+
 
 
 from mtgvision.datasets import IlsvrcImages, MtgImages
@@ -55,19 +64,35 @@ class MtgVisionEncoder(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.save_hyperparameters(config)
-        self.model, _ = create_model(
+        self.model, _ = _MODELS[self.hparams.model](
             self.hparams.x_size,
             self.hparams.y_size,
         )
         self.criterion = nn.MSELoss()
 
     def forward(self, x):
-        return self.model(x)
+        z, multi_out = self.model(x, multiscale=self.hparams.multiscale)
+        return z, multi_out
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        output = self(x)
-        loss = self.criterion(output, y)
+        z, (out, *multi_out) = self(x)
+        loss = self.criterion(out, y)
+        # multiscale
+        if self.hparams.multiscale:
+            for output in multi_out:
+                output = F.interpolate(output, size=(192, 128), mode='bilinear', align_corners=False)
+                loss += self.criterion(output, y)
+            loss /= len(multi_out) + 1
+        # cyclic consistency loss
+        if self.hparams.cyclic:
+            z2 = self.model.encode(out)
+            loss += self.criterion(z2, z)
+        # target consistency loss
+        if self.hparams.target_consistency:
+            z2 = self.model.encode(y)
+            loss += self.criterion(z2, z)
+        # done
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
@@ -144,6 +169,7 @@ class ImageLoggingCallback(Callback):
         # stop logging after the first time
         self._first_log = False
 
+
 # Training function using PyTorch Lightning
 def train(seed: int = 42):
     random.seed(seed)
@@ -160,7 +186,10 @@ def train(seed: int = 42):
         "x_size": (16, 192, 128, 3),  # NHWC
         "y_size": (16, 192, 128, 3),  # NHWC
         "img_type": "small",
-        "model": str(create_model)
+        "model": "new_arch1",
+        "multiscale": False,
+        "cyclic": True,
+        "target_consistency": True,
     }
 
     # Initialize wandb

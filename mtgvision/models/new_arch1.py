@@ -129,11 +129,12 @@ class ModelBuilder(nn.Module):
         y_size (tuple): Output size in NCHW format (e.g., (1, 3, 192, 128)).
     """
 
-    def __init__(self, x_size, y_size):
-        super(ModelBuilder, self).__init__()
-        self.x_size = x_size  # e.g., (1, 3, 192, 128) in NCHW
-        self.y_size = y_size  # e.g., (1, 3, 192, 128) in NCHW
+    OUTPUT_SIZES = [
+        (192, 128)
+    ]
 
+    def __init__(self):
+        super(ModelBuilder, self).__init__()
 
         def _dec_block(in_channels, out_channels):
             dec_main = nn.Sequential(
@@ -194,7 +195,7 @@ class ModelBuilder(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, x):
+    def encode(self, x):
         # Input shape: (1, 3, 192, 128) if NCHW, or (1, 192, 128, 3) if NHWC
         if x.size(1) != 3:
             if x.size(3) == 3:
@@ -219,9 +220,11 @@ class ModelBuilder(nn.Module):
         # Shape after AvgPool2d: (1, 32, 4, 4) - 3x3 pool with stride=3 reduces H and W ((12-3)/3+1=4, (8-3)/3+1=4)
         # Elements: 32 * 4 * 4 = 512
         self.encoded = x
+        return x
 
+    def decode(self, z, *, multiscale: bool = True):
         # Decoder
-        x = self.dec4_main(x)
+        x = self.dec4_main(z)
         # Shape: (1, 64, 8, 8) - upsample x2 (4*2=8, 4*2=8), conv to 64 channels
         x = x + self.dec4_residual(x)  # Residual connection with matching channels
         # Shape: (1, 64, 8, 8) - residual preserves shape
@@ -246,7 +249,17 @@ class ModelBuilder(nn.Module):
         x = self.final(x)
         # Shape: (1, 3, 192, 128) - convert to 3-channel output matching input resolution
 
-        return x
+        if multiscale:
+            return [x]
+        else:
+            return [x]
+
+    def forward(self, x, *, multiscale: bool = True):
+        z = self.encode(x)
+        out = self.decode(z, multiscale=multiscale)
+        return z, out
+
+
 
 
 def create_model(x_size, y_size):
@@ -261,9 +274,8 @@ def create_model(x_size, y_size):
                encoded_tensor is the bottleneck representation.
     """
     assert len(x_size) == 4 and len(y_size) == 4
-    model_x_size = (x_size[0], x_size[3], x_size[1], x_size[2])  # Convert to NCHW
-    model_y_size = (y_size[0], y_size[3], y_size[1], y_size[2])  # Convert to NCHW
-    model = ModelBuilder(model_x_size, model_y_size)
+    assert x_size[1:] == (192, 128, 3) and y_size[1:] == (192, 128, 3)
+    model = ModelBuilder()
     return model, model.encoded
 
 
