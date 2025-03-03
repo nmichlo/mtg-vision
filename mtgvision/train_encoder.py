@@ -215,7 +215,7 @@ def train(
         "seed": seed,
         "batch_size": 16,
         "num_epochs": 100,
-        "learning_rate": 1e-3,
+        "learning_rate": 5e-4,
         "weight_decay": 1e-5,
         "x_size": (16, 192, 128, 3),  # NHWC
         "y_size": (16, 192, 128, 3),  # NHWC
