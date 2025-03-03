@@ -1,3 +1,5 @@
+from typing import Optional
+
 import kornia.feature
 import torch
 import torch.nn as nn
@@ -7,18 +9,33 @@ from mtgvision.models.nn import AeBase, DepthwiseSeparableConv, SEBlock
 
 
 class LightInception(nn.Module):
-    def __init__(self, in_channels):
+    def __init__(
+        self,
+        in_channels: int,
+        out_1x1_ch: int = 48,  # 64
+        out_3x3_ch: int = 64,  # 128
+        out_ave_ch: int = 32,  # 32
+        out_ch: Optional[int] = None,
+    ):
         super(LightInception, self).__init__()
-        self.branch1 = nn.Conv2d(in_channels, 48, kernel_size=1, bias=False)
+
+        # scale according to target output sizes
+        if out_ch is not None:
+            total_ch = out_1x1_ch + out_3x3_ch + out_ave_ch
+            out_1x1_ch = int(round(out_1x1_ch / total_ch * out_ch))
+            out_3x3_ch = int(round(out_3x3_ch / total_ch * out_ch))
+            out_ave_ch = int(round(out_ave_ch / total_ch * out_ch))
+
+        self.branch1 = nn.Conv2d(in_channels, out_1x1_ch, kernel_size=1, bias=False)
         self.branch3 = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=1, bias=False),
-            DepthwiseSeparableConv(64, 96, kernel_size=3, padding=2, dilation=2)
+            nn.Conv2d(in_channels, int(out_3x3_ch/4*3), kernel_size=1, bias=False),
+            DepthwiseSeparableConv(int(out_3x3_ch/4*3), out_3x3_ch, kernel_size=3, padding=2, dilation=2)
         )
         self.branch_pool = nn.Sequential(
             nn.AvgPool2d(kernel_size=3, stride=1, padding=1),
-            nn.Conv2d(in_channels, 32, kernel_size=1, bias=False)
+            nn.Conv2d(in_channels, out_ave_ch, kernel_size=1, bias=False)
         )
-        self.se = SEBlock(176)  # 48 + 96 + 32 = 176 channels
+        self.se = SEBlock(out_1x1_ch + out_3x3_ch + out_ave_ch)  # out_1x1_channels + 96 + 32 = 176 channels
 
     def forward(self, x):
         b1 = self.branch1(x)
@@ -91,51 +108,65 @@ class Ae1b(AeBase):
             self.fc_loc[-1].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
 
         # Encoder (unchanged)
-        self.stem = DepthwiseSeparableConv(3, 64, kernel_size=7, stride=2, padding=3)
-        self.enc1 = LightInception(64)
-        self.enc2 = DepthwiseSeparableConv(176, 128, kernel_size=3, stride=2, padding=1)
-        self.enc3 = DepthwiseSeparableConv(128, 96, kernel_size=3, stride=2, padding=1)
-        self.enc4 = DepthwiseSeparableConv(96, 64, kernel_size=3, stride=2, padding=1)
+        self.stem = nn.Sequential(
+            DepthwiseSeparableConv(3, 16, kernel_size=3, stride=2, padding=1),
+            DepthwiseSeparableConv(16, 64, kernel_size=3, stride=2, padding=1)
+        )
+        self.enc1 = LightInception(64, out_ch=128)
+        self.enc2 = LightInception(128, out_ch=256)
+        self.enc3 = nn.Sequential(
+            DepthwiseSeparableConv(256, 128, kernel_size=3, stride=2, padding=1),
+        )
+        self.enc4 = nn.Sequential(
+            DepthwiseSeparableConv(128, 96, kernel_size=3, stride=2, padding=1),
+            SEBlock(96),
+        )
+        self.enc5 = nn.Sequential(
+            DepthwiseSeparableConv(96, 64, kernel_size=3, stride=2, padding=1),
+            SEBlock(64),
+        )
 
         self.bottleneck = nn.Sequential(
-            DepthwiseSeparableConv(64, 64, kernel_size=3, stride=1, padding=1),
-            nn.AvgPool2d(kernel_size=3, stride=2, padding=1),
+            DepthwiseSeparableConv(64, 64, kernel_size=3, stride=2, padding=1),
             SEBlock(64)
         )
 
         # Decoder
+        self.dec5 = nn.Sequential(
+            nn.Conv2d(64, 256, 1, bias=False),  # Expand for PixelShuffle
+            nn.PixelShuffle(2),  # (B, 32, 12, 8)
+            InvertedResidualBlock(64, 64),
+            EfficientChannelAttention(64)
+        )
         self.dec4 = nn.Sequential(
             nn.Conv2d(64, 128, 1, bias=False),  # Expand for PixelShuffle
-            nn.PixelShuffle(2),  # (B, 32, 12, 8)
-            InvertedResidualBlock(32, 32)
+            nn.PixelShuffle(2),
+            InvertedResidualBlock(32, 32),
+            EfficientChannelAttention(32)
         )
         self.dec3 = nn.Sequential(
+            nn.Conv2d(32, 128, 1, bias=False),
+            nn.PixelShuffle(2),
+            InvertedResidualBlock(32, 32),
+            EfficientChannelAttention(32)
+        )
+        self.dec2 = nn.Sequential(
+            nn.Conv2d(32, 128, 1, bias=False),
+            nn.PixelShuffle(2),
+            InvertedResidualBlock(32, 32),
+            EfficientChannelAttention(32)
+        )
+        self.dec1 = nn.Sequential(
             nn.Conv2d(32, 64, 1, bias=False),
-            nn.PixelShuffle(2),  # (B, 16, 24, 16)
+            nn.PixelShuffle(2),
             InvertedResidualBlock(16, 16),
             EfficientChannelAttention(16)
         )
-        self.dec2 = nn.Sequential(
-            nn.Conv2d(16, 32, 1, bias=False),
-            nn.PixelShuffle(2),  # (B, 8, 48, 32)
-            nn.Conv2d(8, 8, 3, padding=1, bias=False),
-            nn.BatchNorm2d(8),
-            nn.GELU()
-        )
-        self.dec1 = nn.Sequential(
-            nn.Conv2d(8, 24, 1, bias=False),
-            nn.PixelShuffle(2),  # (B, 6, 96, 64)
-            nn.Conv2d(6, 6, 3, padding=1, bias=False),
-            nn.BatchNorm2d(6),
-            nn.GELU()
-        )
         self.dec0 = nn.Sequential(
-            nn.Conv2d(6, 12, 1, bias=False),
+            nn.Conv2d(16, 12, 1, bias=False),
             nn.PixelShuffle(2),  # (B, 3, 192, 128)
             nn.Conv2d(3, 3, 3, padding=1, bias=False),
         )
-
-        # self.final = nn.Conv2d(3, 3, 1, bias=False)
 
         self._init_weights()
 
@@ -158,23 +189,16 @@ class Ae1b(AeBase):
         x = self.enc2(x)  # (B, 128, 48, 32)
         x = self.enc3(x)  # (B, 96, 24, 16)
         x = self.enc4(x)  # (B, 64, 12, 8)
-        x = self.bottleneck(x)  # (B, 64, 6, 4) WRONG
-        assert x.numel() // x.size(0) <= 1536, "Bottleneck exceeds 1536 elements"
+        x = self.enc5(x)  # (B, 64, 6, 4)
+        x = self.bottleneck(x)  # (B, 64, 3, 2)
         return x
 
     def _decode(self, z, *, multiscale: bool = True):
+        x = self.dec5(z)  # (B, 64, 6, 4)
         x = self.dec4(z)  # (B, 32, 12, 8)
-        # outputs = [self.final(F.interpolate(x, size=(192, 128), mode='bilinear', align_corners=False))] if multiscale else []
-
         x = self.dec3(x)  # (B, 16, 24, 16)
-        # outputs.append(self.final(F.interpolate(x, size=(192, 128), mode='bilinear', align_corners=False))) if multiscale else []
-
         x = self.dec2(x)  # (B, 8, 48, 32)
-        # outputs.append(self.final(F.interpolate(x, size=(192, 128), mode='bilinear', align_corners=False))) if multiscale else []
-
         x = self.dec1(x)  # (B, 6, 96, 64)
-        # outputs.append(self.final(F.interpolate(x, size=(192, 128), mode='bilinear', align_corners=False))) if multiscale else []
-
         x = self.dec0(x)  # (B, 3, 192, 128)
 
         # x = F.interpolate(x, size=(192, 128), mode='bilinear', align_corners=False)
