@@ -2,6 +2,7 @@ from typing import final, List, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class AeBase(nn.Module):
@@ -48,7 +49,7 @@ class AeBase(nn.Module):
     def create_model(cls, x_size, y_size, **kwargs) -> 'AeBase':
         assert len(x_size) == 4 and len(y_size) == 4
         assert x_size[1:] == (192, 128, 3) and y_size[1:] == (192, 128, 3)
-        model = cls()
+        model = cls(**kwargs)
         return model
 
     @classmethod
@@ -64,6 +65,8 @@ class AeBase(nn.Module):
         device = torch.device("mps")
         model = model.to(device)
         print(model)
+        num_params = model.num_params()
+        print(f"params: {num_params} ({num_params/1_000_000:.3f}M)")
 
         # Create dummy input
         dummy_input = torch.randn(batch_size, 192, 128, 3).to(device)
@@ -83,6 +86,10 @@ class AeBase(nn.Module):
         print(f"Output shape: {output.shape}")  # (16, 3, 192, 128) NCHW
         print(f"Encoding shape: {z.shape}")  # (16, 32, 4, 4) NCHW
         print(f"Encoding elements per item: {z.numel() // x_size[0]}")
+
+    def num_params(self) -> int:
+        return sum(p.numel() for p in self.parameters())
+
 
 
 class SEBlock(nn.Module):
@@ -150,3 +157,62 @@ class DepthwiseSeparableConv(nn.Module):
         x = self.pointwise(x)
         x = self.bn(x)
         return self.gelu(x)
+
+
+
+class InvertedResidualBlock(nn.Module):
+    """Inverted residual block inspired by MobileNetV3 for efficiency."""
+    def __init__(self, in_channels, out_channels, expand_ratio=4):
+        super(InvertedResidualBlock, self).__init__()
+        hidden_dim = in_channels * expand_ratio
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.GELU(),
+            DepthwiseSeparableConv(hidden_dim, hidden_dim, kernel_size=3, padding=1),
+            SEBlock(hidden_dim),
+            nn.Conv2d(hidden_dim, out_channels, 1, bias=False),
+            nn.BatchNorm2d(out_channels)
+        )
+        self.use_residual = in_channels == out_channels
+
+    def forward(self, x):
+        out = self.block(x)
+        if self.use_residual:
+            out = out + x
+        return F.gelu(out)
+
+
+class EfficientChannelAttention(nn.Module):
+    """Lightweight channel attention from ECA-Net."""
+    def __init__(self, channels, kernel_size=3):
+        super(EfficientChannelAttention, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv1d(channels, channels, kernel_size=kernel_size, padding=kernel_size//2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c, 1)
+        y = self.conv(y).view(b, c, 1, 1)
+        return x * self.sigmoid(y)
+
+
+class CoordinateAttention(nn.Module):
+    """Coordinate Attention mechanism for spatial and channel-wise modulation."""
+    def __init__(self, channels):
+        super(CoordinateAttention, self).__init__()
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))  # Pool along height
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))  # Pool along width
+        self.conv = nn.Conv2d(channels, channels, 1, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        b, c, h, w = x.size()
+        h_pool = self.pool_h(x).permute(0, 1, 3, 2)  # Pool height, adjust dims
+        w_pool = self.pool_w(x)                      # Pool width
+        y = torch.cat([h_pool, w_pool], dim=2)       # Concatenate along spatial dim
+        y = self.conv(y)                             # Apply 1x1 conv
+        h_att, w_att = torch.split(y, [h, w], dim=2) # Split into height and width attention
+        h_att = h_att.permute(0, 1, 3, 2)           # Adjust dims back
+        return x * self.sigmoid(h_att) * self.sigmoid(w_att)  # Modulate input

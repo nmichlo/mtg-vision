@@ -2,7 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mtgvision.models.nn import AeBase, DepthwiseSeparableConv, SEBlock
+from mtgvision.models.nn import (
+    AeBase, DepthwiseSeparableConv, EfficientChannelAttention, InvertedResidualBlock,
+    SEBlock,
+)
 
 
 # class LightInception(nn.Module):
@@ -40,44 +43,6 @@ from mtgvision.models.nn import AeBase, DepthwiseSeparableConv, SEBlock
 #         bp = self.branch_pool(x)
 #         x = torch.cat([b1, b3, bp], dim=1)
 #         return self.se(x)
-
-
-class InvertedResidualBlock(nn.Module):
-    """Inverted residual block inspired by MobileNetV3 for efficiency."""
-    def __init__(self, in_channels, out_channels, expand_ratio=4):
-        super(InvertedResidualBlock, self).__init__()
-        hidden_dim = in_channels * expand_ratio
-        self.block = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
-            nn.BatchNorm2d(hidden_dim),
-            nn.GELU(),
-            DepthwiseSeparableConv(hidden_dim, hidden_dim, kernel_size=3, padding=1),
-            SEBlock(hidden_dim),
-            nn.Conv2d(hidden_dim, out_channels, 1, bias=False),
-            nn.BatchNorm2d(out_channels)
-        )
-        self.use_residual = in_channels == out_channels
-
-    def forward(self, x):
-        out = self.block(x)
-        if self.use_residual:
-            out = out + x
-        return F.gelu(out)
-
-
-class EfficientChannelAttention(nn.Module):
-    """Lightweight channel attention from ECA-Net."""
-    def __init__(self, channels, kernel_size=3):
-        super(EfficientChannelAttention, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.conv = nn.Conv1d(channels, channels, kernel_size=kernel_size, padding=kernel_size//2, bias=False)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c, 1)
-        y = self.conv(y).view(b, c, 1, 1)
-        return x * self.sigmoid(y)
 
 
 class Ae1b(AeBase):

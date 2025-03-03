@@ -14,13 +14,23 @@ from pytorch_lightning.callbacks import Callback
 
 from mtgvision.models.new_arch1 import Ae1
 from mtgvision.models.new_arch1b import Ae1b
+from mtgvision.models.new_arch2 import Ae2
+from mtgvision.models.new_arch3 import Ae3
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
 
 _MODELS = {
     Ae1.__name__.lower(): functools.partial(Ae1.create_model, stn=False),
-    Ae1b.__name__.lower(): functools.partial(Ae1b.create_model, stn=True),
+
+    Ae1b.__name__.lower(): functools.partial(Ae1b.create_model, stn=False),
     Ae1b.__name__.lower() + '_stn': functools.partial(Ae1b.create_model, stn=True),
+
+    Ae2.__name__.lower(): functools.partial(Ae2.create_model, stn=False),
+    Ae2.__name__.lower() + '_stn': functools.partial(Ae2.create_model, stn=True),
+
+    Ae3.__name__.lower(): functools.partial(Ae3.create_model, stn=False),
+    Ae3.__name__.lower() + '_stn': functools.partial(Ae3.create_model, stn=True),
+
 }
 
 
@@ -245,7 +255,7 @@ def train(
         callbacks=[ImageLoggingCallback(vis_batch)],
         accelerator="mps",
         devices=1,
-        precision="32",
+        precision="16-mixed",
         max_steps=max_steps,
     )
 
