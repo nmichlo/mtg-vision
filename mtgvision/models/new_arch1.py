@@ -134,19 +134,28 @@ class ModelBuilder(nn.Module):
         self.x_size = x_size  # e.g., (1, 3, 192, 128) in NCHW
         self.y_size = y_size  # e.g., (1, 3, 192, 128) in NCHW
 
+
+        def _dec_block(in_channels, out_channels):
+            dec_main = nn.Sequential(
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                DepthwiseSeparableConv(in_channels, out_channels, kernel_size=3, padding=1)
+            )
+            dec_residual = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.GELU()
+            )
+            return dec_main, dec_residual
+
         # Encoder: Progressive downsampling for compact representation
         self.stem = DepthwiseSeparableConv(3, 64, kernel_size=7, stride=2, padding=3)
         """Initial layer with a large kernel to capture broad context from misaligned inputs."""
-
         self.enc1 = LightInception(64)
         """First encoder stage using Inception for multi-scale feature extraction."""
-
         self.enc2 = DepthwiseSeparableConv(304, 128, kernel_size=3, stride=2, padding=1)
         """Second encoder stage, downsamples and reduces channels for efficiency."""
-
         self.enc3 = DepthwiseSeparableConv(128, 96, kernel_size=3, stride=2, padding=1)
         """Third encoder stage, further compresses spatial dimensions."""
-
         self.enc4 = DepthwiseSeparableConv(96, 64, kernel_size=3, stride=2, padding=1)
         """Fourth encoder stage, added to reduce bottleneck size further."""
 
@@ -159,62 +168,17 @@ class ModelBuilder(nn.Module):
         """Bottleneck reduces to (1, 32, 4, 4) = 512 elements with attention for key features."""
 
         # Decoder: Progressive upsampling with residual refinement
-        self.dec4_main = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            DepthwiseSeparableConv(32, 64, kernel_size=3, padding=1)
-        )
-        self.dec4_residual = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.GELU()
-        )
+        self.dec4_main, self.dec4_residual = _dec_block(32, 64)
         """Fourth decoder stage, upsamples and refines with a separate residual path."""
-
-        self.dec3_main = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            DepthwiseSeparableConv(64, 96, kernel_size=3, padding=1)
-        )
-        self.dec3_residual = nn.Sequential(
-            nn.Conv2d(96, 96, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(96),
-            nn.GELU()
-        )
+        self.dec3_main, self.dec3_residual = _dec_block(64, 96)
         """Third decoder stage, continues upsampling with a separate residual path."""
-
-        self.dec2_main = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            DepthwiseSeparableConv(96, 64, kernel_size=3, padding=1)
-        )
-        self.dec2_residual = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.GELU()
-        )
+        self.dec2_main, self.dec2_residual = _dec_block(96, 64)
         """Second decoder stage, further upsamples with a separate residual path."""
-
-        self.dec1_main = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            DepthwiseSeparableConv(64, 32, kernel_size=3, padding=1)
-        )
-        self.dec1_residual = nn.Sequential(
-            nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(32),
-            nn.GELU()
-        )
-
+        self.dec1_main, self.dec1_residual = _dec_block(64, 32)
         """Third decoder stage, continues upsampling with a separate residual path."""
-        self.dec0_main = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            DepthwiseSeparableConv(32, 32, kernel_size=3, padding=1)
-        )
-        self.dec0_residual = nn.Sequential(
-            nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(16),
-            nn.GELU()
-        )  # weird size, should decrease to 16
-
+        # weird size, should decrease to 16
+        self.dec0_main, self.dec0_residual = _dec_block(32, 32)
         """First decoder stage, prepares for final output with a separate residual path."""
-
         self.final = nn.Conv2d(32, 3, kernel_size=1, bias=False)
         """Final layer converts features to 3-channel output matching input resolution."""
 
