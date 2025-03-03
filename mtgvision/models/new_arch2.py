@@ -1,3 +1,5 @@
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -64,7 +66,6 @@ class InvertedResidualBlock(nn.Module):
         return nn.SiLU()(out)
 
 
-
 # **Downscale Block** with Dilated Convolutions
 def _downscale_block(in_ch, out_ch, dilation=1, final_stride=2):
     return nn.Sequential(
@@ -77,74 +78,181 @@ def _downscale_block(in_ch, out_ch, dilation=1, final_stride=2):
         CoordinateAttention(out_ch),  # Advanced attention
     )
 
+
 # **Upscale Block** with Upgraded Upsampling (bilinear + conv) and Intra Skips
-def _upscale_block(in_ch, out_ch):
-    return nn.Sequential(
+def _upscale_block(in_ch, out_ch, upsample: bool = True, expand_ratio: int = 4):
+    layers = [
         nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # Upgraded upsampling
         nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),
-        InvertedResidualBlock(out_ch, out_ch),  # Includes intra skips
+        InvertedResidualBlock(out_ch, out_ch, expand_ratio=expand_ratio),  # Includes intra skips
         CoordinateAttention(out_ch),
-    )
+    ]
+    if upsample:
+        return nn.Sequential(*layers)
+    else:
+        return nn.Sequential(*layers[1:])
+
 
 # Improved Autoencoder Class
 class Ae2(AeBase):
-    def __init__(self, stn: bool = True):
+
+    @classmethod
+    def create_model_small(cls, x_size, y_size, stn: bool = True):
+        return cls.create_model(
+            x_size, y_size,
+            # enc
+            enc_chs=(16, 16, 24, 32, 64),
+            enc_extra_ch=64,
+            enc_repr_ch=32,  # 6*4*32 = 768
+            # dec
+            dec_extra_ch=64,
+            dec_chs=(16, 16, 24, 32, 64),
+            dec_expand_ratio=2,
+            # stn
+            stn=stn,
+            stn_chs=(16, 24, 32),
+            stn_groups=(4, 6, 8),
+            stn_out_size=(12, 8),
+            stn_hidden=96,
+        )
+
+    @classmethod
+    def create_model_medium(cls, x_size, y_size, stn: bool = True):
+        return cls.create_model(
+            x_size, y_size,
+            # enc
+            enc_chs=(16, 16, 32, 64, 128),
+            enc_extra_ch=128,
+            enc_repr_ch=32,  # 6*4*32 = 768
+            # dec
+            dec_extra_ch=128,
+            dec_chs=(16, 16, 32, 64, 128),
+            dec_expand_ratio=2,
+            # stn
+            stn=stn,
+            stn_chs=(16, 32, 32),
+            stn_groups=(4, 8, 8),
+            stn_out_size=(24, 16),
+            stn_hidden=128,
+        )
+
+    @classmethod
+    def create_model_heavy(cls, x_size, y_size, stn: bool = True):
+        return cls.create_model(
+            x_size, y_size,
+            # enc
+            enc_chs=(16, 32, 64, 128, 256),
+            enc_extra_ch=256,
+            enc_repr_ch=256,  # 6*4*256 = 1536
+            # dec
+            dec_extra_ch=128,
+            dec_chs=(16, 16, 32, 64, 128),
+            dec_expand_ratio=4,
+            # stn
+            stn=stn,
+            stn_chs=(32, 64, 64),
+            stn_groups=(8, 16, 16),
+            stn_out_size=(24, 16),
+            stn_hidden=128,
+        )
+
+    def __init__(
+        self,
+        # enc
+        enc_chs: Tuple[int, int, int, int, int] = (16, 32, 64, 128, 256),
+        enc_extra_ch: Optional[int] = 256,  # useful for helping encode info to bottleneck
+        enc_repr_ch: int = 256,  # 6x4x<repr_ch> e.g. 6*4*32 = 768
+        # dec
+        dec_extra_ch: Optional[int] = 128,  # useful for helping decode info from bottleneck
+        dec_chs: Tuple[int, int, int, int, int] = (16, 16, 32, 64, 128),  # reversed
+        dec_expand_ratio: int = 4,
+        # stn
+        stn: bool = True,
+        stn_chs: Tuple[int, int, int] = (32, 64, 64),
+        stn_groups: Tuple[int, int, int] = (8, 16, 16),
+        stn_out_size: Tuple[int, int] = (24, 16),
+        stn_hidden: int = 128,
+    ):
         super(Ae2, self).__init__()
+        self.enc_chs = enc_chs
+        self.enc_extra_ch = enc_extra_ch
+        self.enc_repr_ch = enc_repr_ch
+
+        self.dec_extra_ch = dec_extra_ch
+        self.dec_chs = dec_chs
+        self.dec_expand_ratio = dec_expand_ratio
+
         self.stn = stn
+        self.stn_out_size = stn_out_size
+        self.stn_chs = stn_chs
+        self.stn_gr = stn_groups
+        self.stn_hidden = stn_hidden
 
         # **Spatial Transformer Network (STN)** with Coordinate Attention
         if self.stn:
-            import kornia.geometry as kg
             self.localization = nn.Sequential(
-                nn.Conv2d(3, 32, kernel_size=7, stride=2, padding=3, bias=False),
-                nn.GroupNorm(8, 32),  # Advanced normalization
+                nn.Conv2d(3, self.stn_chs[0], kernel_size=7, stride=2, padding=3, bias=False),
+                nn.GroupNorm(self.stn_gr[0], self.stn_chs[0]),  # Advanced normalization
                 nn.SiLU(),            # Newer activation
                 nn.MaxPool2d(2, stride=2),
-                nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=2, bias=False),
-                nn.GroupNorm(16, 64),
+                nn.Conv2d(self.stn_chs[0], self.stn_chs[1], kernel_size=5, stride=2, padding=2, bias=False),
+                nn.GroupNorm(self.stn_gr[1], self.stn_chs[1]),
                 nn.SiLU(),
-                CoordinateAttention(64),  # Advanced attention in STN
-                nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
-                nn.GroupNorm(16, 64),
+                CoordinateAttention(self.stn_chs[1]),  # Advanced attention in STN
+                nn.Conv2d(self.stn_chs[1], self.stn_chs[2], kernel_size=3, padding=1, bias=False),
+                nn.GroupNorm(self.stn_gr[2], self.stn_chs[2]),
                 nn.SiLU(),
             )
             self.fc_loc = nn.Sequential(
-                nn.Linear(64 * 24 * 16, 128),
+                nn.Linear(self.stn_chs[2] * self.stn_out_size[0] * self.stn_out_size[1], self.stn_hidden),
                 nn.SiLU(),
-                nn.Linear(128, 6)
+                nn.Linear(self.stn_hidden, 6)
             )
             self.fc_loc[-1].weight.data.zero_()
             self.fc_loc[-1].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+        else:
+            self.localization = None
+            self.fc_loc = None
 
         # Encoder with Dilated Convolutions in later stages
-        self.stem = _downscale_block(3, 16, dilation=1)
-        self.enc1 = _downscale_block(16, 32, dilation=1)
-        self.enc2 = _downscale_block(32, 64, dilation=1)
-        self.enc3 = _downscale_block(64, 128, dilation=2)  # Dilated conv
-        self.enc4 = _downscale_block(128, 256, dilation=2)  # Dilated conv
-        self.enc5 = _downscale_block(256, 512, dilation=2, final_stride=1)  # No downsampling
-        self.bottleneck = nn.Conv2d(512, 256, 1, bias=False)
+        self.stem = _downscale_block(3, self.enc_chs[0], dilation=1)
+        self.enc1 = _downscale_block(self.enc_chs[0], self.enc_chs[1], dilation=1)
+        self.enc2 = _downscale_block(self.enc_chs[1], self.enc_chs[2], dilation=1)
+        self.enc3 = _downscale_block(self.enc_chs[2], self.enc_chs[3], dilation=2)
+        self.enc4 = _downscale_block(self.enc_chs[3], self.enc_chs[4], dilation=2)
+        # * extra layer for non-linear encoding, no downscaling here.
+        if self.enc_extra_ch is not None:
+            self.enc_extra = _downscale_block(enc_chs[4], self.enc_extra_ch, dilation=2, final_stride=1)
+            self.bottleneck = nn.Conv2d(self.enc_extra_ch, self.enc_repr_ch, 1, bias=False)
+        else:
+            self.enc_extra = None
+            self.bottleneck = nn.Conv2d(enc_chs[4], self.enc_repr_ch, 1, bias=False)
 
-        # Decoder starting from 6x4x256
-        self.dec4 = _upscale_block(256, 128)  # 6x4x256 -> 12x8x128
-        self.dec3 = _upscale_block(128, 64)   # 12x8x128 -> 24x16x64
-        self.dec2 = _upscale_block(64, 32)    # 24x16x64 -> 48x32x32
-        self.dec1 = _upscale_block(32, 16)    # 48x32x32 -> 96x64x16
-        self.dec0 = _upscale_block(16, 16)    # 96x64x16 -> 192x128x16
+        # Decoder starting from 6x4x<repr_ch>
+        # * extra layer for non-linear encoding, no upscaling here.
+        if self.dec_extra_ch is not None:
+            self.dec_extra = _upscale_block(self.enc_repr_ch, self.dec_extra_ch, upsample=False, expand_ratio=self.dec_expand_ratio)
+            self.dec4 = _upscale_block(self.dec_extra_ch, dec_chs[4], expand_ratio=self.dec_expand_ratio)
+        else:
+            self.dec_extra = None
+            self.dec4 = _upscale_block(self.enc_repr_ch, dec_chs[4], expand_ratio=self.dec_expand_ratio)
+        self.dec3 = _upscale_block(dec_chs[4], dec_chs[3], expand_ratio=self.dec_expand_ratio)
+        self.dec2 = _upscale_block(dec_chs[3], dec_chs[2], expand_ratio=self.dec_expand_ratio)
+        self.dec1 = _upscale_block(dec_chs[2], dec_chs[1], expand_ratio=self.dec_expand_ratio)
+        self.dec0 = _upscale_block(dec_chs[1], dec_chs[0], expand_ratio=self.dec_expand_ratio)
 
         # **Multi-Scale Outputs**
-        self.final_192 = nn.Conv2d(16, 3, 1, bias=False)  # 192x128x3
-        self.final_96 = nn.Conv2d(16, 3, 1, bias=False)   # 96x64x3
-        self.final_48 = nn.Conv2d(32, 3, 1, bias=False)   # 48x32x3
+        self.final_2 = nn.Conv2d(dec_chs[2], 3, 1, bias=False)
+        self.final_1 = nn.Conv2d(dec_chs[1], 3, 1, bias=False)
+        self.final_0 = nn.Conv2d(dec_chs[0], 3, 1, bias=False)
 
         self._init_weights()
 
     def _apply_stn(self, x):
         if not self.stn:
             return x
-        import kornia.geometry as kg
         xs = self.localization(x)
-        xs = F.adaptive_avg_pool2d(xs, (24, 16))
+        xs = F.adaptive_avg_pool2d(xs, self.stn_out_size)
         xs = xs.view(xs.size(0), -1)
         theta = self.fc_loc(xs).view(-1, 2, 3)
         grid = F.affine_grid(theta, x.size(), align_corners=False)
@@ -158,23 +266,32 @@ class Ae2(AeBase):
         x = self.enc2(x)
         x = self.enc3(x)
         x = self.enc4(x)
-        x = self.enc5(x)
+        if self.enc_extra is not None:
+            x = self.enc_extra(x)
         x = self.bottleneck(x)
         return x
 
     def _decode(self, z, multiscale: bool = True):
-        x4 = self.dec4(z)   # 6x4x256 -> 12x8x128
-        x3 = self.dec3(x4)  # 12x8x128 -> 24x16x64
-        x2 = self.dec2(x3)  # 24x16x64 -> 48x32x32
-        x1 = self.dec1(x2)  # 48x32x32 -> 96x64x16
-        x0 = self.dec0(x1)  # 96x64x16 -> 192x128x16
-        out_192 = self.final_192(x0)
+        if self.dec_extra is not None:
+            z = self.dec_extra(z)
+        x4 = self.dec4(z)
+        x3 = self.dec3(x4)
+        x2 = self.dec2(x3)
+        x1 = self.dec1(x2)
+        x0 = self.dec0(x1)
         if multiscale:
-            out_96 = self.final_96(x1)
-            out_48 = self.final_48(x2)
-            return [out_192, out_96, out_48]
-        return [out_192]
+            return [
+                self.final_0(x0),
+                self.final_1(x1),
+                self.final_2(x2),
+            ]
+        else:
+            return [
+                self.final_0(x0),
+            ]
 
 
 if __name__ == '__main__':
-    Ae2.quick_test(stn=True)
+    Ae2.quick_test(model=Ae2.create_model_small(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False))
+    Ae2.quick_test(model=Ae2.create_model_medium(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False))
+    Ae2.quick_test(model=Ae2.create_model_heavy(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False))

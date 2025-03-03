@@ -1,3 +1,4 @@
+import warnings
 from typing import final, List, Tuple
 
 import torch
@@ -53,7 +54,7 @@ class AeBase(nn.Module):
         return model
 
     @classmethod
-    def quick_test(cls, batch_size: int = 16, n: int = 100, **model_kwargs):
+    def quick_test(cls, batch_size: int = 16, n: int = 100, model=None, **model_kwargs):
         from tqdm import tqdm
 
         # Define input and output sizes in NHWC format
@@ -61,7 +62,12 @@ class AeBase(nn.Module):
         y_size = (batch_size, 192, 128, 3)
 
         # Create model and move to MPS device
-        model = cls.create_model(x_size, y_size, **model_kwargs)
+        if model is None:
+            model = cls.create_model(x_size, y_size, **model_kwargs)
+        else:
+            if model_kwargs:
+                warnings.warn("Ignoring model_kwargs when model is provided.")
+
         device = torch.device("mps")
         model = model.to(device)
         print(model)

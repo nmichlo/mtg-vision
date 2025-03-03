@@ -15,7 +15,6 @@ from pytorch_lightning.callbacks import Callback
 from mtgvision.models.new_arch1 import Ae1
 from mtgvision.models.new_arch1b import Ae1b
 from mtgvision.models.new_arch2 import Ae2
-from mtgvision.models.new_arch3 import Ae3
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
 
@@ -25,12 +24,14 @@ _MODELS = {
     Ae1b.__name__.lower(): functools.partial(Ae1b.create_model, stn=False),
     Ae1b.__name__.lower() + '_stn': functools.partial(Ae1b.create_model, stn=True),
 
-    Ae2.__name__.lower(): functools.partial(Ae2.create_model, stn=False),
-    Ae2.__name__.lower() + '_stn': functools.partial(Ae2.create_model, stn=True),
+    Ae2.__name__.lower() + 'l': functools.partial(Ae2.create_model_heavy, stn=False),
+    Ae2.__name__.lower() + 'l_stn': functools.partial(Ae2.create_model_heavy, stn=True),
 
-    Ae3.__name__.lower(): functools.partial(Ae3.create_model, stn=False),
-    Ae3.__name__.lower() + '_stn': functools.partial(Ae3.create_model, stn=True),
+    Ae2.__name__.lower() + 'm': functools.partial(Ae2.create_model_medium, stn=False),
+    Ae2.__name__.lower() + 'm_stn': functools.partial(Ae2.create_model_medium, stn=True),
 
+    Ae2.__name__.lower() + 's': functools.partial(Ae2.create_model_small, stn=False),
+    Ae2.__name__.lower() + 's_stn': functools.partial(Ae2.create_model_small, stn=True),
 }
 
 
