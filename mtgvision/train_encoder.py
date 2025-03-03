@@ -9,6 +9,7 @@ import random
 import wandb
 import coremltools as ct
 from tqdm import tqdm
+from torch.amp import autocast, GradScaler
 
 from mtgvision.models.new_arch3 import create_model
 from mtgvision.datasets import (
@@ -49,6 +50,17 @@ class RanMtgEncDecDataset(Dataset):
         return x, y
 
 
+def join_images_into_row(images, padding=5):
+    const = 127
+    if images[0].dtype in [np.float16, np.float32, np.float64]:
+        const = 0.5
+    images = [
+        np.pad(image, [(padding, padding), (padding, padding), (0, 0)], mode='constant', constant_values=const)
+        for image in images
+    ]
+    return np.concatenate(images, axis=1)
+
+
 # Image Logging Function
 def log_images(model, vis_batch_np, device, num_images=5):
     model.eval()
@@ -58,12 +70,12 @@ def log_images(model, vis_batch_np, device, num_images=5):
         x = torch.from_numpy(x_np).float().permute(0, 3, 1, 2).to(device)
         output = model(x)
         out_np = np.clip(output.cpu().permute(0, 2, 3, 1).numpy(), 0, 1)
-        images = []
-        for i in range(min(num_images, len(vis_batch_np))):
-            images.append(wandb.Image(x_np[i], caption="Input"))
-            images.append(wandb.Image(y_np[i], caption="Target"))
-            images.append(wandb.Image(out_np[i], caption="Output"))
-        wandb.log({"validation_images": images})
+        # get images
+        wandb.log({
+            "images_x": wandb.Image(join_images_into_row(x_np), caption="Input"),
+            "images_y": wandb.Image(join_images_into_row(y_np), caption="Target"),
+            "images_out": wandb.Image(join_images_into_row(out_np), caption="Output"),
+        })
 
 
 # Training Function
@@ -100,13 +112,6 @@ def train(seed: int = 42):
     # Initialize wandb
     wandb.init(project="mtgvision_encoder", config=config)
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config["batch_size"],
-        shuffle=False,
-        num_workers=4,
-    )
-
     # Model Initialization
     model, _ = create_model(
         config["x_size"],
@@ -126,6 +131,16 @@ def train(seed: int = 42):
         lr=config["learning_rate"],
         weight_decay=config["weight_decay"]
     )
+    # scaler = GradScaler()
+    scaler = None
+
+    # Dataset
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config["batch_size"],
+        shuffle=False,
+        num_workers=4,
+    )
 
     # Training Loop
     t0 = time.time()
@@ -137,11 +152,19 @@ def train(seed: int = 42):
             for batch in train_loader:
                 x, y = batch
                 x, y = x.to(device), y.to(device)
-                optimizer.zero_grad()
-                output = model(x)
-                loss = criterion(output, y)
-                loss.backward()
-                optimizer.step()
+                if scaler is None:
+                    optimizer.zero_grad()
+                    output = model(x)
+                    loss = criterion(output, y)
+                    loss.backward()
+                    optimizer.step()
+                else:
+                    with autocast(device_type=device.type):
+                        output = model(x)
+                        loss = criterion(output, y)
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
                 train_loss += loss.item()
                 pbar.update()
                 pbar.set_postfix({"loss": loss.item()})
@@ -165,6 +188,7 @@ def train(seed: int = 42):
     )
     mlmodel.save("model.mlmodel")
     print("Model trained and converted to CoreML. Saved as 'model.mlmodel'.")
+
 
 if __name__ == "__main__":
     train()
