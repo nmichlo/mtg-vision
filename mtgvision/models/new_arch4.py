@@ -3,50 +3,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
+from mtgvision.models.nn import DepthwiseSeparableConv, SEBlock
+
+
 # ========================================================================= #
 # Helper Modules                                                            #
 # ========================================================================= #
 
-class SEBlock(nn.Module):
-    """Squeeze-and-Excitation block for channel-wise attention."""
-    def __init__(self, channels, reduction=8):
-        super(SEBlock, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(channels, channels // reduction, bias=False),
-            nn.GELU(),
-            nn.Linear(channels // reduction, channels, bias=False),
-            nn.Sigmoid()
-        )
 
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y
-
-class DepthwiseSeparableConv(nn.Module):
-    """Depthwise separable convolution for efficient feature extraction."""
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1):
-        super(DepthwiseSeparableConv, self).__init__()
-        self.depthwise = nn.Conv2d(
-            in_channels, in_channels, kernel_size, stride=stride, padding=padding,
-            dilation=dilation, groups=in_channels, bias=False
-        )
-        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.gelu = nn.GELU()
-
-    def forward(self, x):
-        x = self.depthwise(x)
-        x = self.pointwise(x)
-        x = self.bn(x)
-        return self.gelu(x)
-
-class LightInception(nn.Module):
+class LightInceptionAlt(nn.Module):
     """Efficient Inception block with multi-scale feature extraction."""
     def __init__(self, in_channels):
-        super(LightInception, self).__init__()
+        super(LightInceptionAlt, self).__init__()
         self.branch1 = nn.Conv2d(in_channels, 32, kernel_size=1, bias=False)
         self.branch3 = DepthwiseSeparableConv(in_channels, 48, kernel_size=3, padding=2, dilation=2)
         self.branch_pool = nn.Sequential(
@@ -61,6 +29,7 @@ class LightInception(nn.Module):
         bp = self.branch_pool(x)
         x = torch.cat([b1, b3, bp], dim=1)
         return self.se(x)
+
 
 class STN(nn.Module):
     """Spatial Transformer Network for global alignment."""
@@ -91,9 +60,11 @@ class STN(nn.Module):
         x = F.grid_sample(x, grid, align_corners=False)
         return x
 
+
 # ========================================================================= #
 # Main Model                                                                #
 # ========================================================================= #
+
 
 class ModelBuilder(nn.Module):
     """Encoder-Decoder model for fast, accurate image reconstruction."""
@@ -113,7 +84,7 @@ class ModelBuilder(nn.Module):
             DepthwiseSeparableConv(3, 48, kernel_size=3, stride=2, padding=2, dilation=2),
             DepthwiseSeparableConv(48, 48, kernel_size=3, padding=1)
         )
-        self.enc1 = LightInception(48)
+        self.enc1 = LightInceptionAlt(48)
         self.enc2 = DepthwiseSeparableConv(96, 64, kernel_size=3, stride=2, padding=1)
         self.enc3 = DepthwiseSeparableConv(64, 48, kernel_size=3, stride=2, padding=1)
         self.enc4 = DepthwiseSeparableConv(48, 32, kernel_size=3, stride=2, padding=1)

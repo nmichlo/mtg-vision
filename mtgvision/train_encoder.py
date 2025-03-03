@@ -15,11 +15,13 @@ from pytorch_lightning.callbacks import Callback
 
 import mtgvision.models.new_arch1 as arch1
 import mtgvision.models.new_arch1b as arch1b
+import mtgvision.models.new_arch3 as arch3
 import mtgvision.models.new_arch4 as arch4
 
 _MODELS = {
     "new_arch1": arch1.create_model,
     "new_arch1b": arch1b.create_model,
+    "new_arch3": arch3.create_model,
     "new_arch4": arch4.create_model,
 }
 
@@ -219,7 +221,7 @@ def train(seed: int = 42):
         "x_size": (16, 192, 128, 3),  # NHWC
         "y_size": (16, 192, 128, 3),  # NHWC
         "img_type": "small",
-        "model": "new_arch1",
+        "model": "new_arch3",
         "multiscale": True,
         "cyclic": False,
         "target_consistency": False,

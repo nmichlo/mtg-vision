@@ -3,50 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
+from mtgvision.models.new_arch1 import LightInception
 from mtgvision.models.nn import DepthwiseSeparableConv, SEBlock
 
 
 # ========================================================================= #
 # HELPER                                                                    #
 # ========================================================================= #
-
-class LightInception(nn.Module):
-    """Efficient Inception block with multi-scale feature extraction.
-
-    Inspired by the Inception architecture (Szegedy et al., 2015, "Going Deeper with Convolutions"),
-    this block uses parallel branches (1x1, 3x3, 5x5, pool) to capture features at different scales,
-    improving reconstruction accuracy for misaligned inputs. Modified here with depthwise separable
-    convolutions and reduced channel counts for speed, plus dilation for a larger receptive field
-    to handle misalignment, as seen in DeepLab (Chen et al., 2017).
-
-    Args:
-        in_channels (int): Number of input channels.
-    """
-
-    def __init__(self, in_channels):
-        super(LightInception, self).__init__()
-        self.branch1 = nn.Conv2d(in_channels, 64, kernel_size=1, bias=False)
-        self.branch3 = nn.Sequential(
-            nn.Conv2d(in_channels, 96, kernel_size=1, bias=False),
-            DepthwiseSeparableConv(96, 128, kernel_size=3, padding=2, dilation=2)
-        )
-        self.branch5 = nn.Sequential(
-            nn.Conv2d(in_channels, 24, kernel_size=1, bias=False),
-            DepthwiseSeparableConv(24, 64, kernel_size=5, padding=2)
-        )
-        self.branch_pool = nn.Sequential(
-            nn.AvgPool2d(kernel_size=3, stride=1, padding=1),
-            nn.Conv2d(in_channels, 48, kernel_size=1, bias=False)
-        )
-        self.se = SEBlock(304)  # 64 + 128 + 64 + 48 = 304 channels
-
-    def forward(self, x):
-        b1 = self.branch1(x)
-        b3 = self.branch3(x)
-        b5 = self.branch5(x)
-        bp = self.branch_pool(x)
-        x = torch.cat([b1, b3, b5, bp], dim=1)
-        return self.se(x)
 
 
 class ModelBuilder(nn.Module):
@@ -65,7 +28,10 @@ class ModelBuilder(nn.Module):
     """
 
     OUTPUT_SIZES = [
-        (192, 128)
+        (192, 128),
+        (96, 64),
+        (48, 32),
+        (24, 16),
     ]
 
     def __init__(self):

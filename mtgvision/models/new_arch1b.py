@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from mtgvision.models.new_arch1 import DepthwiseSeparableConv, SEBlock
+from mtgvision.models.nn import DepthwiseSeparableConv, SEBlock
 
 # ========================================================================= #
 # HELPER                                                                    #
