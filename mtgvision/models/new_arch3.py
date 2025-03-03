@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from mtgvision.models.nn import DepthwiseSeparableConv, SEBlock
+from mtgvision.models.nn import AeBase, DepthwiseSeparableConv, SEBlock
 
 
 # ========================================================================= #
@@ -51,7 +51,7 @@ class MobileViTBlock(nn.Module):
         return self.gelu(x)
 
 
-class ModelBuilder(nn.Module):
+class Ae3(AeBase):
     """Modern, efficient encoder-decoder model for image reconstruction.
 
     Reconstructs misaligned inputs with a hybrid architecture blending convolutions and
@@ -64,10 +64,8 @@ class ModelBuilder(nn.Module):
         y_size (tuple): Output size in NCHW format (e.g., (batch, 3, 192, 128)).
     """
 
-    def __init__(self, x_size, y_size):
-        super(ModelBuilder, self).__init__()
-        self.x_size = x_size  # e.g., (batch, 3, 192, 128) in NCHW
-        self.y_size = y_size  # e.g., (batch, 3, 192, 128) in NCHW
+    def __init__(self):
+        super(Ae3, self).__init__()
 
         # Encoder: Efficient downsampling with hybrid blocks
         self.stem = DepthwiseSeparableConv(3, 32, kernel_size=5, stride=4, padding=2)
@@ -122,22 +120,7 @@ class ModelBuilder(nn.Module):
         self._init_weights()
         self.encoded = None
 
-    def _init_weights(self):
-        """Initialize weights using Kaiming normal for conv layers and constant for BN."""
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def encode(self, x):
-        # Input shape: (batch, 3, 192, 128) if NCHW, or (batch, 192, 128, 3) if NHWC
-        if x.size(1) != 3:
-            if x.size(3) == 3:
-                x = x.permute(0, 3, 1, 2)
-                # Shape: (batch, 3, 192, 128)
-
+    def _encode(self, x):
         # Encoder
         x = self.stem(x)
         # Shape: (batch, 32, 48, 32) - stride=4 quarters H and W (192/4=48, 128/4=32)
@@ -155,8 +138,9 @@ class ModelBuilder(nn.Module):
         # Shape: (batch, 32, 4, 4) - stride=2 halves H and W with padding=0 ((8-2)/2+1=4, (5-2)/2+1=4)
         # Elements per item: 32 * 4 * 4 = 512
         self.encoded = x
+        return x
 
-    def decode(self, z, *, multiscale: bool = True):
+    def _decode(self, z, *, multiscale: bool = True):
         # Decoder
         x = self.dec3(z)
         # Shape: (batch, 48, 12, 12) - upsample x3 (4*3=12, 4*3=12), conv to 48 channels
@@ -172,50 +156,6 @@ class ModelBuilder(nn.Module):
         # Shape: (batch, 3, 192, 128) - interpolate to match input resolution
         return [x]
 
-    def forward(self, x, *, multiscale: bool = True):
-        z = self.encode(x)
-        out = self.decode(z, multiscale=multiscale)
-        return z, out
-
-
-def create_model(x_size, y_size):
-    """Create an instance of ModelBuilder with specified input and output sizes.
-
-    Args:
-        x_size (tuple): Input size in NHWC format (e.g., (batch, 192, 128, 3)).
-        y_size (tuple): Output size in NHWC format (e.g., (batch, 192, 128, 3)).
-
-    Returns:
-        tuple: (model, encoded_tensor) where model is the ModelBuilder instance and
-               encoded_tensor is the bottleneck representation.
-    """
-    assert len(x_size) == 4 and len(y_size) == 4
-    model_x_size = (x_size[0], x_size[3], x_size[1], x_size[2])  # Convert to NCHW
-    model_y_size = (y_size[0], y_size[3], y_size[1], y_size[2])  # Convert to NCHW
-    model = ModelBuilder(model_x_size, model_y_size)
-    return model, model.encoded
-
 
 if __name__ == '__main__':
-    x_size = (16, 192, 128, 3)  # NHWC format
-    y_size = (16, 192, 128, 3)  # NHWC format, same as input
-
-    model, encoding_layer = create_model(x_size, y_size)
-    device = torch.device("mps")  # MPS for Apple Silicon
-    model = model.to(device)
-    dummy_input = torch.randn(16, 192, 128, 3).to(device)  # NHWC format
-
-    # Warm-up
-    with torch.no_grad():
-        for _ in range(10):
-            model(dummy_input)
-
-    # Benchmark
-    with torch.no_grad():
-        for i in tqdm(range(100)):
-            output = model(dummy_input)
-
-    print(f"Input shape: {dummy_input.shape}")  # (16, 192, 128, 3) NHWC
-    print(f"Output shape: {output.shape}")  # (16, 3, 192, 128) NCHW
-    print(f"Encoding shape: {model.encoded.shape}")  # (16, 32, 4, 4) NCHW
-    print(f"Encoding elements per item: {model.encoded.numel() // x_size[0]}")  # 512
+    Ae3.quick_test()

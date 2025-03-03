@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from mtgvision.models.nn import DepthwiseSeparableConv, SEBlock
+from mtgvision.models.nn import AeBase, DepthwiseSeparableConv, SEBlock
 
 
 # ========================================================================= #
@@ -49,7 +49,7 @@ class LightInception(nn.Module):
         return self.se(x)
 
 
-class ModelBuilder(nn.Module):
+class Ae1(AeBase):
     """Encoder-Decoder model for image reconstruction with modern efficiency techniques.
 
     Designed to reconstruct images from misaligned inputs with high accuracy and speed.
@@ -64,12 +64,8 @@ class ModelBuilder(nn.Module):
         y_size (tuple): Output size in NCHW format (e.g., (1, 3, 192, 128)).
     """
 
-    OUTPUT_SIZES = [
-        (192, 128)
-    ]
-
     def __init__(self):
-        super(ModelBuilder, self).__init__()
+        super(Ae1, self).__init__()
 
         def _dec_block(in_channels, out_channels):
             dec_main = nn.Sequential(
@@ -119,24 +115,8 @@ class ModelBuilder(nn.Module):
         """Final layer converts features to 3-channel output matching input resolution."""
 
         self._init_weights()
-        self.encoded = None
 
-    def _init_weights(self):
-        """Initialize weights using Kaiming normal for conv layers and constant for BN."""
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def encode(self, x):
-        # Input shape: (1, 3, 192, 128) if NCHW, or (1, 192, 128, 3) if NHWC
-        if x.size(1) != 3:
-            if x.size(3) == 3:
-                x = x.permute(0, 3, 1, 2)
-                # Shape: (1, 3, 192, 128)
-
+    def _encode(self, x):
         # Encoder
         x = self.stem(x)
         # Shape: (1, 64, 96, 64) - stride=2 halves H and W (192/2=96, 128/2=64)
@@ -157,7 +137,7 @@ class ModelBuilder(nn.Module):
         self.encoded = x
         return x
 
-    def decode(self, z, *, multiscale: bool = True):
+    def _decode(self, z, *, multiscale: bool = True):
         # Decoder
         x = self.dec4_main(z)
         # Shape: (1, 64, 8, 8) - upsample x2 (4*2=8, 4*2=8), conv to 64 channels
@@ -183,57 +163,8 @@ class ModelBuilder(nn.Module):
         # Shape: (1, 16, 192, 128) - interpolate to match input resolution
         x = self.final(x)
         # Shape: (1, 3, 192, 128) - convert to 3-channel output matching input resolution
-
-        if multiscale:
-            return [x]
-        else:
-            return [x]
-
-    def forward(self, x, *, multiscale: bool = True):
-        z = self.encode(x)
-        out = self.decode(z, multiscale=multiscale)
-        return z, out
-
-
-
-
-def create_model(x_size, y_size):
-    """Create an instance of ModelBuilder with specified input and output sizes.
-
-    Args:
-        x_size (tuple): Input size in NHWC format (e.g., (1, 192, 128, 3)).
-        y_size (tuple): Output size in NHWC format (e.g., (1, 192, 128, 3)).
-
-    Returns:
-        tuple: (model, encoded_tensor) where model is the ModelBuilder instance and
-               encoded_tensor is the bottleneck representation.
-    """
-    assert len(x_size) == 4 and len(y_size) == 4
-    assert x_size[1:] == (192, 128, 3) and y_size[1:] == (192, 128, 3)
-    model = ModelBuilder()
-    return model, model.encoded
+        return [x]
 
 
 if __name__ == '__main__':
-    x_size = (16, 192, 128, 3)  # NHWC format
-    y_size = (16, 192, 128, 3)  # NHWC format, same as input
-
-    model, encoding_layer = create_model(x_size, y_size)
-    device = torch.device("mps")  # MPS for Apple Silicon
-    model = model.to(device)
-    dummy_input = torch.randn(16, 192, 128, 3).to(device)  # NHWC format
-
-    # Warm-up
-    with torch.no_grad():
-        for _ in range(10):
-            model(dummy_input)
-
-    # Benchmark
-    with torch.no_grad():
-        for i in tqdm(range(100)):
-            output = model(dummy_input)
-
-    print(f"Input shape: {dummy_input.shape}")  # (1, 192, 128, 3) NHWC
-    print(f"Output shape: {output.shape}")  # (1, 3, 192, 128) NCHW
-    print(f"Encoding shape: {model.encoded.shape}")  # (1, 32, 4, 4) NCHW
-    print(f"Encoding elements: {model.encoded.numel()}")  # 512
+    Ae1.quick_test()

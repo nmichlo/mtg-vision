@@ -1,4 +1,87 @@
+from typing import final, List, Tuple
+
+import torch
 import torch.nn as nn
+
+
+class AeBase(nn.Module):
+
+    encoded: torch.Tensor = None
+
+    def _encode(self, x) -> torch.Tensor:
+        raise NotImplementedError
+
+    def _decode(self, z, *, multiscale: bool = True) -> List[torch.Tensor]:
+        raise NotImplementedError
+
+    def _init_weights(self):
+        """Initialize weights for convolutional and batch norm layers."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    @final
+    def decode(self, z, *, multiscale: bool = True) -> List[torch.Tensor]:
+        return self._decode(z, multiscale=multiscale)
+
+    @final
+    def encode(self, x) -> torch.Tensor:
+        # Input shape: (1, 3, 192, 128) if NCHW, or (1, 192, 128, 3) if NHWC
+        if x.size(1) != 3:
+            if x.size(3) == 3:
+                x = x.permute(0, 3, 1, 2)
+                # Shape: (1, 3, 192, 128)
+        z = self._encode(x)
+        self.encoded = z
+        return z
+
+    @final
+    def forward(self, x, *, multiscale: bool = True) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        z = self.encode(x)
+        multiout = self.decode(z, multiscale=multiscale)
+        return z, multiout
+
+    @classmethod
+    def create_model(cls, x_size, y_size) -> 'AeBase':
+        assert len(x_size) == 4 and len(y_size) == 4
+        assert x_size[1:] == (192, 128, 3) and y_size[1:] == (192, 128, 3)
+        model = cls()
+        return model
+
+    @classmethod
+    def quick_test(cls, batch_size: int = 16, n: int = 100):
+        from tqdm import tqdm
+
+        # Define input and output sizes in NHWC format
+        x_size = (batch_size, 192, 128, 3)
+        y_size = (batch_size, 192, 128, 3)
+
+        # Create model and move to MPS device
+        model, encoding_layer = cls.create_model(x_size, y_size)
+        device = torch.device("mps")
+        model = model.to(device)
+
+        # Create dummy input
+        dummy_input = torch.randn(batch_size, 192, 128, 3).to(device)
+
+        # Warm-up runs
+        with torch.no_grad():
+            for _ in range(10):
+                model(dummy_input)
+
+        # Benchmark
+        with torch.no_grad():
+            for i in tqdm(range(n)):
+                output = model(dummy_input)
+
+        # Print shapes and bottleneck size
+        print(f"Input shape: {dummy_input.shape}")  # (16, 192, 128, 3) NHWC
+        print(f"Output shape: {output.shape}")  # (16, 3, 192, 128) NCHW
+        print(f"Encoding shape: {model.encoded.shape}")  # (16, 32, 4, 4) NCHW
+        print(f"Encoding elements per item: {model.encoded.numel() // x_size[0]}")
 
 
 class SEBlock(nn.Module):

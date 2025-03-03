@@ -1,5 +1,5 @@
+import argparse
 import functools
-import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,22 +13,19 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import Callback
 
-import mtgvision.models.new_arch1 as arch1
-import mtgvision.models.new_arch1b as arch1b
-import mtgvision.models.new_arch3 as arch3
-import mtgvision.models.new_arch4 as arch4
-
-_MODELS = {
-    "new_arch1": arch1.create_model,
-    "new_arch1b": arch1b.create_model,
-    "new_arch3": arch3.create_model,
-    "new_arch4": arch4.create_model,
-}
-
-
-
+from mtgvision.models.new_arch1 import Ae1
+from mtgvision.models.new_arch1b import Ae1b
+from mtgvision.models.new_arch3 import Ae3
+from mtgvision.models.new_arch4 import Ae4
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
+
+_MODELS = {
+    Ae1.__name__.lower(): Ae1,
+    Ae1b.__name__.lower(): Ae1b,
+    Ae3.__name__.lower(): Ae3,
+    Ae4.__name__.lower(): Ae4,
+}
 
 
 @functools.lru_cache(maxsize=1)
@@ -66,10 +63,8 @@ class MtgVisionEncoder(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.save_hyperparameters(config)
-        self.model, _ = _MODELS[self.hparams.model](
-            self.hparams.x_size,
-            self.hparams.y_size,
-        )
+        self.model = _MODELS[self.hparams.model]()
+        print(self.model)
         self.criterion = nn.MSELoss()
 
     def forward(self, x):
@@ -206,7 +201,14 @@ class ImageLoggingCallback(Callback):
 
 
 # Training function using PyTorch Lightning
-def train(seed: int = 42):
+def train(
+    model_name: str,
+    multiscale: bool,
+    cyclic: bool,
+    target_consistency: bool,
+    seed: int,
+    max_steps: int,
+):
     random.seed(seed)
     torch.manual_seed(seed)
     GLOBAL_RAN.reset(seed)
@@ -221,10 +223,11 @@ def train(seed: int = 42):
         "x_size": (16, 192, 128, 3),  # NHWC
         "y_size": (16, 192, 128, 3),  # NHWC
         "img_type": "small",
-        "model": "new_arch3",
-        "multiscale": True,
-        "cyclic": False,
-        "target_consistency": False,
+        "model": model_name,
+        "multiscale": multiscale,
+        "cyclic": cyclic,
+        "target_consistency": target_consistency,
+        "max_steps": max_steps,
     }
 
     # Initialize model
@@ -257,7 +260,7 @@ def train(seed: int = 42):
         accelerator="mps",
         devices=1,
         # precision="32",
-        max_steps=100_000,
+        max_steps=max_steps,
     )
 
     # Run training
@@ -278,5 +281,25 @@ def train(seed: int = 42):
     print("Model trained and converted to CoreML. Saved as 'model.mlmodel'.")
 
 
+def _main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="ae1", help=f"Model architecture to use, allowed: {list(_MODELS.keys())}")
+    parser.add_argument("--multiscale", action="store_true", help="Use multiscale loss")
+    parser.add_argument("--cyclic", action="store_true", help="Use cyclic consistency loss")
+    parser.add_argument("--target-consistency", action="store_true", help="Use target consistency loss")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--max-steps", type=int, default=100_000, help="Maximum training steps")
+    args = parser.parse_args()
+
+    train(
+        model_name=args.model,
+        multiscale=args.multiscale,
+        cyclic=args.cyclic,
+        target_consistency=args.target_consistency,
+        seed=args.seed,
+        max_steps=args.max_steps,
+    )
+
+
 if __name__ == "__main__":
-    train()
+    _main()
