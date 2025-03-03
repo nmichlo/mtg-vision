@@ -3,7 +3,6 @@ import functools
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils.data import IterableDataset, DataLoader
 import numpy as np
 import random
@@ -14,12 +13,14 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import Callback
 
 from mtgvision.models.new_arch1 import Ae1
+from mtgvision.models.new_arch1b import Ae1b
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
 
 _MODELS = {
-    Ae1.__name__.lower(): functools.partial(Ae1, stn=False),
-    Ae1.__name__.lower() + '_stn': functools.partial(Ae1, stn=True),
+    Ae1.__name__.lower(): functools.partial(Ae1.create_model, stn=False),
+    Ae1b.__name__.lower(): functools.partial(Ae1b.create_model, stn=True),
+    Ae1b.__name__.lower() + '_stn': functools.partial(Ae1b.create_model, stn=True),
 }
 
 
@@ -58,7 +59,7 @@ class MtgVisionEncoder(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.save_hyperparameters(config)
-        self.model = _MODELS[self.hparams.model]()
+        self.model = _MODELS[self.hparams.model](self.hparams.x_size, self.hparams.y_size)
         print(self.model)
         self.criterion = nn.MSELoss()
 
@@ -71,41 +72,31 @@ class MtgVisionEncoder(pl.LightningModule):
         z, (out, *multi_out) = self(x)
 
         loss = 0
-        num = 0
-
-        # recon loss
+        # Reconstruction loss with perceptual component
         loss_recon = self.criterion(out, y)
         loss += loss_recon
-        num += 1
 
-        # multiscale
+        # Multiscale loss
         loss_multiscale = 0
         if self.hparams.multiscale and len(multi_out) > 0:
             for output in multi_out:
-                output = F.interpolate(output, size=(192, 128), mode='bilinear', align_corners=False)
                 loss_multiscale += self.criterion(output, y)
             loss_multiscale /= len(multi_out)
-            loss += loss_multiscale
-            num += 1
+            loss += 0.5 * loss_multiscale
 
-        # cyclic consistency loss
+        # Cyclic and target consistency losses
         loss_cyclic = 0
         if self.hparams.cyclic:
             z2 = self.model.encode(out)
             loss_cyclic = self.criterion(z2, z)
-            loss += loss_cyclic
-            num += 1
+            loss += 0.2 * loss_cyclic
 
-        # target consistency loss
         loss_target = 0
         if self.hparams.target_consistency:
             z2 = self.model.encode(y)
             loss_target = self.criterion(z2, z)
-            loss += loss_target
-            num += 1
+            loss += 0.2 * loss_target
 
-        # done
-        loss /= num
         logs = {
             "loss_recon": loss_recon,
             "loss_multiscale": loss_multiscale,
@@ -254,7 +245,7 @@ def train(
         callbacks=[ImageLoggingCallback(vis_batch)],
         accelerator="mps",
         devices=1,
-        precision="mixed",
+        precision="32",
         max_steps=max_steps,
     )
 

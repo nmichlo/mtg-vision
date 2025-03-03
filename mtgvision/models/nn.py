@@ -45,14 +45,14 @@ class AeBase(nn.Module):
         return z, multiout
 
     @classmethod
-    def create_model(cls, x_size, y_size) -> 'AeBase':
+    def create_model(cls, x_size, y_size, **kwargs) -> 'AeBase':
         assert len(x_size) == 4 and len(y_size) == 4
         assert x_size[1:] == (192, 128, 3) and y_size[1:] == (192, 128, 3)
         model = cls()
         return model
 
     @classmethod
-    def quick_test(cls, batch_size: int = 16, n: int = 100):
+    def quick_test(cls, batch_size: int = 16, n: int = 100, **model_kwargs):
         from tqdm import tqdm
 
         # Define input and output sizes in NHWC format
@@ -60,9 +60,10 @@ class AeBase(nn.Module):
         y_size = (batch_size, 192, 128, 3)
 
         # Create model and move to MPS device
-        model, encoding_layer = cls.create_model(x_size, y_size)
+        model = cls.create_model(x_size, y_size, **model_kwargs)
         device = torch.device("mps")
         model = model.to(device)
+        print(model)
 
         # Create dummy input
         dummy_input = torch.randn(batch_size, 192, 128, 3).to(device)
@@ -75,13 +76,13 @@ class AeBase(nn.Module):
         # Benchmark
         with torch.no_grad():
             for i in tqdm(range(n)):
-                output = model(dummy_input)
+                z, (output, *_) = model(dummy_input)
 
         # Print shapes and bottleneck size
         print(f"Input shape: {dummy_input.shape}")  # (16, 192, 128, 3) NHWC
         print(f"Output shape: {output.shape}")  # (16, 3, 192, 128) NCHW
-        print(f"Encoding shape: {model.encoded.shape}")  # (16, 32, 4, 4) NCHW
-        print(f"Encoding elements per item: {model.encoded.numel() // x_size[0]}")
+        print(f"Encoding shape: {z.shape}")  # (16, 32, 4, 4) NCHW
+        print(f"Encoding elements per item: {z.numel() // x_size[0]}")
 
 
 class SEBlock(nn.Module):
