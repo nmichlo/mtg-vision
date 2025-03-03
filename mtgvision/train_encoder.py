@@ -77,23 +77,51 @@ class MtgVisionEncoder(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         z, (out, *multi_out) = self(x)
-        loss = self.criterion(out, y)
+
+        loss = 0
+        num = 0
+
+        # recon loss
+        loss_recon = self.criterion(out, y)
+        loss += loss_recon
+        num += 1
+
         # multiscale
+        loss_multiscale = 0
         if self.hparams.multiscale:
             for output in multi_out:
                 output = F.interpolate(output, size=(192, 128), mode='bilinear', align_corners=False)
-                loss += self.criterion(output, y)
-            loss /= len(multi_out) + 1
+                loss_multiscale += self.criterion(output, y)
+            loss_multiscale /= len(multi_out)
+            loss += loss_multiscale
+            num += 1
+
         # cyclic consistency loss
+        loss_cyclic = 0
         if self.hparams.cyclic:
             z2 = self.model.encode(out)
-            loss += self.criterion(z2, z)
+            loss_cyclic = self.criterion(z2, z)
+            loss += loss_cyclic
+            num += 1
+
         # target consistency loss
+        loss_target = 0
         if self.hparams.target_consistency:
             z2 = self.model.encode(y)
-            loss += self.criterion(z2, z)
+            loss_target = self.criterion(z2, z)
+            loss += loss_target
+            num += 1
+
         # done
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        loss /= num
+        logs = {
+            "loss_recon": loss_recon,
+            "loss_multiscale": loss_multiscale,
+            "loss_cyclic": loss_cyclic,
+            "loss_target": loss_target,
+            "train_loss": loss,
+        }
+        self.log_dict(logs, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
@@ -172,6 +200,7 @@ class ImageLoggingCallback(Callback):
                 logs[name] = wandb.Image(self.join_images_into_row(out_np), caption=f"Output {i}")
         # stop logging after the first time
         self._first_log = False
+        wandb.log(logs)
 
 
 # Training function using PyTorch Lightning
@@ -190,9 +219,9 @@ def train(seed: int = 42):
         "x_size": (16, 192, 128, 3),  # NHWC
         "y_size": (16, 192, 128, 3),  # NHWC
         "img_type": "small",
-        "model": "new_arch1",
-        "multiscale": False,
-        "cyclic": True,
+        "model": "new_arch1b",
+        "multiscale": True,
+        "cyclic": False,
         "target_consistency": True,
     }
 
