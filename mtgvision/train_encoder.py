@@ -222,7 +222,7 @@ def train(seed: int = 42):
         "model": "new_arch1b",
         "multiscale": True,
         "cyclic": False,
-        "target_consistency": True,
+        "target_consistency": False,
     }
 
     # Initialize model
