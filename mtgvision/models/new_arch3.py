@@ -168,9 +168,16 @@ class ModelBuilder(nn.Module):
             nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False),
             DepthwiseSeparableConv(32, 16, kernel_size=3, padding=1)
         )
+
+        """Third decoder stage, upsamples with efficient conv."""
+        self.dec0 = nn.Sequential(
+            nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False),
+            DepthwiseSeparableConv(16, 8, kernel_size=3, padding=1)
+        )
+
         """First decoder stage, prepares for final output."""
 
-        self.final = nn.Conv2d(16, 3, kernel_size=1, bias=False)
+        self.final = nn.Conv2d(8, 3, kernel_size=1, bias=False)
         """Final layer outputs 3-channel image at input resolution."""
 
         self._init_weights()
@@ -217,8 +224,10 @@ class ModelBuilder(nn.Module):
         # Shape: (batch, 32, 24, 24) - upsample x2 (12*2=24, 12*2=24), conv to 32 channels
         x = self.dec1(x)
         # Shape: (batch, 16, 96, 96) - upsample x4 (24*4=96, 24*4=96), conv to 16 channels
+        x = self.dec0(x)
+        # Shape: (batch, 8, 192, 192) - upsample x4 (96*2=192, 96*2=192), conv to 8 channels
         x = self.final(x)
-        # Shape: (batch, 3, 96, 96) - conv to 3 channels
+        # Shape: (batch, 3, 192, 192) - conv to 3 channels
         x = F.interpolate(x, size=(192, 128), mode='bilinear', align_corners=False)
         # Shape: (batch, 3, 192, 128) - interpolate to match input resolution
 

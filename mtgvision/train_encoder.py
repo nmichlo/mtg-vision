@@ -12,7 +12,10 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import Callback
 
-from mtgvision.models.new_arch3 import create_model
+# from mtgvision.models.new_arch3 import create_model
+from mtgvision.models.new_arch1 import create_model
+
+
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
 
@@ -79,7 +82,7 @@ class MtgVisionEncoder(pl.LightningModule):
 # Define the Data Module
 class MtgDataModule(pl.LightningDataModule):
 
-    def __init__(self, batch_size, num_workers=4):
+    def __init__(self, batch_size, num_workers=3):
         super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -145,7 +148,7 @@ def train(seed: int = 42):
     # Configuration
     config = {
         "seed": seed,
-        "batch_size": 32,
+        "batch_size": 16,
         "num_epochs": 100,
         "learning_rate": 1e-3,
         "weight_decay": 1e-5,
@@ -188,7 +191,7 @@ def train(seed: int = 42):
     trainer.fit(model, data_module)
 
     # Save the final model checkpoint
-    trainer.save_checkpoint("final_model.ckpt")
+    # trainer.save_checkpoint("final_model.ckpt")
 
     # Convert to CoreML
     model.eval()

@@ -201,6 +201,18 @@ class ModelBuilder(nn.Module):
             nn.BatchNorm2d(32),
             nn.GELU()
         )
+
+        """Third decoder stage, continues upsampling with a separate residual path."""
+        self.dec0_main = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            DepthwiseSeparableConv(32, 32, kernel_size=3, padding=1)
+        )
+        self.dec0_residual = nn.Sequential(
+            nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.GELU()
+        )  # weird size, should decrease to 16
+
         """First decoder stage, prepares for final output with a separate residual path."""
 
         self.final = nn.Conv2d(32, 3, kernel_size=1, bias=False)
@@ -261,10 +273,14 @@ class ModelBuilder(nn.Module):
         # Shape: (1, 32, 64, 64) - upsample x2 (32*2=64, 32*2=64), conv to 32 channels
         x = x + self.dec1_residual(x)  # Residual connection with matching channels
         # Shape: (1, 32, 64, 64) - residual preserves shape
-        x = self.final(x)
-        # Shape: (1, 3, 64, 64) - conv to 3 channels
+        x = self.dec0_main(x)
+        # Shape: (1, 16, 128, 128) - upsample x2 (64*2=128, 64*2=128), conv to 16 channels
+        x = x + self.dec0_residual(x)  # Residual connection with matching channels
+        # Shape: (1, 16, 128, 128) - residual preserves shape
         x = F.interpolate(x, size=(192, 128), mode='bilinear', align_corners=False)
-        # Shape: (1, 3, 192, 128) - interpolate to match input resolution
+        # Shape: (1, 16, 192, 128) - interpolate to match input resolution
+        x = self.final(x)
+        # Shape: (1, 3, 192, 128) - convert to 3-channel output matching input resolution
 
         return x
 
