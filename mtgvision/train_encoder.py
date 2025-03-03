@@ -99,10 +99,12 @@ class MtgDataModule(pl.LightningDataModule):
 
 # Custom callback for periodic image logging
 class ImageLoggingCallback(Callback):
+
     def __init__(self, vis_batch, log_every_n_seconds=120):
         self.vis_batch = vis_batch
         self.log_every_n_seconds = log_every_n_seconds
         self.last_log_time = time.time()
+        self._first_log = True
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         current_time = time.time()
@@ -123,8 +125,9 @@ class ImageLoggingCallback(Callback):
         return np.concatenate(images, axis=1)
 
     # Image logging function adapted for Lightning
-    @staticmethod
-    def log_images(model, vis_batch_np):
+    def log_images(self, model, vis_batch_np):
+        print("Logging images...")
+        logs = {}
         model.eval()
         with torch.no_grad():
             x_np = np.stack([x for x, _ in vis_batch_np], axis=0)
@@ -132,12 +135,14 @@ class ImageLoggingCallback(Callback):
             x = torch.from_numpy(x_np).float().permute(0, 3, 1, 2).to(model.device)
             output = model(x)
             out_np = np.clip(output.cpu().permute(0, 2, 3, 1).numpy(), 0, 1)
-            wandb.log({
-                "images_x": wandb.Image(ImageLoggingCallback.join_images_into_row(x_np), caption="Input"),
-                "images_y": wandb.Image(ImageLoggingCallback.join_images_into_row(y_np), caption="Target"),
-                "images_out": wandb.Image(ImageLoggingCallback.join_images_into_row(out_np), caption="Output"),
-            })
-
+            # log images
+            if self._first_log:
+                logs["images_x"] = wandb.Image(self.join_images_into_row(x_np), caption="Input")
+            if self._first_log:
+                logs["images_y"] = wandb.Image(self.join_images_into_row(y_np), caption="Target")
+            logs["images_out"] = wandb.Image(self.join_images_into_row(out_np), caption="Output")
+        # stop logging after the first time
+        self._first_log = False
 
 # Training function using PyTorch Lightning
 def train(seed: int = 42):

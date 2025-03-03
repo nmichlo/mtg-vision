@@ -139,3 +139,4 @@ data/
 *.zip
 *.db
 wandb/
+*.ckpt
