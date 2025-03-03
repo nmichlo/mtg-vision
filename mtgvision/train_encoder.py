@@ -20,7 +20,7 @@ import mtgvision.models.new_arch4 as arch4
 _MODELS = {
     "new_arch1": arch1.create_model,
     "new_arch1b": arch1b.create_model,
-    # "new_arch4": arch4.create_model,
+    "new_arch4": arch4.create_model,
 }
 
 
@@ -88,7 +88,7 @@ class MtgVisionEncoder(pl.LightningModule):
 
         # multiscale
         loss_multiscale = 0
-        if self.hparams.multiscale:
+        if self.hparams.multiscale and len(multi_out) > 0:
             for output in multi_out:
                 output = F.interpolate(output, size=(192, 128), mode='bilinear', align_corners=False)
                 loss_multiscale += self.criterion(output, y)
@@ -219,7 +219,7 @@ def train(seed: int = 42):
         "x_size": (16, 192, 128, 3),  # NHWC
         "y_size": (16, 192, 128, 3),  # NHWC
         "img_type": "small",
-        "model": "new_arch1b",
+        "model": "new_arch1",
         "multiscale": True,
         "cyclic": False,
         "target_consistency": False,
@@ -238,8 +238,11 @@ def train(seed: int = 42):
     ]
 
     # Initialize wandb
-    wandb.init(project="mtgvision_encoder", config=config)
-    wandb_logger = WandbLogger()
+    wandb_logger = WandbLogger(
+        name=f"{config['model']}_lr{config['learning_rate']}_multi-{config['multiscale']}_cyc-{config['cyclic']}_targ-{config['target_consistency']}",
+        project="mtgvision_encoder",
+        config=config,
+    )
 
     # Initialize model
     model = MtgVisionEncoder(config)
