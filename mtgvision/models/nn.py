@@ -37,9 +37,9 @@ class AeBase(nn.Module):
     @final
     def encode(self, x) -> torch.Tensor:
         # Input shape: (1, 3, 192, 128) if NCHW, or (1, 192, 128, 3) if NHWC
-        if x.size(1) != 3:
-            if x.size(3) == 3:
-                x = x.permute(0, 3, 1, 2)
+        # if x.size(1) != 3:
+        #     if x.size(3) == 3:
+        #         x = x.permute(0, 3, 1, 2)
                 # Shape: (1, 3, 192, 128)
         z = self._encode(x)
         self.encoded = z
