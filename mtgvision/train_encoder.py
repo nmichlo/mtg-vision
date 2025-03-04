@@ -1,6 +1,7 @@
 import argparse
 import functools
 from inspect import signature
+from pathlib import Path
 
 import pydantic
 import torch
@@ -274,7 +275,8 @@ def train(config: Config):
 
     # Initialize model
     model = MtgVisionEncoder(config.model_dump())
-    # model = torch.compile(model)
+    if config.compile:
+        model = torch.compile(model, backend="aot_eager")
 
     # Set up trainer with optimizations
     trainer = pl.Trainer(
@@ -282,7 +284,7 @@ def train(config: Config):
         logger=wandb_logger,
         callbacks=[
             ImageLoggingCallback(vis_batch, log_every_n_steps=2500),
-            ModelCheckpoint(monitor="train_loss", save_top_k=1, mode="min", every_n_train_steps=2500),
+            ModelCheckpoint(monitor="train_loss", save_top_k=3, mode="min", every_n_train_steps=2500),
             StochasticWeightAveraging(swa_lrs=1e-2),
         ],
         accelerator="mps",
@@ -291,6 +293,8 @@ def train(config: Config):
         max_steps=config.max_steps,
         accumulate_grad_batches=config.accumulate_grad_batches,
         gradient_clip_val=config.gradient_clip_val,
+        enable_checkpointing=True,
+        default_root_dir=Path(__file__).parent / "lightning_logs"
     )
 
     # Run training
