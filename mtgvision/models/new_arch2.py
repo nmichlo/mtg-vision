@@ -259,6 +259,8 @@ class Ae2(AeBase):
         self.dec0 = _upscale_block(dec_chs[1], dec_chs[0], expand_ratio=self.dec_expand_ratio)
 
         # **Multi-Scale Outputs**
+        self.final_4 = nn.Conv2d(dec_chs[4], 3, 1, bias=False)
+        self.final_3 = nn.Conv2d(dec_chs[3], 3, 1, bias=False)
         self.final_2 = nn.Conv2d(dec_chs[2], 3, 1, bias=False)
         self.final_1 = nn.Conv2d(dec_chs[1], 3, 1, bias=False)
         self.final_0 = nn.Conv2d(dec_chs[0], 3, 1, bias=False)
@@ -301,6 +303,8 @@ class Ae2(AeBase):
                 self.final_0(x0),
                 self.final_1(x1),
                 self.final_2(x2),
+                self.final_3(x3),
+                self.final_4(x4),
             ]
         else:
             return [
