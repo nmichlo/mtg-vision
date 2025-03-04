@@ -7,6 +7,11 @@ import torch.nn.functional as F
 # Assuming AeBase is provided elsewhere with _init_weights and quick_test
 from mtgvision.models.nn import AeBase
 
+
+def Activation():
+    return nn.Mish(inplace=True)
+
+
 # Coordinate Attention Module for advanced attention
 class CoordinateAttention(nn.Module):
     def __init__(self, channels):
@@ -23,6 +28,7 @@ class CoordinateAttention(nn.Module):
         w_att = self.conv_w(pool_w)
         return x * self.sigmoid(h_att) * self.sigmoid(w_att)
 
+
 # Depthwise Separable Convolution with dilation, GroupNorm, and SiLU
 class DepthwiseSeparableConv(nn.Module):
     def __init__(self, in_ch, out_ch, kernel_size=3, stride=1, padding=1, dilation=1):
@@ -34,7 +40,7 @@ class DepthwiseSeparableConv(nn.Module):
         self.pointwise = nn.Conv2d(in_ch, out_ch, 1, bias=False)
         num_groups = max(out_ch // 4, 1)  # Ensure at least 1 group
         self.bn = nn.GroupNorm(num_groups, out_ch)
-        self.act = nn.SiLU()
+        self.act = Activation()
 
     def forward(self, x):
         x = self.depthwise(x)
@@ -42,6 +48,7 @@ class DepthwiseSeparableConv(nn.Module):
         x = self.bn(x)
         x = self.act(x)
         return x
+
 
 # Inverted Residual Block with intra skips, GroupNorm, SiLU, and Coordinate Attention
 class InvertedResidualBlock(nn.Module):
@@ -51,7 +58,7 @@ class InvertedResidualBlock(nn.Module):
         self.block = nn.Sequential(
             nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
             nn.GroupNorm(max(hidden_dim // 4, 1), hidden_dim),
-            nn.SiLU(),
+            Activation(),
             DepthwiseSeparableConv(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1, dilation=1),
             CoordinateAttention(hidden_dim),
             nn.Conv2d(hidden_dim, out_channels, 1, bias=False),
@@ -63,7 +70,7 @@ class InvertedResidualBlock(nn.Module):
         out = self.block(x)
         if self.use_residual:
             out = out + x  # Intra skip connection
-        return nn.SiLU()(out)
+        return Activation()(out)
 
 
 # **Downscale Block** with Dilated Convolutions
@@ -97,7 +104,7 @@ def _upscale_block(in_ch, out_ch, upsample: bool = True, expand_ratio: int = 4):
 class Ae2(AeBase):
 
     @classmethod
-    def create_model_small(cls, x_size, y_size, stn: bool = True):
+    def create_model_small(cls, x_size, y_size, stn: bool = False, multiscale: bool = False):
         return cls.create_model(
             x_size, y_size,
             # enc
@@ -114,10 +121,12 @@ class Ae2(AeBase):
             stn_groups=(4, 6, 8),
             stn_out_size=(12, 8),
             stn_hidden=96,
+            # multiscale
+            multiscale=multiscale,
         )
 
     @classmethod
-    def create_model_medium(cls, x_size, y_size, stn: bool = True):
+    def create_model_medium(cls, x_size, y_size, stn: bool = False, multiscale: bool = False):
         return cls.create_model(
             x_size, y_size,
             # enc
@@ -134,10 +143,12 @@ class Ae2(AeBase):
             stn_groups=(4, 8, 8),
             stn_out_size=(24, 16),
             stn_hidden=128,
+            # multiscale
+            multiscale=multiscale,
         )
 
     @classmethod
-    def create_model_heavy(cls, x_size, y_size, stn: bool = True):
+    def create_model_heavy(cls, x_size, y_size, stn: bool = False, multiscale: bool = False):
         return cls.create_model(
             x_size, y_size,
             # enc
@@ -154,6 +165,8 @@ class Ae2(AeBase):
             stn_groups=(8, 16, 16),
             stn_out_size=(24, 16),
             stn_hidden=128,
+            # multiscale
+            multiscale=multiscale,
         )
 
     def __init__(
@@ -172,6 +185,8 @@ class Ae2(AeBase):
         stn_groups: Tuple[int, int, int] = (8, 16, 16),
         stn_out_size: Tuple[int, int] = (24, 16),
         stn_hidden: int = 128,
+        # multiscale
+        multiscale: bool = False,
     ):
         super(Ae2, self).__init__()
         self.enc_chs = enc_chs
@@ -188,24 +203,26 @@ class Ae2(AeBase):
         self.stn_gr = stn_groups
         self.stn_hidden = stn_hidden
 
+        self.multiscale = multiscale
+
         # **Spatial Transformer Network (STN)** with Coordinate Attention
         if self.stn:
             self.localization = nn.Sequential(
                 nn.Conv2d(3, self.stn_chs[0], kernel_size=7, stride=2, padding=3, bias=False),
                 nn.GroupNorm(self.stn_gr[0], self.stn_chs[0]),  # Advanced normalization
-                nn.SiLU(),            # Newer activation
+                Activation(),            # Newer activation
                 nn.MaxPool2d(2, stride=2),
                 nn.Conv2d(self.stn_chs[0], self.stn_chs[1], kernel_size=5, stride=2, padding=2, bias=False),
                 nn.GroupNorm(self.stn_gr[1], self.stn_chs[1]),
-                nn.SiLU(),
+                Activation(),
                 CoordinateAttention(self.stn_chs[1]),  # Advanced attention in STN
                 nn.Conv2d(self.stn_chs[1], self.stn_chs[2], kernel_size=3, padding=1, bias=False),
                 nn.GroupNorm(self.stn_gr[2], self.stn_chs[2]),
-                nn.SiLU(),
+                Activation(),
             )
             self.fc_loc = nn.Sequential(
                 nn.Linear(self.stn_chs[2] * self.stn_out_size[0] * self.stn_out_size[1], self.stn_hidden),
-                nn.SiLU(),
+                Activation(),
                 nn.Linear(self.stn_hidden, 6)
             )
             self.fc_loc[-1].weight.data.zero_()
@@ -271,7 +288,7 @@ class Ae2(AeBase):
         x = self.bottleneck(x)
         return x
 
-    def _decode(self, z, multiscale: bool = True):
+    def _decode(self, z):
         if self.dec_extra is not None:
             z = self.dec_extra(z)
         x4 = self.dec4(z)
@@ -279,7 +296,7 @@ class Ae2(AeBase):
         x2 = self.dec2(x3)
         x1 = self.dec1(x2)
         x0 = self.dec0(x1)
-        if multiscale:
+        if self.multiscale:
             return [
                 self.final_0(x0),
                 self.final_1(x1),
@@ -292,6 +309,6 @@ class Ae2(AeBase):
 
 
 if __name__ == '__main__':
-    Ae2.quick_test(model=Ae2.create_model_small(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False))
-    Ae2.quick_test(model=Ae2.create_model_medium(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False))
-    Ae2.quick_test(model=Ae2.create_model_heavy(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False))
+    Ae2.quick_test(model=Ae2.create_model_small(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False), compile=False)
+    Ae2.quick_test(model=Ae2.create_model_medium(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False), compile=False)
+    Ae2.quick_test(model=Ae2.create_model_heavy(x_size=(16, 192, 128, 3), y_size=(16, 192, 128, 3), stn=False), compile=False)

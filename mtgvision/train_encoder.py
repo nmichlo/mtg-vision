@@ -1,5 +1,8 @@
 import argparse
 import functools
+from inspect import signature
+
+import pydantic
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,19 +14,21 @@ import wandb
 import coremltools as ct
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.callbacks import (
+    Callback, ModelCheckpoint,
+    StochasticWeightAveraging,
+)
 
-from mtgvision.models.new_arch1 import Ae1
-from mtgvision.models.new_arch1b import Ae1b
+from mtgdata import ScryfallBulkType, ScryfallImageType
 from mtgvision.models.new_arch2 import Ae2
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
 
 _MODELS = {
-    Ae1.__name__.lower(): functools.partial(Ae1.create_model, stn=False),
+    # Ae1.__name__.lower(): functools.partial(Ae1.create_model, stn=False),
 
-    Ae1b.__name__.lower(): functools.partial(Ae1b.create_model, stn=False),
-    Ae1b.__name__.lower() + '_stn': functools.partial(Ae1b.create_model, stn=True),
+    # Ae1b.__name__.lower(): functools.partial(Ae1b.create_model, stn=False),
+    # Ae1b.__name__.lower() + '_stn': functools.partial(Ae1b.create_model, stn=True),
 
     Ae2.__name__.lower() + 'l': functools.partial(Ae2.create_model_heavy, stn=False),
     Ae2.__name__.lower() + 'l_stn': functools.partial(Ae2.create_model_heavy, stn=True),
@@ -68,15 +73,25 @@ class RanMtgEncDecDataset(IterableDataset):
 
 # Define the Lightning Module
 class MtgVisionEncoder(pl.LightningModule):
-    def __init__(self, config):
+
+    hparams: "Config"
+
+    def __init__(self, config: dict):
         super().__init__()
         self.save_hyperparameters(config)
-        self.model = _MODELS[self.hparams.model](self.hparams.x_size, self.hparams.y_size)
-        print(self.model)
+
+    def configure_model(self) -> None:
+        model_fn = _MODELS[self.hparams.model_name]
+        print(model_fn, self.hparams.x_size, self.hparams.y_size, self.device_mesh, self.hparams.multiscale)
+        model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
+        model = model.to(self.device_mesh)
+        if self.hparams.compile:
+            model = torch.compile(model)
+        self.model = model
         self.criterion = nn.MSELoss()
 
     def forward(self, x):
-        z, multi_out = self.model(x, multiscale=self.hparams.multiscale)
+        z, multi_out = self.model(x)
         return z, multi_out
 
     def training_step(self, batch, batch_idx):
@@ -97,24 +112,37 @@ class MtgVisionEncoder(pl.LightningModule):
             loss_multiscale /= len(multi_out)
             loss += 0.5 * loss_multiscale
 
-        # Cyclic and target consistency losses
+        # Cycle consistency losses
         loss_cyclic = 0
         if self.hparams.cyclic:
             z2 = self.model.encode(out)
             loss_cyclic = self.criterion(z2, z)
             loss += 0.2 * loss_cyclic
 
+        # Target consistency loss
         loss_target = 0
         if self.hparams.target_consistency:
             z2 = self.model.encode(y)
             loss_target = self.criterion(z2, z)
             loss += 0.2 * loss_target
 
+        # Cycle WITH target consistency loss
+        loss_cycle_target = 0
+        if self.hparams.cycle_with_target > 0:
+            assert self.hparams.cycle_with_target % 2 == 0
+            n = self.hparams.cycle_with_target // 2
+            # like cycle and target, but only take first n/2 elements
+            _z = torch.concatenate([z[:n], z[:n]], dim=0)
+            _x = torch.concatenate([x[:n], out[:n]], dim=0)
+            loss_cycle_target += self.criterion(self.model.encode(_x), _z)
+            loss += 0.2 * loss_cycle_target
+
         logs = {
             "loss_recon": loss_recon,
             "loss_multiscale": loss_multiscale,
             "loss_cyclic": loss_cyclic,
             "loss_target": loss_target,
+            "loss_cycle_target": loss_cycle_target,
             "train_loss": loss,
         }
         self.log_dict(logs, on_step=True, on_epoch=True, prog_bar=True)
@@ -199,38 +227,34 @@ class ImageLoggingCallback(Callback):
         wandb.log(logs)
 
 
-# Training function using PyTorch Lightning
-def train(
-    model_name: str,
-    multiscale: bool,
-    cyclic: bool,
-    target_consistency: bool,
-    seed: int,
-    max_steps: int,
-):
-    random.seed(seed)
-    torch.manual_seed(seed)
-    GLOBAL_RAN.reset(seed)
+class Config(pydantic.BaseModel):
+    seed: int = 42
+    batch_size: int = 16
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-7
+    x_size: tuple = (16, 192, 128, 3)
+    y_size: tuple = (16, 192, 128, 3)
+    img_type: ScryfallImageType = ScryfallImageType.small
+    bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
+    model_name: str = "ae2l"
+    multiscale: bool = True
+    cyclic: bool = False
+    target_consistency: bool = False
+    max_steps: int = 1_000_000
+    accumulate_grad_batches: int = 1
+    gradient_clip_val: float = 0.5
+    cycle_with_target: int = 0
+    compile: bool = False
 
-    # Configuration
-    config = {
-        "seed": seed,
-        "batch_size": 16,
-        "num_epochs": 100,
-        "learning_rate": 5e-4,
-        "weight_decay": 1e-5,
-        "x_size": (16, 192, 128, 3),  # NHWC
-        "y_size": (16, 192, 128, 3),  # NHWC
-        "img_type": "small",
-        "model": model_name,
-        "multiscale": multiscale,
-        "cyclic": cyclic,
-        "target_consistency": target_consistency,
-        "max_steps": max_steps,
-    }
+
+# Training function using PyTorch Lightning
+def train(config: Config):
+    random.seed(config.seed)
+    torch.manual_seed(config.seed)
+    GLOBAL_RAN.reset(config.seed)
 
     # Initialize model
-    data_module = MtgDataModule(batch_size=config["batch_size"])
+    data_module = MtgDataModule(batch_size=config.batch_size)
 
     # Initial batch for visualization
     vis_batch = [
@@ -243,30 +267,37 @@ def train(
 
     # Initialize wandb
     wandb_logger = WandbLogger(
-        name=f"{config['model']}_lr{config['learning_rate']}_multi-{config['multiscale']}_cyc-{config['cyclic']}_targ-{config['target_consistency']}",
+        name=f"{config.model_name}_lr{config.learning_rate}_multi-{config.multiscale}_cyc-{config.cyclic}_targ-{config.target_consistency}",
         project="mtgvision_encoder",
         config=config,
     )
 
     # Initialize model
-    model = MtgVisionEncoder(config)
+    model = MtgVisionEncoder(config.model_dump())
+    # model = torch.compile(model)
 
     # Set up trainer with optimizations
     trainer = pl.Trainer(
-        max_epochs=config["num_epochs"],
+        max_epochs=config.max_steps,
         logger=wandb_logger,
-        callbacks=[ImageLoggingCallback(vis_batch)],
+        callbacks=[
+            ImageLoggingCallback(vis_batch, log_every_n_steps=2500),
+            ModelCheckpoint(monitor="train_loss", save_top_k=1, mode="min", every_n_train_steps=2500),
+            StochasticWeightAveraging(swa_lrs=1e-2),
+        ],
         accelerator="mps",
         devices=1,
         # precision="16-mixed",
-        max_steps=max_steps,
+        max_steps=config.max_steps,
+        accumulate_grad_batches=config.accumulate_grad_batches,
+        gradient_clip_val=config.gradient_clip_val,
     )
 
     # Run training
     trainer.fit(model, data_module)
 
     # Save the final model checkpoint
-    # trainer.save_checkpoint("final_model.ckpt")
+    trainer.save_checkpoint("final_model.ckpt")
 
     # Convert to CoreML
     model.eval()
@@ -282,22 +313,17 @@ def train(
 
 def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="ae1", help=f"Model architecture to use, allowed: {list(_MODELS.keys())}")
-    parser.add_argument("--multiscale", action="store_true", help="Use multiscale loss")
-    parser.add_argument("--cyclic", action="store_true", help="Use cyclic consistency loss")
-    parser.add_argument("--target-consistency", action="store_true", help="Use target consistency loss")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--max-steps", type=int, default=100_000, help="Maximum training steps")
+    for name, field in Config().model_fields.items():
+        parser.add_argument(
+            f"--{name}".replace("_", "-"),
+            type=field.annotation,
+            default=field.default,
+            help=field.description,
+        )
     args = parser.parse_args()
 
-    train(
-        model_name=args.model,
-        multiscale=args.multiscale,
-        cyclic=args.cyclic,
-        target_consistency=args.target_consistency,
-        seed=args.seed,
-        max_steps=args.max_steps,
-    )
+    config = Config(**vars(args))
+    train(config)
 
 
 if __name__ == "__main__":

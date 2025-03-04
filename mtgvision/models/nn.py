@@ -9,11 +9,12 @@ import torch.nn.functional as F
 class AeBase(nn.Module):
 
     encoded: torch.Tensor = None
+    multiscale: bool = False
 
     def _encode(self, x) -> torch.Tensor:
         raise NotImplementedError
 
-    def _decode(self, z, *, multiscale: bool = True) -> List[torch.Tensor]:
+    def _decode(self, z) -> List[torch.Tensor]:
         raise NotImplementedError
 
     def _init_weights(self):
@@ -26,8 +27,12 @@ class AeBase(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     @final
-    def decode(self, z, *, multiscale: bool = True) -> List[torch.Tensor]:
-        return self._decode(z, multiscale=multiscale)
+    def decode(self, z) -> List[torch.Tensor]:
+        # should output more tensors if multiscale
+        # * first is always the full scale
+        # * second is half the scale
+        # * third is quarter the scale, etc.
+        return self._decode(z)
 
     @final
     def encode(self, x) -> torch.Tensor:
@@ -41,9 +46,9 @@ class AeBase(nn.Module):
         return z
 
     @final
-    def forward(self, x, *, multiscale: bool = True) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def forward(self, x) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         z = self.encode(x)
-        multiout = self.decode(z, multiscale=multiscale)
+        multiout = self.decode(z)
         return z, multiout
 
     @classmethod
@@ -54,7 +59,7 @@ class AeBase(nn.Module):
         return model
 
     @classmethod
-    def quick_test(cls, batch_size: int = 16, n: int = 100, model=None, **model_kwargs):
+    def quick_test(cls, batch_size: int = 16, n: int = 100, model=None, compile: bool = False, **model_kwargs):
         from tqdm import tqdm
 
         # Define input and output sizes in NHWC format
@@ -68,11 +73,17 @@ class AeBase(nn.Module):
             if model_kwargs:
                 warnings.warn("Ignoring model_kwargs when model is provided.")
 
+        # details
+        num_params = model.num_params()
+        print(model)
+        print(f"params: {num_params} ({num_params/1_000_000:.3f}M)")
+
         device = torch.device("mps")
         model = model.to(device)
-        print(model)
-        num_params = model.num_params()
-        print(f"params: {num_params} ({num_params/1_000_000:.3f}M)")
+
+        # compile
+        if compile:
+            model = torch.compile(model)
 
         # Create dummy input
         dummy_input = torch.randn(batch_size, 192, 128, 3).to(device)
