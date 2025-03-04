@@ -136,7 +136,7 @@ class MtgVisionEncoder(pl.LightningModule):
             _z = torch.concatenate([z[:n], z[:n]], dim=0)
             _x = torch.concatenate([x[:n], out[:n]], dim=0)
             loss_cycle_target += self.criterion(self.model.encode(_x), _z)
-            loss += 0.2 * loss_cycle_target
+            loss += 1.0 * loss_cycle_target
 
         logs = {
             "loss_recon": loss_recon,
