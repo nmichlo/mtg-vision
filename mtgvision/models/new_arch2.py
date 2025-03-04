@@ -105,7 +105,7 @@ class Ae2(AeBase):
             enc_extra_ch=64,
             enc_repr_ch=32,  # 6*4*32 = 768
             # dec
-            dec_extra_ch=64,
+            dec_extra_ch=None,
             dec_chs=(16, 16, 24, 32, 64),
             dec_expand_ratio=2,
             # stn
@@ -125,7 +125,7 @@ class Ae2(AeBase):
             enc_extra_ch=128,
             enc_repr_ch=32,  # 6*4*32 = 768
             # dec
-            dec_extra_ch=128,
+            dec_extra_ch=None,
             dec_chs=(16, 16, 32, 64, 128),
             dec_expand_ratio=2,
             # stn
@@ -145,7 +145,7 @@ class Ae2(AeBase):
             enc_extra_ch=256,
             enc_repr_ch=256,  # 6*4*256 = 1536
             # dec
-            dec_extra_ch=128,
+            dec_extra_ch=None,
             dec_chs=(16, 16, 32, 64, 128),
             dec_expand_ratio=4,
             # stn
@@ -163,7 +163,7 @@ class Ae2(AeBase):
         enc_extra_ch: Optional[int] = 256,  # useful for helping encode info to bottleneck
         enc_repr_ch: int = 256,  # 6x4x<repr_ch> e.g. 6*4*32 = 768
         # dec
-        dec_extra_ch: Optional[int] = 128,  # useful for helping decode info from bottleneck
+        dec_extra_ch: Optional[int] = None,  # useful for helping decode info from bottleneck
         dec_chs: Tuple[int, int, int, int, int] = (16, 16, 32, 64, 128),  # reversed
         dec_expand_ratio: int = 4,
         # stn

@@ -13,14 +13,16 @@ name = "mtgvision"
 dynamic = ["version"]  # Version is managed by setuptools_scm
 description = "Realtime MTG detection and recognition."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10,<3.13"
 license = { file = "LICENSE" }
 authors = [{ name = "Nathan Juraj Michlo", email = "NathanJMichlo@gmail.com" }]
 urls = { Homepage = "https://github.com/nmichlo/mtg-vision" }
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Intended Audience :: Science/Research"
 ]
 
@@ -29,6 +31,11 @@ dependencies = [
     "mtgdata[convert]~=0.2.0",
     "ultralytics~=8.3.80",
     "wandb",
+    "mlx",
+    "mlx-data",
+    "torch",
+    "torchvision",
+    "coremltools",
 ]
 
 

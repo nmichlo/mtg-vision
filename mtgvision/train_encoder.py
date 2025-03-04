@@ -2,6 +2,7 @@ import argparse
 import functools
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import IterableDataset, DataLoader
 import numpy as np
@@ -90,8 +91,9 @@ class MtgVisionEncoder(pl.LightningModule):
         # Multiscale loss
         loss_multiscale = 0
         if self.hparams.multiscale and len(multi_out) > 0:
-            for output in multi_out:
-                loss_multiscale += self.criterion(output, y)
+            for mout in multi_out:
+                mout = F.interpolate(mout, size=y.size()[2:], mode='bilinear', align_corners=False)
+                loss_multiscale += self.criterion(mout, y)
             loss_multiscale /= len(multi_out)
             loss += 0.5 * loss_multiscale
 
@@ -256,7 +258,7 @@ def train(
         callbacks=[ImageLoggingCallback(vis_batch)],
         accelerator="mps",
         devices=1,
-        precision="16-mixed",
+        # precision="16-mixed",
         max_steps=max_steps,
     )
 
