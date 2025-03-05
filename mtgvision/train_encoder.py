@@ -80,9 +80,9 @@ class RanMtgEncDecDataset(IterableDataset):
 class MtgVisionEncoder(pl.LightningModule):
 
     hparams: "Config"
-    model: "nn.Module"
-    criterion: "nn.Module"
-    criterion_filter: "Optional[nn.Module]"
+    model: "nn.Module" = None
+    criterion: "nn.Module" = None
+    criterion_filter: "Optional[nn.Module]" = None
 
     def __init__(self, config: dict):
         super().__init__()
@@ -91,13 +91,15 @@ class MtgVisionEncoder(pl.LightningModule):
 
     def configure_model(self) -> None:
         # load model
-        model_fn = _MODELS[self.hparams.model_name]
-        print(model_fn, self.hparams.x_size, self.hparams.y_size, self.device_mesh, self.hparams.multiscale)
-        model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
-        model = model.to(self.device_mesh)
-        if self.hparams.compile:
-            model = torch.compile(model)
-        self.model = model
+        if self.model is None:
+            print(f"Loading model: {self.hparams.model_name}")
+            model_fn = _MODELS[self.hparams.model_name]
+            model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
+            self.model = model
+        else:
+            # we allow this so we can swap out the model and have a new config.
+            # e.g. loading from checkpoint
+            print("Model already loaded???")
 
         # load loss
         if self.hparams.loss == 'mse':
@@ -301,8 +303,14 @@ class Config(pydantic.BaseModel):
     gradient_clip_val: float = 0.5
     cycle_with_target: int = 0
     compile: bool = False
-    loss: str = 'mse'  # Literal['mse', 'mse+edge']
-    checkpoint: Optional[str] = None
+    loss: Literal['mse', 'mse+edge'] = 'mse'
+    checkpoint: Optional[str] = None 
+
+
+_CONF_TYPE_OVERRIDES = {
+    "checkpoint": str,
+    "loss": str,
+}
 
 
 # Training function using PyTorch Lightning
@@ -332,12 +340,12 @@ def train(config: Config):
 
     # Initialize model
     model = MtgVisionEncoder(config.model_dump())
-    # transfer weights from checkpoint
     if config.checkpoint:
-        m = model.load_from_checkpoint(config.checkpoint, map_location=model.device)
-        model.load_state_dict(m.state_dict())
-        print("Loaded model from checkpoint:", config.checkpoint, m.hparams)
+        print(f"Loading model from checkpoint: {config.checkpoint}")
+        m = MtgVisionEncoder.load_from_checkpoint(config.checkpoint, config=config.model_dump())
+        model.model = m.model
         del m
+
     # compile
     if config.compile:
         model = torch.compile(model, backend="aot_eager")
@@ -384,7 +392,7 @@ def _main():
     for name, field in Config().model_fields.items():
         parser.add_argument(
             f"--{name}".replace("_", "-"),
-            type=field.annotation,
+            type=_CONF_TYPE_OVERRIDES.get(name, field.annotation),
             default=field.default,
             help=field.description,
         )
