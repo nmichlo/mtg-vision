@@ -356,11 +356,11 @@ def train(config: Config):
         accumulate_grad_batches=config.accumulate_grad_batches,
         gradient_clip_val=config.gradient_clip_val,
         enable_checkpointing=True,
-        default_root_dir=Path(__file__).parent / "lightning_logs"
+        default_root_dir=Path(__file__).parent / "lightning_logs",
     )
 
     # Run training
-    trainer.fit(model, data_module)
+    trainer.fit(model, data_module, ckpt_path=config.checkpoint)
 
     # Save the final model checkpoint
     trainer.save_checkpoint("final_model.ckpt")
