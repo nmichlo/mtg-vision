@@ -80,9 +80,7 @@ class RanMtgEncDecDataset(IterableDataset):
 class MtgVisionEncoder(pl.LightningModule):
 
     hparams: "Config"
-    model: "nn.Module" = None
-    criterion: "nn.Module" = None
-    criterion_filter: "Optional[nn.Module]" = None
+    model: "nn.Module"
 
     def __init__(self, config: dict):
         super().__init__()
@@ -90,24 +88,16 @@ class MtgVisionEncoder(pl.LightningModule):
         self.save_hyperparameters(config)
 
     def configure_model(self) -> None:
-        # load model
-        if self.model is None:
-            print(f"Loading model: {self.hparams.model_name}")
-            model_fn = _MODELS[self.hparams.model_name]
-            model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
-            self.model = model
-        else:
-            # we allow this so we can swap out the model and have a new config.
-            # e.g. loading from checkpoint
-            print("Model already loaded???")
+        print(f"Loading model: {self.hparams.model_name}")
+        model_fn = _MODELS[self.hparams.model_name]
+        model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
+        self.model = model
 
-        # load loss
+    def _get_loss(self):
         if self.hparams.loss == 'mse':
-            self.criterion = nn.MSELoss()
-            self.criterion_extra = None
+            return F.mse_loss, None
         elif self.hparams.loss == 'mse+edge':
-            self.criterion = nn.MSELoss()
-            self.criterion_filter = K.filters.Sobel()
+            return F.mse_loss, K.filters.sobel
         else:
             raise ValueError(f"Unknown loss: {self.hparams.loss}")
 
@@ -149,15 +139,16 @@ class MtgVisionEncoder(pl.LightningModule):
 
         # loss
         loss = 0
+        loss_fn, loss_filter = self._get_loss()
 
         # Reconstruction loss
-        loss_recon = self.criterion(out, y)
+        loss_recon = loss_fn(out, y)
         loss += loss_recon
 
         # Extra loss
         loss_recon_extra = 0
-        if self.criterion_filter is not None:
-            loss_recon_extra = self.criterion(self.criterion_filter(out), self.criterion_filter(y))
+        if loss_filter is not None:
+            loss_recon_extra = loss_fn(loss_filter(out), loss_filter(y))
             loss += 0.5 * loss_recon_extra
 
         # Multiscale loss
@@ -165,7 +156,7 @@ class MtgVisionEncoder(pl.LightningModule):
         if self.hparams.multiscale and len(multi_out) > 0:
             for mout in multi_out:
                 mout = F.interpolate(mout, size=y.size()[2:], mode='bilinear', align_corners=False)
-                loss_multiscale += self.criterion(mout, y)
+                loss_multiscale += loss_fn(mout, y)
             loss_multiscale /= len(multi_out)
             loss += 0.5 * loss_multiscale
 
@@ -173,14 +164,14 @@ class MtgVisionEncoder(pl.LightningModule):
         loss_cyclic = 0
         if self.hparams.cyclic:
             z2 = self.model.encode(out)
-            loss_cyclic = self.criterion(z2, z)
+            loss_cyclic = loss_fn(z2, z)
             loss += loss_cyclic
 
         # Target consistency loss
         loss_target = 0
         if self.hparams.target_consistency:
             z2 = self.model.encode(y)
-            loss_target = self.criterion(z2, z)
+            loss_target = loss_fn(z2, z)
             loss += loss_target * 10
 
         # Cycle WITH target consistency loss
@@ -191,7 +182,7 @@ class MtgVisionEncoder(pl.LightningModule):
             # like cycle and target, but only take first n/2 elements
             _z = torch.concatenate([z[:n], z[:n]], dim=0)
             _x = torch.concatenate([x[:n], out[:n]], dim=0)
-            loss_cycle_target += self.criterion(self.model.encode(_x), _z)
+            loss_cycle_target += loss_fn(self.model.encode(_x), _z)
             loss += loss_cycle_target
 
         logs = {
@@ -339,12 +330,11 @@ def train(config: Config):
     )
 
     # Initialize model
-    model = MtgVisionEncoder(config.model_dump())
     if config.checkpoint:
-        print(f"Loading model from checkpoint: {config.checkpoint}")
-        m = MtgVisionEncoder.load_from_checkpoint(config.checkpoint, config=config.model_dump())
-        model.model = m.model
-        del m
+        model = MtgVisionEncoder.load_from_checkpoint(config.checkpoint)
+        model.hparams.update(config.model_dump())
+    else:
+        model = MtgVisionEncoder(config.model_dump())
 
     # compile
     if config.compile:
