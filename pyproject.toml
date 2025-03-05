@@ -36,6 +36,8 @@ dependencies = [
     "torch",
     "torchvision",
     "coremltools",
+    "kornia",
+    "pytorch_lightning",
 ]
 
 

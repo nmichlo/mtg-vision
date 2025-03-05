@@ -21,6 +21,7 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
+from pathlib import Path
 
 from torch.xpu import device
 from torchvision.transforms.v2 import Compose
@@ -47,9 +48,6 @@ class DummyGetDict:
         return {}
 
 
-
-
-
 class CustomDataset(obb.OBBTrainer):
 
     def __init__(self, *args, **kwargs):
@@ -58,7 +56,7 @@ class CustomDataset(obb.OBBTrainer):
         self._dataset = ScryfallDataset(
             img_type=ScryfallImageType.small,
             bulk_type=ScryfallBulkType.default_cards,
-            ds_dir="/Users/nathanmichlo/Desktop/active/mtg/mtg-dataset/mtgdata/data",
+            ds_dir=Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data',
             force_update=False,
             download_mode='now',
         )

@@ -1,5 +1,6 @@
 import argparse
 import functools
+import sys
 from inspect import signature
 from pathlib import Path
 from typing import Literal, Optional
@@ -35,6 +36,9 @@ _MODELS = {
     # Ae1b.__name__.lower(): functools.partial(Ae1b.create_model, stn=False),
     # Ae1b.__name__.lower() + '_stn': functools.partial(Ae1b.create_model, stn=True),
 
+    Ae2.__name__.lower() + 'xl': functools.partial(Ae2.create_model_heavy, stn=False),
+    Ae2.__name__.lower() + 'xl_stn': functools.partial(Ae2.create_model_heavy, stn=True),
+
     Ae2.__name__.lower() + 'l': functools.partial(Ae2.create_model_heavy, stn=False),
     Ae2.__name__.lower() + 'l_stn': functools.partial(Ae2.create_model_heavy, stn=True),
 
@@ -47,16 +51,16 @@ _MODELS = {
 
 
 @functools.lru_cache(maxsize=1)
-def _load_image_ds():
-    orig = MtgImages(img_type='small')
+def _load_image_ds(predownload: bool = False):
+    orig = MtgImages(img_type='small', predownload=predownload)
     ilsvrc = IlsvrcImages()
     return orig, ilsvrc
 
 
 # Custom Dataset for MTG Images (unchanged)
 class RanMtgEncDecDataset(IterableDataset):
-    def __init__(self):
-        self.orig, self.ilsvrc = _load_image_ds()
+    def __init__(self, predownload: bool = False):
+        self.orig, self.ilsvrc = _load_image_ds(predownload=predownload)
 
     def __iter__(self):
         while True:
@@ -142,13 +146,13 @@ class MtgVisionEncoder(pl.LightningModule):
 
         # Reconstruction loss
         loss_recon = loss_fn(out, y)
-        loss += loss_recon
+        loss += loss_recon * self.hparams.scale_loss_recon
 
         # Extra loss
         loss_recon_extra = 0
         if loss_filter is not None:
             loss_recon_extra = loss_fn(loss_filter(out), loss_filter(y))
-            loss += 0.5 * loss_recon_extra
+            loss += loss_recon_extra * self.hparams.scale_loss_recon_extra
 
         # Multiscale loss
         loss_multiscale = 0
@@ -157,21 +161,21 @@ class MtgVisionEncoder(pl.LightningModule):
                 mout = F.interpolate(mout, size=y.size()[2:], mode='bilinear', align_corners=False)
                 loss_multiscale += loss_fn(mout, y)
             loss_multiscale /= len(multi_out)
-            loss += 0.5 * loss_multiscale
+            loss += loss_multiscale * self.hparams.scale_loss_multiscale
 
         # Cycle consistency losses
         loss_cyclic = 0
         if self.hparams.cyclic:
             z2 = self.model.encode(out)
             loss_cyclic = loss_fn(z2, z)
-            loss += loss_cyclic
+            loss += loss_cyclic * self.hparams.scale_loss_cyclic
 
         # Target consistency loss
         loss_target = 0
         if self.hparams.target_consistency:
             z2 = self.model.encode(y)
             loss_target = loss_fn(z2, z)
-            loss += loss_target * 10
+            loss += loss_target * self.hparams.scale_loss_target
 
         # Cycle WITH target consistency loss
         loss_cycle_target = 0
@@ -182,7 +186,7 @@ class MtgVisionEncoder(pl.LightningModule):
             _z = torch.concatenate([z[:n], z[:n]], dim=0)
             _x = torch.concatenate([x[:n], out[:n]], dim=0)
             loss_cycle_target += loss_fn(self.model.encode(_x), _z)
-            loss += loss_cycle_target
+            loss += loss_cycle_target * self.hparams.scale_loss_cycle_target
 
         logs = {
             "loss_recon": loss_recon,
@@ -207,11 +211,11 @@ class MtgVisionEncoder(pl.LightningModule):
 # Define the Data Module
 class MtgDataModule(pl.LightningDataModule):
 
-    def __init__(self, batch_size, num_workers=3):
+    def __init__(self, batch_size, num_workers: int = 3, predownload: bool = False):
         super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.train_dataset = RanMtgEncDecDataset()
+        self.train_dataset = RanMtgEncDecDataset(predownload=predownload)
 
     def train_dataloader(self):
         return DataLoader(
@@ -275,43 +279,19 @@ class ImageLoggingCallback(Callback):
         wandb.log(logs)
 
 
-class Config(pydantic.BaseModel):
-    seed: int = 42
-    batch_size: int = 16
-    learning_rate: float = 1e-3
-    weight_decay: float = 1e-7
-    x_size: tuple = (16, 192, 128, 3)
-    y_size: tuple = (16, 192, 128, 3)
-    img_type: ScryfallImageType = ScryfallImageType.small
-    bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
-    model_name: str = "ae2l"
-    multiscale: bool = True
-    cyclic: bool = False
-    target_consistency: bool = False
-    max_steps: int = 1_000_000
-    accumulate_grad_batches: int = 1
-    gradient_clip_val: float = 0.5
-    cycle_with_target: int = 0
-    compile: bool = False
-    loss: Literal['mse', 'mse+edge'] = 'mse'
-    checkpoint: Optional[str] = None
-    num_workers: int = 3
-
-
-_CONF_TYPE_OVERRIDES = {
-    "checkpoint": str,
-    "loss": str,
-}
-
 
 # Training function using PyTorch Lightning
-def train(config: Config):
+def train(config: "Config"):
     random.seed(config.seed)
     torch.manual_seed(config.seed)
     GLOBAL_RAN.reset(config.seed)
 
     # Initialize model
-    data_module = MtgDataModule(batch_size=config.batch_size, num_workers=config.num_workers)
+    data_module = MtgDataModule(
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        predownload=config.force_download,
+    )
 
     # Initial batch for visualization
     vis_batch = [
@@ -323,18 +303,38 @@ def train(config: Config):
     ]
 
     # Initialize wandb
+    parts = [
+        (config.prefix, config.prefix),
+        (True, config.model_name),
+        (config.loss, config.loss),
+        (config.learning_rate, f"lr={config.learning_rate}"),
+        (config.batch_size, f"bs={config.batch_size}"),
+        (config.multiscale, f"Lm={config.scale_loss_multiscale}"),
+        (config.cyclic, f"Lc={config.scale_loss_cyclic}"),
+        (config.target_consistency, f"Lt={config.scale_loss_target}"),
+        (config.cycle_with_target > 0, f"Lct{config.cycle_with_target}={config.scale_loss_cycle_target}"),
+    ]
     wandb_logger = WandbLogger(
-        name=f"{config.model_name}_lr{config.learning_rate}_multi-{config.multiscale}_cyc-{config.cyclic}_targ-{config.target_consistency}",
+        name="_".join([v for k, v in parts if k]),
         project="mtgvision_encoder",
         config=config,
     )
 
-    # Initialize model
-    model = MtgVisionEncoder(config.model_dump())
+    # choose device
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
 
-    # compile
+    # Initialize model and compile
+    model = MtgVisionEncoder(config.model_dump())
     if config.compile:
-        model = torch.compile(model, backend="aot_eager")
+        model = torch.compile(
+            model,
+            **({"backend": "aot_eager"} if device == 'mps' else {})
+        )
 
     # Set up trainer with optimizations
     trainer = pl.Trainer(
@@ -345,9 +345,9 @@ def train(config: Config):
             ModelCheckpoint(monitor="train_loss", save_top_k=3, mode="min", every_n_train_steps=2500),
             StochasticWeightAveraging(swa_lrs=1e-2),
         ],
-        accelerator="mps",
+        accelerator=device,
         devices=1,
-        # precision="16-mixed",
+        precision="16-mixed" if device == "cuda" else 32,
         max_steps=config.max_steps,
         accumulate_grad_batches=config.accumulate_grad_batches,
         gradient_clip_val=config.gradient_clip_val,
@@ -366,15 +366,15 @@ def train(config: Config):
     trainer.save_checkpoint("final_model.ckpt")
 
     # Convert to CoreML
-    model.eval()
-    example_input = torch.rand(1, 3, 192, 128).to(model.device)  # NCHW
-    traced_model = torch.jit.trace(model, example_input)
-    mlmodel = ct.convert(
-        traced_model,
-        inputs=[ct.ImageType(name="input", shape=example_input.shape)],
-    )
-    mlmodel.save("model.mlmodel")
-    print("Model trained and converted to CoreML. Saved as 'model.mlmodel'.")
+    # | model.eval()
+    # | example_input = torch.rand(1, 3, 192, 128).to(model.device)  # NCHW
+    # | traced_model = torch.jit.trace(model, example_input)
+    # | mlmodel = ct.convert(
+    # |     traced_model,
+    # |     inputs=[ct.ImageType(name="input", shape=example_input.shape)],
+    # | )
+    # | mlmodel.save("model.mlmodel")
+    # | print("Model trained and converted to CoreML. Saved as 'model.mlmodel'.")
 
 
 def _main():
@@ -399,5 +399,62 @@ def _main():
     train(config)
 
 
+_CONF_TYPE_OVERRIDES = {
+    "checkpoint": str,
+    "loss": str,
+    "prefix": str,
+}
+
+class Config(pydantic.BaseModel):
+    prefix: Optional[str] = None
+    seed: int = 42
+    # dataset
+    x_size: tuple = (16, 192, 128, 3)
+    y_size: tuple = (16, 192, 128, 3)
+    img_type: ScryfallImageType = ScryfallImageType.small
+    bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
+    # model
+    model_name: str = "ae2l"
+    compile: bool = False
+    checkpoint: Optional[str] = None
+    # losses
+    loss: Literal['mse', 'mse+edge'] = 'mse'
+    multiscale: bool = True
+    cyclic: bool = False
+    target_consistency: bool = False
+    cycle_with_target: int = 0
+    # optimizer
+    max_steps: int = 1_000_000
+    batch_size: int = 16
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-7
+    accumulate_grad_batches: int = 1
+    gradient_clip_val: float = 0.5
+    # loss scaling
+    scale_loss_recon: float = 1
+    scale_loss_recon_extra: float = 5.0
+    scale_loss_multiscale: float =  0.5
+    scale_loss_cyclic: float = 100
+    scale_loss_target: float = 100
+    scale_loss_cycle_target: float = 100
+    # inner-batch-sampling (load 1/2 data, but generate multiple for comparisons)
+    # dataset
+    num_workers: int = 3
+    force_download: bool = False
+
+
 if __name__ == "__main__":
+    sys.argv.extend([
+        "--prefix=test",
+        "--model=ae2s_stn",
+        # "--no-multiscale",
+        "--cyclic",
+        "--target-consistency",
+        "--loss=mse+edge",
+        "--learning-rate=0.001",
+        "--batch-size=32",
+        # "--accumulate-grad-batches=2",
+        # "--checkpoint=mtgvision_encoder/nlsy52sj/checkpoints/epoch=0-step=152500.ckpt",
+        "--num-workers=6",
+    ])
     _main()

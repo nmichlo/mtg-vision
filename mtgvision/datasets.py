@@ -21,7 +21,7 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
-
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -124,12 +124,14 @@ class Mutate:
 # ========================================================================= #
 
 
-if 'darwin' in platform.system().lower():
-    DATASETS_ROOT = os.getenv('DATASETS_ROOT', os.path.join(os.environ['HOME'], 'Downloads/datasets'))
-else:
-    DATASETS_ROOT = os.getenv('DATASETS_ROOT', '/datasets')
+# if 'darwin' in platform.system().lower():
+#     DATASETS_ROOT = os.getenv('DATASETS_ROOT', os.path.join(os.environ['HOME'], 'Downloads/datasets'))
+# else:
+#     DATASETS_ROOT = os.getenv('DATASETS_ROOT', '/datasets')
 
-print('DATASETS_ROOT={}'.format(DATASETS_ROOT))
+DATASETS_ROOT = Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data'
+
+print(f'DATASETS_ROOT={DATASETS_ROOT}')
 
 
 # ========================================================================= #
@@ -176,9 +178,12 @@ class IlsvrcImages(ulzy.LazyList):
 class MtgImages(ulzy.LazyList):
 
     def __init__(self, img_type=ScryfallImageType.small, predownload=False):
+        print(Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data')
+        print(Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data')
+        print(Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data')
         self._ds = ScryfallDataset(
             img_type=img_type,
-            data_root="/Users/nathanmichlo/Desktop/active/mtg/mtg-dataset/mtgdata/data",
+            data_root=Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data',
             force_update=False,
             download_mode='now' if predownload else 'none',
         )
