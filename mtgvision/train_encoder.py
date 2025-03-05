@@ -2,7 +2,9 @@ import argparse
 import functools
 from inspect import signature
 from pathlib import Path
+from typing import Literal, Optional
 
+import matplotlib.pyplot as plt
 import pydantic
 import torch
 import torch.nn as nn
@@ -13,10 +15,12 @@ import numpy as np
 import random
 import wandb
 import coremltools as ct
+import kornia as K
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import (
-    Callback, ModelCheckpoint,
+    Callback,
+    ModelCheckpoint,
     StochasticWeightAveraging,
 )
 
@@ -76,12 +80,17 @@ class RanMtgEncDecDataset(IterableDataset):
 class MtgVisionEncoder(pl.LightningModule):
 
     hparams: "Config"
+    model: "nn.Module"
+    criterion: "nn.Module"
+    criterion_filter: "Optional[nn.Module]"
 
     def __init__(self, config: dict):
         super().__init__()
+        config = Config(**config).model_dump()  # add in missing defaults
         self.save_hyperparameters(config)
 
     def configure_model(self) -> None:
+        # load model
         model_fn = _MODELS[self.hparams.model_name]
         print(model_fn, self.hparams.x_size, self.hparams.y_size, self.device_mesh, self.hparams.multiscale)
         model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
@@ -89,20 +98,65 @@ class MtgVisionEncoder(pl.LightningModule):
         if self.hparams.compile:
             model = torch.compile(model)
         self.model = model
-        self.criterion = nn.MSELoss()
+
+        # load loss
+        if self.hparams.loss == 'mse':
+            self.criterion = nn.MSELoss()
+            self.criterion_extra = None
+        elif self.hparams.loss == 'mse+edge':
+            self.criterion = nn.MSELoss()
+            self.criterion_filter = K.filters.Sobel()
+        else:
+            raise ValueError(f"Unknown loss: {self.hparams.loss}")
+
+    @classmethod
+    def test_checkpoint(cls, path):
+        model = MtgVisionEncoder.load_from_checkpoint(path, map_location="cpu")
+        # Initialize model
+        data_module = MtgDataModule(batch_size=1)
+        # Initial batch for visualization
+        x, y = data_module.train_dataset.random_tensor()
+        x = x.cpu()
+        y = y.cpu()
+        # feed forward
+        _, ([outx], *_) = model(x[None])
+        _, ([outy], *_) = model(y[None])
+        # log images
+        x = K.tensor_to_image(x)
+        y = K.tensor_to_image(y)
+        outx = K.tensor_to_image(outx)
+        outy = K.tensor_to_image(outy)
+        # show
+        plt.imshow(x)
+        plt.show()
+        plt.imshow(outx)
+        plt.show()
+        plt.imshow(y)
+        plt.show()
+        plt.imshow(outy)
+        plt.show()
 
     def forward(self, x):
         z, multi_out = self.model(x)
         return z, multi_out
 
     def training_step(self, batch, batch_idx):
+        # forward
         x, y = batch
         z, (out, *multi_out) = self(x)
 
+        # loss
         loss = 0
-        # Reconstruction loss with perceptual component
+
+        # Reconstruction loss
         loss_recon = self.criterion(out, y)
         loss += loss_recon
+
+        # Extra loss
+        loss_recon_extra = 0
+        if self.criterion_filter is not None:
+            loss_recon_extra = self.criterion(self.criterion_filter(out), self.criterion_filter(y))
+            loss += 0.5 * loss_recon_extra
 
         # Multiscale loss
         loss_multiscale = 0
@@ -118,14 +172,14 @@ class MtgVisionEncoder(pl.LightningModule):
         if self.hparams.cyclic:
             z2 = self.model.encode(out)
             loss_cyclic = self.criterion(z2, z)
-            loss += 0.2 * loss_cyclic
+            loss += loss_cyclic
 
         # Target consistency loss
         loss_target = 0
         if self.hparams.target_consistency:
             z2 = self.model.encode(y)
             loss_target = self.criterion(z2, z)
-            loss += 0.2 * loss_target
+            loss += loss_target * 10
 
         # Cycle WITH target consistency loss
         loss_cycle_target = 0
@@ -136,10 +190,11 @@ class MtgVisionEncoder(pl.LightningModule):
             _z = torch.concatenate([z[:n], z[:n]], dim=0)
             _x = torch.concatenate([x[:n], out[:n]], dim=0)
             loss_cycle_target += self.criterion(self.model.encode(_x), _z)
-            loss += 1.0 * loss_cycle_target
+            loss += loss_cycle_target
 
         logs = {
             "loss_recon": loss_recon,
+            "loss_recon_extra": loss_recon_extra,
             "loss_multiscale": loss_multiscale,
             "loss_cyclic": loss_cyclic,
             "loss_target": loss_target,
@@ -214,7 +269,7 @@ class ImageLoggingCallback(Callback):
             _, multiscale = model(x)
             mout_np = []
             for out in multiscale:
-                mout_np.append(np.clip(out.cpu().permute(0, 2, 3, 1).numpy(), 0, 1))
+                mout_np.append(np.clip(K.tensor_to_image(out), 0, 1))
             # log images
             if self._first_log:
                 logs["images_x"] = wandb.Image(self.join_images_into_row(x_np), caption="Input")
@@ -246,6 +301,8 @@ class Config(pydantic.BaseModel):
     gradient_clip_val: float = 0.5
     cycle_with_target: int = 0
     compile: bool = False
+    loss: str = 'mse'  # Literal['mse', 'mse+edge']
+    checkpoint: Optional[str] = None
 
 
 # Training function using PyTorch Lightning
@@ -275,6 +332,13 @@ def train(config: Config):
 
     # Initialize model
     model = MtgVisionEncoder(config.model_dump())
+    # transfer weights from checkpoint
+    if config.checkpoint:
+        m = model.load_from_checkpoint(config.checkpoint, map_location=model.device)
+        model.load_state_dict(m.state_dict())
+        print("Loaded model from checkpoint:", config.checkpoint, m.hparams)
+        del m
+    # compile
     if config.compile:
         model = torch.compile(model, backend="aot_eager")
 
