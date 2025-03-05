@@ -380,15 +380,22 @@ def train(config: Config):
 def _main():
     parser = argparse.ArgumentParser()
     for name, field in Config().model_fields.items():
-        parser.add_argument(
-            f"--{name}".replace("_", "-"),
-            type=_CONF_TYPE_OVERRIDES.get(name, field.annotation),
-            default=field.default,
-            help=field.description,
-        )
+        if field.annotation is bool:
+            if field.default:
+                parser.add_argument(f"--no-{name}".replace("_", "-"), action="store_false", help=field.description, dest=name)
+            else:
+                parser.add_argument(f"--{name}".replace("_", "-"), action="store_true", help=field.description)
+        else:
+            parser.add_argument(
+                f"--{name}".replace("_", "-"),
+                type=_CONF_TYPE_OVERRIDES.get(name, field.annotation),
+                default=field.default,
+                help=field.description,
+            )
     args = parser.parse_args()
 
     config = Config(**vars(args))
+    print('CONFIG:', config)
     train(config)
 
 
