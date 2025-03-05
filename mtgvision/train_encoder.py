@@ -88,7 +88,6 @@ class MtgVisionEncoder(pl.LightningModule):
         self.save_hyperparameters(config)
 
     def configure_model(self) -> None:
-        print(f"Loading model: {self.hparams.model_name}")
         model_fn = _MODELS[self.hparams.model_name]
         model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
         self.model = model
@@ -295,7 +294,8 @@ class Config(pydantic.BaseModel):
     cycle_with_target: int = 0
     compile: bool = False
     loss: Literal['mse', 'mse+edge'] = 'mse'
-    checkpoint: Optional[str] = None 
+    checkpoint: Optional[str] = None
+    num_workers: int = 3
 
 
 _CONF_TYPE_OVERRIDES = {
@@ -311,7 +311,7 @@ def train(config: Config):
     GLOBAL_RAN.reset(config.seed)
 
     # Initialize model
-    data_module = MtgDataModule(batch_size=config.batch_size)
+    data_module = MtgDataModule(batch_size=config.batch_size, num_workers=config.num_workers)
 
     # Initial batch for visualization
     vis_batch = [
@@ -330,11 +330,7 @@ def train(config: Config):
     )
 
     # Initialize model
-    if config.checkpoint:
-        model = MtgVisionEncoder.load_from_checkpoint(config.checkpoint)
-        model.hparams.update(config.model_dump())
-    else:
-        model = MtgVisionEncoder(config.model_dump())
+    model = MtgVisionEncoder(config.model_dump())
 
     # compile
     if config.compile:
@@ -360,7 +356,11 @@ def train(config: Config):
     )
 
     # Run training
-    trainer.fit(model, data_module, ckpt_path=config.checkpoint)
+    trainer.fit(
+        model,
+        data_module,
+        ckpt_path=config.checkpoint,
+    )
 
     # Save the final model checkpoint
     trainer.save_checkpoint("final_model.ckpt")
