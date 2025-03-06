@@ -45,26 +45,6 @@ _MODELS = {
 
     Ae2.__name__.lower() + 's': functools.partial(Ae2.create_model_small, stn=False),
     Ae2.__name__.lower() + 's_stn': functools.partial(Ae2.create_model_small, stn=True),
-
-    'ae2_16x16x16x32x64': functools.partial(Ae2.create_model_verbose, model='16x16x16x32x64', stn=False),
-    'ae2_16x16x32x64x128': functools.partial(Ae2.create_model_verbose, model='16x16x32x64x128', stn=False),
-    'ae2_16x32x64x128x256': functools.partial(Ae2.create_model_verbose, model='16x32x64x128x256', stn=False),
-    'ae2_32x32x32x64x128': functools.partial(Ae2.create_model_verbose, model='32x32x32x64x128', stn=False),
-    'ae2_32x32x64x128x256': functools.partial(Ae2.create_model_verbose, model='32x32x64x128x256', stn=False),
-    'ae2_32x64x128x256x512': functools.partial(Ae2.create_model_verbose, model='32x64x128x256x512', stn=False),
-    'ae2_64x64x64x128x256': functools.partial(Ae2.create_model_verbose, model='64x64x64x128x256', stn=False),
-    'ae2_64x64x128x256x512': functools.partial(Ae2.create_model_verbose, model='64x64x128x256x512', stn=False),
-    'ae2_64x128x256x512x1024': functools.partial(Ae2.create_model_verbose, model='64x128x256x512x1024', stn=False),
-
-    'ae2_16x16x16x32x64_stn': functools.partial(Ae2.create_model_verbose, model='16x16x16x32x64', stn=True),
-    'ae2_16x16x32x64x128_stn': functools.partial(Ae2.create_model_verbose, model='16x16x32x64x128', stn=True),
-    'ae2_16x32x64x128x256_stn': functools.partial(Ae2.create_model_verbose, model='16x32x64x128x256', stn=True),
-    'ae2_32x32x32x64x128_stn': functools.partial(Ae2.create_model_verbose, model='32x32x32x64x128', stn=True),
-    'ae2_32x32x64x128x256_stn': functools.partial(Ae2.create_model_verbose, model='32x32x64x128x256', stn=True),
-    'ae2_32x64x128x256x512_stn': functools.partial(Ae2.create_model_verbose, model='32x64x128x256x512', stn=True),
-    'ae2_64x64x64x128x256_stn': functools.partial(Ae2.create_model_verbose, model='64x64x64x128x256', stn=True),
-    'ae2_64x64x128x256x512_stn': functools.partial(Ae2.create_model_verbose, model='64x64x128x256x512', stn=True),
-    'ae2_64x128x256x512x1024_stn': functools.partial(Ae2.create_model_verbose, model='64x128x256x512x1024', stn=True),
 }
 
 
@@ -136,10 +116,26 @@ class MtgVisionEncoder(pl.LightningModule):
         self.save_hyperparameters(config)
 
     def configure_model(self) -> None:
-        model_fn = _MODELS[self.hparams.model_name]
-        if model_fn is None:
-            model_fn = functools.partial(Ae2.create_model_verbose, model=self.hparams.model_name)
-        model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
+        if self.hparams.model_name in _MODELS:
+            model_fn = _MODELS[self.hparams.model_name]
+            model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
+        else:
+            name = self.hparams.model_name
+            if name.startswith('ae2_'):
+                name = name[4:]
+            else:
+                raise ValueError(f"Unknown model name: {name}")
+            stn = False
+            if name.endswith('_stn'):
+                name = name[:-4]
+                stn = True
+            model = Ae2.create_model_verbose(
+                self.hparams.x_size,
+                self.hparams.y_size,
+                model=name,
+                multiscale=self.hparams.multiscale,
+                stn=stn,
+            )
         self.model = model
 
     @classmethod
@@ -394,11 +390,6 @@ def train(config: "Config"):
         # (config.target_consistency, f"Lt={config.scale_loss_target}"),
         # (config.cycle_with_target > 0, f"Lct{config.cycle_with_target}={config.scale_loss_cycle_target}"),
     ]
-    wandb_logger = WandbLogger(
-        name="_".join([v for k, v in parts if k]),
-        project="mtgvision_encoder",
-        config=config,
-    )
 
     # choose device
     if torch.cuda.is_available():
@@ -416,6 +407,13 @@ def train(config: "Config"):
             model,
             **({"backend": "aot_eager"} if device == 'mps' else {"mode": "reduce-overhead"}),
         )
+
+    # logger
+    wandb_logger = WandbLogger(
+        name="_".join([v for k, v in parts if k]),
+        project="mtgvision_encoder",
+        config=config,
+    )
 
     # Set up trainer with optimizations
     trainer = pl.Trainer(
@@ -520,23 +518,30 @@ class Config(pydantic.BaseModel):
     # | scale_loss_target: float = 100
     # | scale_loss_cycle_target: float = 100
     scale_loss_paired: float = 100
-    norm_io: bool = True,
+    norm_io: bool = False,
     # dataset
     num_workers: int = 3
     force_download: bool = False
     # logging
-    log_every_n_steps: int = 100
+    log_every_n_steps: int = 2500
     ckpt_every_n_steps: int = 2500
 
 
 if __name__ == "__main__":
+
     # ae2_16x32x64x128x256
+    # ae2_32x32x64x64x128
+    # ae2_32x64x64x128x128
     # ae2_32x32x64x128x256
     # ae2_64x64x64x128x256
 
+    # MID LAYERS DON'T SEEM TO INCREASE TIME MUCH
+    # end layers are worst culprits?
+
     sys.argv.extend([
-        "--prefix=debug",
-        "--model-name=ae2_16x32x64x128x256",
-        "--num-workers=0",
+        "--prefix=train",
+        "--model-name=ae2_32x64x128x256x512",
+        "--num-workers=6",
+        "--batch-size=24",
     ])
     _main()

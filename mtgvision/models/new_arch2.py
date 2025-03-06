@@ -166,20 +166,30 @@ class Ae2(AeBase):
             'old_m': AE(E(enc_chs=(16, 16, 32, 64, 128),   enc_extra_ch=128, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(16, 16, 32, 64, 128), dec_expand_ratio=2), S(stn=stn, stn_chs=(16, 32, 32), stn_groups=(4, 8, 8),   stn_out_size=(24, 16), stn_hidden=128)),
             'old_l': AE(E(enc_chs=(16, 32, 64, 128, 256),  enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(16, 16, 32, 64, 128), dec_expand_ratio=4), stnL),
             # newer models
-            '16x16x16x32x64':      AE(E(enc_chs=(16, 16, 16, 32, 64),      enc_extra_ch=256,  enc_repr_ch=32),D(dec_extra_ch=256, dec_chs=(16, 16, 16, 32, 64),     dec_expand_ratio=2), stnL),
-            '16x16x32x64x128':     AE(E(enc_chs=(16, 16, 32, 64, 128),     enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(16, 16, 32, 64, 128),    dec_expand_ratio=2), stnL),
-            '16x32x64x128x256':    AE(E(enc_chs=(16, 32, 64, 128, 256),    enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(16, 32, 64, 128, 256),   dec_expand_ratio=2), stnL),
-            '32x32x32x64x128':     AE(E(enc_chs=(32, 32, 32, 64, 128),     enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(32, 32, 32, 64, 128),     dec_expand_ratio=2), stnL),
-            '32x32x64x128x256':    AE(E(enc_chs=(32, 32, 64, 128, 256),    enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(32, 32, 64, 128, 256),    dec_expand_ratio=2), stnL),
-            '32x64x128x256x512':   AE(E(enc_chs=(32, 64, 128, 256, 512),   enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(32, 64, 128, 256, 512),   dec_expand_ratio=2), stnL),
-            '64x64x64x128x256':    AE(E(enc_chs=(64, 64, 64, 128, 256),    enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(64, 64, 64, 128, 256),    dec_expand_ratio=2), stnL),
-            '64x64x128x256x512':   AE(E(enc_chs=(64, 64, 128, 256, 512),   enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(64, 64, 128, 256, 512),   dec_expand_ratio=2), stnL),
-            '64x128x256x512x1024': AE(E(enc_chs=(64, 128, 256, 512, 1024), enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(64, 128, 256, 512, 1024), dec_expand_ratio=2), stnL),
+            '16x16x16x32x64':      AE(E(enc_chs=(16, 16, 16, 32, 64),      enc_extra_ch=None, enc_repr_ch=32),D(dec_extra_ch=None, dec_chs=(16, 16, 16, 32, 64),     dec_expand_ratio=2), stnL),
+            '16x16x32x32x64':      AE(E(enc_chs=(16, 16, 32, 32, 64),      enc_extra_ch=None, enc_repr_ch=32),D(dec_extra_ch=None, dec_chs=(16, 16, 32, 32, 64),     dec_expand_ratio=2), stnL),
+            '16x16x32x64x128':     AE(E(enc_chs=(16, 16, 32, 64, 128),     enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(16, 16, 32, 64, 128),    dec_expand_ratio=2), stnL),
+            '16x32x32x64x128':     AE(E(enc_chs=(16, 32, 32, 64, 128),     enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(16, 32, 32, 64, 128),    dec_expand_ratio=2), stnL),
+            '16x32x64x128x256':    AE(E(enc_chs=(16, 32, 64, 128, 256),    enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(16, 32, 64, 128, 256),   dec_expand_ratio=2), stnL),
+            #
+            '32x32x32x64x128':     AE(E(enc_chs=(32, 32, 32, 64, 128),     enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(32, 32, 32, 64, 128),     dec_expand_ratio=2), stnL),
+            '32x32x64x64x128':     AE(E(enc_chs=(32, 32, 64, 64, 128),     enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(32, 32, 64, 64, 128),     dec_expand_ratio=2), stnL),
+            '32x64x64x128x128':     AE(E(enc_chs=(32, 64, 64, 128, 128),   enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(32, 64, 64, 128, 128),    dec_expand_ratio=2), stnL),
+            '32x32x64x128x256':    AE(E(enc_chs=(32, 32, 64, 128, 256),    enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(32, 32, 64, 128, 256),    dec_expand_ratio=2), stnL),
+            '32x64x128x256x512':   AE(E(enc_chs=(32, 64, 128, 256, 512),   enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(32, 64, 128, 256, 512),   dec_expand_ratio=2), stnL),
+            #
+            '64x64x64x128x256':    AE(E(enc_chs=(64, 64, 64, 128, 256),    enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(64, 64, 64, 128, 256),    dec_expand_ratio=2), stnL),
+            '64x64x128x256x512':   AE(E(enc_chs=(64, 64, 128, 256, 512),   enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(64, 64, 128, 256, 512),   dec_expand_ratio=2), stnL),
+            '64x128x256x512x1024': AE(E(enc_chs=(64, 128, 256, 512, 1024), enc_extra_ch=None, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(64, 128, 256, 512, 1024), dec_expand_ratio=2), stnL),
         }
         # get
-        e = items[model_enc or model].e
-        d = items[model_dec or model].d
-        s = items[model_stn or model].s
+        try:
+            e = items[model_enc or model].e
+            d = items[model_dec or model].d
+            s = items[model_stn or model].s
+        except KeyError as e:
+            raise KeyError(f'Invalid model: {model_enc or model} {model_dec or model} {model_stn or model}, valid: {list(items.keys())}') from e
+
         return cls.create_model(
             x_size, y_size,
             # enc
