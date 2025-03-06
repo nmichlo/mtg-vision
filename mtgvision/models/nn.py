@@ -35,21 +35,21 @@ class AeBase(nn.Module):
         return self._decode(z)
 
     @final
-    def encode(self, x) -> torch.Tensor:
+    def encode(self, x) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Input shape: (1, 3, 192, 128) if NCHW, or (1, 192, 128, 3) if NHWC
         # if x.size(1) != 3:
         #     if x.size(3) == 3:
         #         x = x.permute(0, 3, 1, 2)
                 # Shape: (1, 3, 192, 128)
-        z = self._encode(x)
+        z, multi = self._encode(x)
         self.encoded = z
-        return z
+        return z, multi
 
     @final
     def forward(self, x) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-        z = self.encode(x)
+        z, multi = self.encode(x)
         multiout = self.decode(z)
-        return z, multiout
+        return z, multiout + multi
 
     @classmethod
     def create_model(cls, x_size, y_size, **kwargs) -> 'AeBase':

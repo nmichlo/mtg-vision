@@ -185,8 +185,8 @@ class MtgVisionEncoder(pl.LightningModule):
     def encode(self, x):
         if self.hparams.norm_io:
             x = x * 2 - 1
-        z = self.model.encode(x)
-        return z
+        z, multi = self.model.encode(x)
+        return z, multi
 
     @classmethod
     def _recon_loss(
@@ -235,7 +235,7 @@ class MtgVisionEncoder(pl.LightningModule):
         )
         # paired loss
         if 'x2' in batch:
-            z2 = self.encode(batch['x2'])
+            z2, _ = self.encode(batch['x2'])
             loss_paired = F.mse_loss(z, z2) * self.hparams.scale_loss_paired
             loss += loss_paired
             logs["loss_paired"] = loss_paired
@@ -504,7 +504,7 @@ class Config(pydantic.BaseModel):
     accumulate_grad_batches: int = 1
     gradient_clip_val: float = 0.5
     # losses
-    loss: Literal['mse', 'mse+edge'] = 'mse+edge'
+    loss: Literal['mse', 'mse+edge'] = 'mse'
     multiscale: bool = True
     paired: bool = True
     # | cyclic: bool = False
@@ -512,7 +512,7 @@ class Config(pydantic.BaseModel):
     # | cycle_with_target: int = 0
     # loss scaling
     scale_loss_recon: float = 1
-    scale_loss_recon_extra: float = 2
+    scale_loss_recon_extra: float = 0
     scale_loss_multiscale: float = 0.5
     # | scale_loss_cyclic: float = 100
     # | scale_loss_target: float = 100
@@ -540,8 +540,8 @@ if __name__ == "__main__":
 
     sys.argv.extend([
         "--prefix=train",
-        "--model-name=ae2_32x64x128x256x512",
+        "--model-name=ae2_64x64x128x256x512",
         "--num-workers=6",
-        "--batch-size=24",
+        "--batch-size=16",
     ])
     _main()

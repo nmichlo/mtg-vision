@@ -314,7 +314,14 @@ class Ae2(AeBase):
         self.dec0 = _upscale_block(dec_chs[1], dec_chs[0], expand_ratio=self.dec_expand_ratio)
         # --> 192x128x[0]
 
-        # **Multi-Scale Outputs**
+        # **Multi-Scale Outputs ENCODER**
+        self.final_0_env = nn.Conv2d(enc_chs[0], 3, 1, bias=False)
+        self.final_1_env = nn.Conv2d(enc_chs[1], 3, 1, bias=False)
+        self.final_2_env = nn.Conv2d(enc_chs[2], 3, 1, bias=False)
+        self.final_3_env = nn.Conv2d(enc_chs[3], 3, 1, bias=False)
+        self.final_4_env = nn.Conv2d(enc_chs[4], 3, 1, bias=False)
+
+        # **Multi-Scale Outputs DECODER**
         self.final_4 = nn.Conv2d(dec_chs[4], 3, 1, bias=False)
         self.final_3 = nn.Conv2d(dec_chs[3], 3, 1, bias=False)
         self.final_2 = nn.Conv2d(dec_chs[2], 3, 1, bias=False)
@@ -337,15 +344,26 @@ class Ae2(AeBase):
 
     def _encode(self, x):
         x = self._apply_stn(x)
-        x = self.stem(x)
-        x = self.enc1(x)
-        x = self.enc2(x)
-        x = self.enc3(x)
-        x = self.enc4(x)
+        x0 = self.stem(x)
+        x1 = self.enc1(x0)
+        x2 = self.enc2(x1)
+        x3 = self.enc3(x2)
+        x4 = self.enc4(x3)
         if self.enc_extra is not None:
-            x = self.enc_extra(x)
-        x = self.bottleneck(x)
-        return x
+            x5 = self.enc_extra(x4)
+            z = self.bottleneck(x5)
+        else:
+            z = self.bottleneck(x4)
+        if self.multiscale:
+            return z, [
+                self.final_4_env(x4),
+                self.final_3_env(x3),
+                self.final_2_env(x2),
+                self.final_1_env(x1),
+                self.final_0_env(x0),
+            ]
+        else:
+            return z, []
 
     def _decode(self, z):
         if self.dec_extra is not None:
