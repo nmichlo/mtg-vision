@@ -1,9 +1,8 @@
 import argparse
 import functools
 import sys
-from inspect import signature
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pydantic
@@ -15,7 +14,6 @@ from torch.utils.data import IterableDataset, DataLoader
 import numpy as np
 import random
 import wandb
-import coremltools as ct
 import kornia as K
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
@@ -47,37 +45,83 @@ _MODELS = {
 
     Ae2.__name__.lower() + 's': functools.partial(Ae2.create_model_small, stn=False),
     Ae2.__name__.lower() + 's_stn': functools.partial(Ae2.create_model_small, stn=True),
+
+    'ae2_16x16x16x32x64': functools.partial(Ae2.create_model_verbose, model='16x16x16x32x64', stn=False),
+    'ae2_16x16x32x64x128': functools.partial(Ae2.create_model_verbose, model='16x16x32x64x128', stn=False),
+    'ae2_16x32x64x128x256': functools.partial(Ae2.create_model_verbose, model='16x32x64x128x256', stn=False),
+    'ae2_32x32x32x64x128': functools.partial(Ae2.create_model_verbose, model='32x32x32x64x128', stn=False),
+    'ae2_32x32x64x128x256': functools.partial(Ae2.create_model_verbose, model='32x32x64x128x256', stn=False),
+    'ae2_32x64x128x256x512': functools.partial(Ae2.create_model_verbose, model='32x64x128x256x512', stn=False),
+    'ae2_64x64x64x128x256': functools.partial(Ae2.create_model_verbose, model='64x64x64x128x256', stn=False),
+    'ae2_64x64x128x256x512': functools.partial(Ae2.create_model_verbose, model='64x64x128x256x512', stn=False),
+    'ae2_64x128x256x512x1024': functools.partial(Ae2.create_model_verbose, model='64x128x256x512x1024', stn=False),
+
+    'ae2_16x16x16x32x64_stn': functools.partial(Ae2.create_model_verbose, model='16x16x16x32x64', stn=True),
+    'ae2_16x16x32x64x128_stn': functools.partial(Ae2.create_model_verbose, model='16x16x32x64x128', stn=True),
+    'ae2_16x32x64x128x256_stn': functools.partial(Ae2.create_model_verbose, model='16x32x64x128x256', stn=True),
+    'ae2_32x32x32x64x128_stn': functools.partial(Ae2.create_model_verbose, model='32x32x32x64x128', stn=True),
+    'ae2_32x32x64x128x256_stn': functools.partial(Ae2.create_model_verbose, model='32x32x64x128x256', stn=True),
+    'ae2_32x64x128x256x512_stn': functools.partial(Ae2.create_model_verbose, model='32x64x128x256x512', stn=True),
+    'ae2_64x64x64x128x256_stn': functools.partial(Ae2.create_model_verbose, model='64x64x64x128x256', stn=True),
+    'ae2_64x64x128x256x512_stn': functools.partial(Ae2.create_model_verbose, model='64x64x128x256x512', stn=True),
+    'ae2_64x128x256x512x1024_stn': functools.partial(Ae2.create_model_verbose, model='64x128x256x512x1024', stn=True),
 }
 
 
-@functools.lru_cache(maxsize=1)
-def _load_image_ds(predownload: bool = False):
-    orig = MtgImages(img_type='small', predownload=predownload)
-    ilsvrc = IlsvrcImages()
-    return orig, ilsvrc
-
-
-# Custom Dataset for MTG Images (unchanged)
 class RanMtgEncDecDataset(IterableDataset):
-    def __init__(self, predownload: bool = False):
-        self.orig, self.ilsvrc = _load_image_ds(predownload=predownload)
+
+    def __init__(
+        self,
+        default_batch_size: int,
+        predownload: bool = False,
+        paired: bool = False,  # generate second set of images
+        size: Tuple[int, int] = (192, 128),
+    ):
+        assert default_batch_size >= 0
+        self.default_batch_size = default_batch_size
+        self.paired = paired
+        self.size = size
+        self.mtg = MtgImages(img_type='small', predownload=predownload)
+        self.ilsvrc = IlsvrcImages()
 
     def __iter__(self):
         while True:
-            yield self.random_tensor()
+            if self.default_batch_size == 0:
+                yield self.random_tensor()
+            else:
+                yield self.random_tensor_batch()
 
     def random_img(self):
-        o = self.orig.ran()
-        l = self.ilsvrc.ran()
-        x, y = MtgImages.make_virtual_pair(o, l, (192, 128), (192, 128), False)
-        return x, y
+        batch = self.random_image_batch(1)
+        return {k: v[0] for k, v in batch.items()}
 
     def random_tensor(self):
-        x, y = self.random_img()
-        # Convert from NHWC float16 numpy arrays to NCHW float32 PyTorch tensors
-        x = torch.from_numpy(x).float().permute(2, 0, 1)
-        y = torch.from_numpy(y).float().permute(2, 0, 1)
-        return x, y
+        batch = self.random_tensor_batch(1)  # already floats
+        return {k: v[0] for k, v in batch.items()}
+
+    def random_image_batch(self, n: Optional[int] = None):
+        if n is None:
+            n = self.default_batch_size
+        # get random images
+        cards_bgs = [(self.mtg.ran(), self.ilsvrc.ran()) for _ in range(n)]
+        # generate random samples
+        xs0, xs1, ys = [], [], []
+        for card, bg0 in cards_bgs:
+            _, bg1 = random.choice(cards_bgs)
+            ys.append(MtgImages.make_cropped(card, size=self.size))
+            xs0.append(MtgImages.make_virtual(card, bg0, size=self.size))
+            if self.paired:
+                xs1.append(MtgImages.make_virtual(card, bg1, size=self.size))
+        # stack
+        return {
+            "x": np.stack(xs0, axis=0),
+            "y": np.stack(ys, axis=0),
+            **({"x2": np.stack(xs1, axis=0)} if self.paired else {}),
+        }
+
+    def random_tensor_batch(self, n: Optional[int] = None):
+        batch = self.random_image_batch(n)
+        return {k: K.image_to_tensor(v) for k, v in batch.items()}
 
 
 # Define the Lightning Module
@@ -93,16 +137,19 @@ class MtgVisionEncoder(pl.LightningModule):
 
     def configure_model(self) -> None:
         model_fn = _MODELS[self.hparams.model_name]
+        if model_fn is None:
+            model_fn = functools.partial(Ae2.create_model_verbose, model=self.hparams.model_name)
         model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
         self.model = model
 
-    def _get_loss(self):
-        if self.hparams.loss == 'mse':
+    @classmethod
+    def _get_loss(cls, hparams):
+        if hparams.loss == 'mse':
             return F.mse_loss, None
-        elif self.hparams.loss == 'mse+edge':
+        elif hparams.loss == 'mse+edge':
             return F.mse_loss, K.filters.sobel
         else:
-            raise ValueError(f"Unknown loss: {self.hparams.loss}")
+            raise ValueError(f"Unknown loss: {hparams.loss}")
 
     @classmethod
     def test_checkpoint(cls, path):
@@ -110,9 +157,9 @@ class MtgVisionEncoder(pl.LightningModule):
         # Initialize model
         data_module = MtgDataModule(batch_size=1)
         # Initial batch for visualization
-        x, y = data_module.train_dataset.random_tensor()
-        x = x.cpu()
-        y = y.cpu()
+        batch = data_module.train_dataset.random_tensor_batch(1)
+        x = batch['x'].cpu()[0]
+        y = batch['y'].cpu()[0]
         # feed forward
         _, ([outx], *_) = model(x[None])
         _, ([outy], *_) = model(y[None])
@@ -132,71 +179,98 @@ class MtgVisionEncoder(pl.LightningModule):
         plt.show()
 
     def forward(self, x):
+        if self.hparams.norm_io:
+            x = x * 2 - 1
         z, multi_out = self.model(x)
+        if self.hparams.norm_io:
+            multi_out = [(out + 1) / 2 for out in multi_out]
         return z, multi_out
 
-    def training_step(self, batch, batch_idx):
-        # forward
-        x, y = batch
-        z, (out, *multi_out) = self(x)
+    def encode(self, x):
+        if self.hparams.norm_io:
+            x = x * 2 - 1
+        z = self.model.encode(x)
+        return z
 
+    @classmethod
+    def _recon_loss(
+        cls,
+        hparams,
+        y_target,
+        y_recon,
+        y_recon_multi=None,
+    ):
+        loss_fn, loss_filter = cls._get_loss(hparams)
         # loss
         loss = 0
-        loss_fn, loss_filter = self._get_loss()
-
-        # Reconstruction loss
-        loss_recon = loss_fn(out, y)
-        loss += loss_recon * self.hparams.scale_loss_recon
-
-        # Extra loss
+        # x - reconstruction loss
+        loss_recon = loss_fn(y_recon, y_target)
+        loss += loss_recon * hparams.scale_loss_recon
+        # x - extra loss
         loss_recon_extra = 0
         if loss_filter is not None:
-            loss_recon_extra = loss_fn(loss_filter(out), loss_filter(y))
-            loss += loss_recon_extra * self.hparams.scale_loss_recon_extra
-
-        # Multiscale loss
+            loss_recon_extra = loss_fn(loss_filter(y_recon), loss_filter(y_target))
+            loss += loss_recon_extra * hparams.scale_loss_recon_extra
+        # x - multiscale loss
         loss_multiscale = 0
-        if self.hparams.multiscale and len(multi_out) > 0:
-            for mout in multi_out:
-                mout = F.interpolate(mout, size=y.size()[2:], mode='bilinear', align_corners=False)
-                loss_multiscale += loss_fn(mout, y)
-            loss_multiscale /= len(multi_out)
-            loss += loss_multiscale * self.hparams.scale_loss_multiscale
+        if hparams.multiscale and y_recon_multi:
+            for y_mid_recon in y_recon_multi:
+                loss_multiscale += loss_fn(
+                    F.interpolate(y_mid_recon, size=y_target.size()[2:], mode='bilinear', align_corners=False),
+                    y_target
+                )
+            loss_multiscale /= len(y_recon_multi)
+            loss += loss_multiscale * hparams.scale_loss_multiscale
+        return loss, {
+            "loss_recon": loss_recon,
+            "loss_recon_edges": loss_recon_extra,
+            "loss_multiscale_recon": loss_multiscale,
+        }
+
+
+    def training_step(self, batch, batch_idx):
+        # recon loss
+        z, y_recons = self.forward(batch['x'])
+        loss, logs = self._recon_loss(
+            hparams=self.hparams,
+            y_target=batch['y'],
+            y_recon=y_recons[0],
+            y_recon_multi=y_recons[1:],
+        )
+        # paired loss
+        if 'x2' in batch:
+            z2 = self.encode(batch['x2'])
+            loss_paired = F.mse_loss(z, z2) * self.hparams.scale_loss_paired
+            loss += loss_paired
+            logs["loss_paired"] = loss_paired
+        # final result
+        logs["train_loss"] = loss
 
         # Cycle consistency losses
-        loss_cyclic = 0
-        if self.hparams.cyclic:
-            z2 = self.model.encode(out)
-            loss_cyclic = loss_fn(z2, z)
-            loss += loss_cyclic * self.hparams.scale_loss_cyclic
+        # | loss_cyclic = 0
+        # | if self.hparams.cyclic:
+        # |     z2 = self.model.encode(out)
+        # |     loss_cyclic = loss_fn(z2, z)
+        # |     loss += loss_cyclic * self.hparams.scale_loss_cyclic
 
         # Target consistency loss
-        loss_target = 0
-        if self.hparams.target_consistency:
-            z2 = self.model.encode(y)
-            loss_target = loss_fn(z2, z)
-            loss += loss_target * self.hparams.scale_loss_target
+        # | loss_target = 0
+        # | if self.hparams.target_consistency:
+        # |     z2 = self.model.encode(y)
+        # |     loss_target = loss_fn(z2, z)
+        # |     loss += loss_target * self.hparams.scale_loss_target
 
         # Cycle WITH target consistency loss
-        loss_cycle_target = 0
-        if self.hparams.cycle_with_target > 0:
-            assert self.hparams.cycle_with_target % 2 == 0
-            n = self.hparams.cycle_with_target // 2
-            # like cycle and target, but only take first n/2 elements
-            _z = torch.concatenate([z[:n], z[:n]], dim=0)
-            _x = torch.concatenate([x[:n], out[:n]], dim=0)
-            loss_cycle_target += loss_fn(self.model.encode(_x), _z)
-            loss += loss_cycle_target * self.hparams.scale_loss_cycle_target
+        # | loss_cycle_target = 0
+        # | if self.hparams.cycle_with_target > 0:
+        # |     assert self.hparams.cycle_with_target % 2 == 0
+        # |     n = self.hparams.cycle_with_target // 2
+        # |     # like cycle and target, but only take first n/2 elements
+        # |     _z = torch.concatenate([z[:n], z[:n]], dim=0)
+        # |     _x = torch.concatenate([x[:n], out[:n]], dim=0)
+        # |     loss_cycle_target += loss_fn(self.model.encode(_x), _z)
+        # |     loss += loss_cycle_target * self.hparams.scale_loss_cycle_target
 
-        logs = {
-            "loss_recon": loss_recon,
-            "loss_recon_extra": loss_recon_extra,
-            "loss_multiscale": loss_multiscale,
-            "loss_cyclic": loss_cyclic,
-            "loss_target": loss_target,
-            "loss_cycle_target": loss_cycle_target,
-            "train_loss": loss,
-        }
         self.log_dict(logs, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
@@ -208,25 +282,32 @@ class MtgVisionEncoder(pl.LightningModule):
         )
 
 
-# Define the Data Module
 class MtgDataModule(pl.LightningDataModule):
 
-    def __init__(self, batch_size, num_workers: int = 3, predownload: bool = False):
+    def __init__(
+        self,
+        batch_size: int,
+        paired: bool = False,
+        num_workers: int = 3,
+        predownload: bool = False,
+    ):
         super().__init__()
-        self.batch_size = batch_size
         self.num_workers = num_workers
-        self.train_dataset = RanMtgEncDecDataset(predownload=predownload)
+        self.train_dataset = RanMtgEncDecDataset(
+            predownload=predownload,
+            default_batch_size=batch_size,
+            paired=paired,
+        )
 
     def train_dataloader(self):
         return DataLoader(
             self.train_dataset,
-            batch_size=self.batch_size,
+            batch_size=None,  # no auto collation
             shuffle=False,
             num_workers=self.num_workers,
         )
 
 
-# Custom callback for periodic image logging
 class ImageLoggingCallback(Callback):
 
     def __init__(self, vis_batch, log_every_n_steps=1000):
@@ -241,7 +322,6 @@ class ImageLoggingCallback(Callback):
             self.log_images(pl_module, self.vis_batch)
             self.last_steps = current_steps
 
-    # Helper function to join images into a row (unchanged)
     @staticmethod
     def join_images_into_row(images, padding=5):
         const = 127
@@ -253,14 +333,13 @@ class ImageLoggingCallback(Callback):
         ]
         return np.concatenate(images, axis=1)
 
-    # Image logging function adapted for Lightning
     def log_images(self, model, vis_batch_np):
         print("Logging images...")
         logs = {}
         model.eval()
         with torch.no_grad():
-            x_np = np.stack([x for x, _ in vis_batch_np], axis=0)
-            y_np = np.stack([y for _, y in vis_batch_np], axis=0)
+            x_np = np.stack([batch['x'] for batch in vis_batch_np], axis=0)
+            y_np = np.stack([batch['y'] for batch in vis_batch_np], axis=0)
             x = torch.from_numpy(x_np).float().permute(0, 3, 1, 2).to(model.device)
             _, multiscale = model(x)
             mout_np = []
@@ -279,8 +358,6 @@ class ImageLoggingCallback(Callback):
         wandb.log(logs)
 
 
-
-# Training function using PyTorch Lightning
 def train(config: "Config"):
     random.seed(config.seed)
     torch.manual_seed(config.seed)
@@ -291,6 +368,7 @@ def train(config: "Config"):
         batch_size=config.batch_size,
         num_workers=config.num_workers,
         predownload=config.force_download,
+        paired=config.paired,
     )
 
     # Initial batch for visualization
@@ -306,13 +384,15 @@ def train(config: "Config"):
     parts = [
         (config.prefix, config.prefix),
         (True, config.model_name),
+        (config.paired, "pairs"),
+        (config.norm_io, "norm"),
         (config.loss, config.loss),
         (config.learning_rate, f"lr={config.learning_rate}"),
         (config.batch_size, f"bs={config.batch_size}"),
         (config.multiscale, f"Lm={config.scale_loss_multiscale}"),
-        (config.cyclic, f"Lc={config.scale_loss_cyclic}"),
-        (config.target_consistency, f"Lt={config.scale_loss_target}"),
-        (config.cycle_with_target > 0, f"Lct{config.cycle_with_target}={config.scale_loss_cycle_target}"),
+        # (config.cyclic, f"Lc={config.scale_loss_cyclic}"),
+        # (config.target_consistency, f"Lt={config.scale_loss_target}"),
+        # (config.cycle_with_target > 0, f"Lct{config.cycle_with_target}={config.scale_loss_cycle_target}"),
     ]
     wandb_logger = WandbLogger(
         name="_".join([v for k, v in parts if k]),
@@ -331,9 +411,10 @@ def train(config: "Config"):
     # Initialize model and compile
     model = MtgVisionEncoder(config.model_dump())
     if config.compile:
+        # torch._dynamo.list_backends() # ['cudagraphs', 'inductor', 'onnxrt', 'openxla', 'tvm']
         model = torch.compile(
             model,
-            **({"backend": "aot_eager"} if device == 'mps' else {})
+            **({"backend": "aot_eager"} if device == 'mps' else {"mode": "reduce-overhead"}),
         )
 
     # Set up trainer with optimizations
@@ -341,9 +422,9 @@ def train(config: "Config"):
         max_epochs=config.max_steps,
         logger=wandb_logger,
         callbacks=[
-            ImageLoggingCallback(vis_batch, log_every_n_steps=2500),
-            ModelCheckpoint(monitor="train_loss", save_top_k=3, mode="min", every_n_train_steps=2500),
-            StochasticWeightAveraging(swa_lrs=1e-2),
+            ImageLoggingCallback(vis_batch, log_every_n_steps=config.log_every_n_steps),
+            ModelCheckpoint(monitor="train_loss", save_top_k=3, mode="min", every_n_train_steps=config.ckpt_every_n_steps),
+            # StochasticWeightAveraging(swa_lrs=1e-2),
         ],
         accelerator=device,
         devices=1,
@@ -414,15 +495,9 @@ class Config(pydantic.BaseModel):
     img_type: ScryfallImageType = ScryfallImageType.small
     bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
     # model
-    model_name: str = "ae2l"
+    model_name: str = 'N/A'
     compile: bool = False
     checkpoint: Optional[str] = None
-    # losses
-    loss: Literal['mse', 'mse+edge'] = 'mse'
-    multiscale: bool = True
-    cyclic: bool = False
-    target_consistency: bool = False
-    cycle_with_target: int = 0
     # optimizer
     max_steps: int = 1_000_000
     batch_size: int = 16
@@ -430,31 +505,38 @@ class Config(pydantic.BaseModel):
     weight_decay: float = 1e-7
     accumulate_grad_batches: int = 1
     gradient_clip_val: float = 0.5
+    # losses
+    loss: Literal['mse', 'mse+edge'] = 'mse+edge'
+    multiscale: bool = True
+    paired: bool = True
+    # | cyclic: bool = False
+    # | target_consistency: bool = False
+    # | cycle_with_target: int = 0
     # loss scaling
     scale_loss_recon: float = 1
-    scale_loss_recon_extra: float = 5.0
-    scale_loss_multiscale: float =  0.5
-    scale_loss_cyclic: float = 100
-    scale_loss_target: float = 100
-    scale_loss_cycle_target: float = 100
-    # inner-batch-sampling (load 1/2 data, but generate multiple for comparisons)
+    scale_loss_recon_extra: float = 2
+    scale_loss_multiscale: float = 0.5
+    # | scale_loss_cyclic: float = 100
+    # | scale_loss_target: float = 100
+    # | scale_loss_cycle_target: float = 100
+    scale_loss_paired: float = 100
+    norm_io: bool = True,
     # dataset
     num_workers: int = 3
     force_download: bool = False
+    # logging
+    log_every_n_steps: int = 100
+    ckpt_every_n_steps: int = 2500
 
 
 if __name__ == "__main__":
+    # ae2_16x32x64x128x256
+    # ae2_32x32x64x128x256
+    # ae2_64x64x64x128x256
+
     sys.argv.extend([
-        "--prefix=test",
-        "--model=ae2s_stn",
-        # "--no-multiscale",
-        "--cyclic",
-        "--target-consistency",
-        "--loss=mse+edge",
-        "--learning-rate=0.001",
-        "--batch-size=32",
-        # "--accumulate-grad-batches=2",
-        # "--checkpoint=mtgvision_encoder/nlsy52sj/checkpoints/epoch=0-step=152500.ckpt",
-        "--num-workers=6",
+        "--prefix=debug",
+        "--model-name=ae2_16x32x64x128x256",
+        "--num-workers=0",
     ])
     _main()

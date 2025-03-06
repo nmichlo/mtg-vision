@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from h5py.h5f import namedtuple
 
 # Assuming AeBase is provided elsewhere with _init_weights and quick_test
 from mtgvision.models.nn import AeBase
@@ -100,71 +101,101 @@ def _upscale_block(in_ch, out_ch, upsample: bool = True, expand_ratio: int = 4):
         return nn.Sequential(*layers[1:])
 
 
+_MISSING = object()
+
+
 # Improved Autoencoder Class
 class Ae2(AeBase):
 
     @classmethod
     def create_model_small(cls, x_size, y_size, stn: bool = False, multiscale: bool = False):
-        return cls.create_model(
-            x_size, y_size,
-            # enc
-            enc_chs=(16, 16, 24, 32, 64),
-            enc_extra_ch=64,
-            enc_repr_ch=32,  # 6*4*32 = 768
-            # dec
-            dec_extra_ch=None,
-            dec_chs=(16, 16, 24, 32, 64),
-            dec_expand_ratio=2,
-            # stn
-            stn=stn,
-            stn_chs=(16, 24, 32),
-            stn_groups=(4, 6, 8),
-            stn_out_size=(12, 8),
-            stn_hidden=96,
-            # multiscale
-            multiscale=multiscale,
-        )
+        return cls.create_model_verbose(x_size, y_size, model='old_s', stn=stn, multiscale=multiscale)
 
     @classmethod
     def create_model_medium(cls, x_size, y_size, stn: bool = False, multiscale: bool = False):
-        return cls.create_model(
-            x_size, y_size,
-            # enc
-            enc_chs=(16, 16, 32, 64, 128),
-            enc_extra_ch=128,
-            enc_repr_ch=32,  # 6*4*32 = 768
-            # dec
-            dec_extra_ch=None,
-            dec_chs=(16, 16, 32, 64, 128),
-            dec_expand_ratio=2,
-            # stn
-            stn=stn,
-            stn_chs=(16, 32, 32),
-            stn_groups=(4, 8, 8),
-            stn_out_size=(24, 16),
-            stn_hidden=128,
-            # multiscale
-            multiscale=multiscale,
-        )
+        return cls.create_model_verbose(x_size, y_size, model='old_m', stn=stn, multiscale=multiscale)
 
     @classmethod
     def create_model_heavy(cls, x_size, y_size, stn: bool = False, multiscale: bool = False):
+        return cls.create_model_verbose(x_size, y_size, model='old_l', stn=stn, multiscale=multiscale)
+
+    @classmethod
+    def create_model_verbose(
+        cls,
+        x_size,
+        y_size,
+        *,
+        # model configs
+        model: str = None,
+        model_enc: str = None,
+        model_dec: str = None,
+        model_stn: str = None,
+        # enable features
+        stn: bool = False,
+        multiscale: bool = False,
+        # overrides - enc
+        enc_chs: Tuple[int, int, int, int, int] = _MISSING,
+        enc_extra_ch: Optional[int] = _MISSING,
+        enc_repr_ch: int = _MISSING,
+        # overrides - dec
+        dec_extra_ch: Optional[int] = _MISSING,
+        dec_chs: Tuple[int, int, int, int, int] = _MISSING,
+        dec_expand_ratio: int = _MISSING,
+        # overrides - stn
+        stn_chs: Tuple[int, int, int] = _MISSING,
+        stn_groups: Tuple[int, int, int] = _MISSING,
+        stn_out_size: Tuple[int, int] = _MISSING,
+        stn_hidden: int = _MISSING,
+
+    ):
+        if model is not None:
+            pass
+        elif model_enc is not None and model_dec is not None and model_stn is not None:
+            pass
+        else:
+            raise ValueError('Provide `model` OR `model_enc,model_dec,model_stn`')
+
+        AE = namedtuple('AE', ['e', 'd', 's'])
+        E = namedtuple('E', ['enc_chs', 'enc_extra_ch', 'enc_repr_ch'])
+        D = namedtuple('D', ['dec_extra_ch', 'dec_chs', 'dec_expand_ratio'])
+        S = namedtuple('S', ['stn', 'stn_chs', 'stn_groups', 'stn_out_size', 'stn_hidden'])
+        # ENCODER DECODER
+        stnL = S(stn=stn, stn_chs=(32, 64, 64),   stn_groups=(8, 16, 16),  stn_out_size=(24, 16), stn_hidden=128)
+        items = {
+            'old_s': AE(E(enc_chs=(16, 16, 24, 32, 64),    enc_extra_ch=64,  enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(16, 16, 24, 32, 64),  dec_expand_ratio=2), S(stn=stn, stn_chs=(16, 24, 32), stn_groups=(4, 6, 8),   stn_out_size=(12, 8),  stn_hidden=96)),
+            'old_m': AE(E(enc_chs=(16, 16, 32, 64, 128),   enc_extra_ch=128, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(16, 16, 32, 64, 128), dec_expand_ratio=2), S(stn=stn, stn_chs=(16, 32, 32), stn_groups=(4, 8, 8),   stn_out_size=(24, 16), stn_hidden=128)),
+            'old_l': AE(E(enc_chs=(16, 32, 64, 128, 256),  enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=None, dec_chs=(16, 16, 32, 64, 128), dec_expand_ratio=4), stnL),
+            # newer models
+            '16x16x16x32x64':      AE(E(enc_chs=(16, 16, 16, 32, 64),      enc_extra_ch=256,  enc_repr_ch=32),D(dec_extra_ch=256, dec_chs=(16, 16, 16, 32, 64),     dec_expand_ratio=2), stnL),
+            '16x16x32x64x128':     AE(E(enc_chs=(16, 16, 32, 64, 128),     enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(16, 16, 32, 64, 128),    dec_expand_ratio=2), stnL),
+            '16x32x64x128x256':    AE(E(enc_chs=(16, 32, 64, 128, 256),    enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(16, 32, 64, 128, 256),   dec_expand_ratio=2), stnL),
+            '32x32x32x64x128':     AE(E(enc_chs=(32, 32, 32, 64, 128),     enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(32, 32, 32, 64, 128),     dec_expand_ratio=2), stnL),
+            '32x32x64x128x256':    AE(E(enc_chs=(32, 32, 64, 128, 256),    enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(32, 32, 64, 128, 256),    dec_expand_ratio=2), stnL),
+            '32x64x128x256x512':   AE(E(enc_chs=(32, 64, 128, 256, 512),   enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(32, 64, 128, 256, 512),   dec_expand_ratio=2), stnL),
+            '64x64x64x128x256':    AE(E(enc_chs=(64, 64, 64, 128, 256),    enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(64, 64, 64, 128, 256),    dec_expand_ratio=2), stnL),
+            '64x64x128x256x512':   AE(E(enc_chs=(64, 64, 128, 256, 512),   enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(64, 64, 128, 256, 512),   dec_expand_ratio=2), stnL),
+            '64x128x256x512x1024': AE(E(enc_chs=(64, 128, 256, 512, 1024), enc_extra_ch=256, enc_repr_ch=32), D(dec_extra_ch=256, dec_chs=(64, 128, 256, 512, 1024), dec_expand_ratio=2), stnL),
+        }
+        # get
+        e = items[model_enc or model].e
+        d = items[model_dec or model].d
+        s = items[model_stn or model].s
         return cls.create_model(
             x_size, y_size,
             # enc
-            enc_chs=(16, 32, 64, 128, 256),
-            enc_extra_ch=256,
-            enc_repr_ch=256,  # 6*4*256 = 1536
+            enc_chs=e.enc_chs if (enc_chs is _MISSING) else enc_chs,
+            enc_extra_ch=e.enc_extra_ch if (enc_extra_ch is _MISSING) else enc_extra_ch,
+            enc_repr_ch=e.enc_repr_ch if (enc_repr_ch is _MISSING) else enc_repr_ch,
             # dec
-            dec_extra_ch=None,
-            dec_chs=(16, 16, 32, 64, 128),
-            dec_expand_ratio=4,
+            dec_extra_ch=d.dec_extra_ch if (dec_extra_ch is _MISSING) else dec_extra_ch,
+            dec_chs=d.dec_chs if (dec_chs is _MISSING) else dec_chs,
+            dec_expand_ratio=d.dec_expand_ratio if (dec_expand_ratio is _MISSING) else dec_expand_ratio,
             # stn
             stn=stn,
-            stn_chs=(32, 64, 64),
-            stn_groups=(8, 16, 16),
-            stn_out_size=(24, 16),
-            stn_hidden=128,
+            stn_chs=s.stn_chs if (stn_chs is _MISSING) else stn_chs,
+            stn_groups=s.stn_groups if (stn_groups is _MISSING) else stn_groups,
+            stn_out_size=s.stn_out_size if (stn_out_size is _MISSING) else stn_out_size,
+            stn_hidden=s.stn_hidden if (stn_hidden is _MISSING) else stn_hidden,
             # multiscale
             multiscale=multiscale,
         )
@@ -232,31 +263,46 @@ class Ae2(AeBase):
             self.fc_loc = None
 
         # Encoder with Dilated Convolutions in later stages
+        # --> 192x128x3
         self.stem = _downscale_block(3, self.enc_chs[0], dilation=1)
+        # --> 96x64x[0]
         self.enc1 = _downscale_block(self.enc_chs[0], self.enc_chs[1], dilation=1)
+        # --> 48x32x[1]
         self.enc2 = _downscale_block(self.enc_chs[1], self.enc_chs[2], dilation=1)
+        # --> 24x16x[2]
         self.enc3 = _downscale_block(self.enc_chs[2], self.enc_chs[3], dilation=2)
+        # --> 12x8x[3]
         self.enc4 = _downscale_block(self.enc_chs[3], self.enc_chs[4], dilation=2)
-        # * extra layer for non-linear encoding, no downscaling here.
+        # --> 6x4x[4]
         if self.enc_extra_ch is not None:
+            # * extra layer for non-linear encoding, no downscaling here.
             self.enc_extra = _downscale_block(enc_chs[4], self.enc_extra_ch, dilation=2, final_stride=1)
+            # --> 6x4x[extra]
             self.bottleneck = nn.Conv2d(self.enc_extra_ch, self.enc_repr_ch, 1, bias=False)
         else:
             self.enc_extra = None
             self.bottleneck = nn.Conv2d(enc_chs[4], self.enc_repr_ch, 1, bias=False)
+        # --> 6x4x[repr]
 
         # Decoder starting from 6x4x<repr_ch>
-        # * extra layer for non-linear encoding, no upscaling here.
+        # --> 6x4x[repr]
         if self.dec_extra_ch is not None:
-            self.dec_extra = _upscale_block(self.enc_repr_ch, self.dec_extra_ch, upsample=False, expand_ratio=self.dec_expand_ratio)
+            # * extra layer for non-linear encoding, no upscaling here.
+            self.dec_extra = _downscale_block(self.enc_repr_ch, self.dec_extra_ch, dilation=2, final_stride=1)
+            # --> 6x4x[extra]
             self.dec4 = _upscale_block(self.dec_extra_ch, dec_chs[4], expand_ratio=self.dec_expand_ratio)
         else:
             self.dec_extra = None
             self.dec4 = _upscale_block(self.enc_repr_ch, dec_chs[4], expand_ratio=self.dec_expand_ratio)
+        # --> 12x8x[4]
         self.dec3 = _upscale_block(dec_chs[4], dec_chs[3], expand_ratio=self.dec_expand_ratio)
+        # --> 24x16x[3]
         self.dec2 = _upscale_block(dec_chs[3], dec_chs[2], expand_ratio=self.dec_expand_ratio)
+        # --> 48x32x[2]
         self.dec1 = _upscale_block(dec_chs[2], dec_chs[1], expand_ratio=self.dec_expand_ratio)
+        # --> 96x64x[1]
         self.dec0 = _upscale_block(dec_chs[1], dec_chs[0], expand_ratio=self.dec_expand_ratio)
+        # --> 192x128x[0]
 
         # **Multi-Scale Outputs**
         self.final_4 = nn.Conv2d(dec_chs[4], 3, 1, bias=False)
@@ -264,6 +310,7 @@ class Ae2(AeBase):
         self.final_2 = nn.Conv2d(dec_chs[2], 3, 1, bias=False)
         self.final_1 = nn.Conv2d(dec_chs[1], 3, 1, bias=False)
         self.final_0 = nn.Conv2d(dec_chs[0], 3, 1, bias=False)
+        # --> 192x128x3
 
         self._init_weights()
 
