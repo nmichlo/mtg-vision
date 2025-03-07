@@ -135,6 +135,7 @@ class MtgVisionEncoder(pl.LightningModule):
                 model=name,
                 multiscale=self.hparams.multiscale,
                 stn=stn,
+                dec_skip_connections=self.hparams.dec_skip_connections,
             )
         self.model = model
 
@@ -223,7 +224,6 @@ class MtgVisionEncoder(pl.LightningModule):
             "loss_multiscale_recon": loss_multiscale,
         }
 
-
     def training_step(self, batch, batch_idx):
         # recon loss
         z, y_recons = self.forward(batch['x'])
@@ -239,7 +239,9 @@ class MtgVisionEncoder(pl.LightningModule):
             loss_paired = F.mse_loss(z, z2) * self.hparams.scale_loss_paired
             loss += loss_paired
             logs["loss_paired"] = loss_paired
-        # final result
+
+        # loss is required key
+        logs["loss"] = loss
         logs["train_loss"] = loss
 
         # Cycle consistency losses
@@ -268,14 +270,32 @@ class MtgVisionEncoder(pl.LightningModule):
         # |     loss += loss_cycle_target * self.hparams.scale_loss_cycle_target
 
         self.log_dict(logs, on_step=True, on_epoch=True, prog_bar=True)
-        return loss
+        # loss is required key
+        return logs
 
     def configure_optimizers(self):
-        return optim.RAdam(
-            self.parameters(),
-            lr=self.hparams.learning_rate,
-            weight_decay=self.hparams.weight_decay
-        )
+        if self.hparams.optimizer == 'adam':
+            return optim.Adam(
+                self.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay
+            )
+        elif self.hparams.optimizer == 'radam':
+            return optim.RAdam(
+                self.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay
+            )
+        elif self.hparams.optimizer == 'sgd':
+            return optim.SGD(
+                self.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay,
+                nesterov=True,
+                momentum=0.9,
+            )
+        else:
+            raise ValueError(f"Unknown optimizer: {self.hparams.optimizer}")
 
 
 class MtgDataModule(pl.LightningDataModule):
@@ -482,6 +502,8 @@ _CONF_TYPE_OVERRIDES = {
     "checkpoint": str,
     "loss": str,
     "prefix": str,
+    "optimizer": str,
+    "dec_skip_connections": str,
 }
 
 class Config(pydantic.BaseModel):
@@ -496,6 +518,7 @@ class Config(pydantic.BaseModel):
     model_name: str = 'N/A'
     compile: bool = False
     checkpoint: Optional[str] = None
+    dec_skip_connections: Optional[Literal['out', 'inner', 'inner_depthwise']] = None
     # optimizer
     max_steps: int = 1_000_000
     batch_size: int = 16
@@ -504,6 +527,7 @@ class Config(pydantic.BaseModel):
     accumulate_grad_batches: int = 1
     gradient_clip_val: float = 0.5
     # losses
+    optimizer: Literal['adam', 'radam'] = 'radam'
     loss: Literal['mse', 'mse+edge'] = 'mse'
     multiscale: bool = True
     paired: bool = True
@@ -543,5 +567,17 @@ if __name__ == "__main__":
         "--model-name=ae2_64x64x128x256x512",
         "--num-workers=6",
         "--batch-size=16",
+        "--learning-rate=0.001",
+        "--checkpoint=mtgvision_encoder/2__0fz8f6z4/checkpoints/epoch=0-step=270000.ckpt",
+        "--accumulate-grad-batches=1",
+        "--gradient-clip-val=1.0",
+        "--scale-loss-recon=1.0",
+        "--scale-loss-recon-extra=0.5",
+        "--scale-loss-multiscale=0.0",
+        "--scale-loss-paired=1.0",
+        "--loss=mse+edge",
+        "--optimizer=radam",
+        "--no-multiscale",
+        "--dec-skip-connections=out",
     ])
     _main()

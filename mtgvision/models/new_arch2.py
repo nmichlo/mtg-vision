@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -141,6 +141,7 @@ class Ae2(AeBase):
         dec_extra_ch: Optional[int] = _MISSING,
         dec_chs: Tuple[int, int, int, int, int] = _MISSING,
         dec_expand_ratio: int = _MISSING,
+        dec_skip_connections: Optional[Literal['out', 'inner', 'inner_depthwise']] = None,
         # overrides - stn
         stn_chs: Tuple[int, int, int] = _MISSING,
         stn_groups: Tuple[int, int, int] = _MISSING,
@@ -200,6 +201,7 @@ class Ae2(AeBase):
             dec_extra_ch=d.dec_extra_ch if (dec_extra_ch is _MISSING) else dec_extra_ch,
             dec_chs=d.dec_chs if (dec_chs is _MISSING) else dec_chs,
             dec_expand_ratio=d.dec_expand_ratio if (dec_expand_ratio is _MISSING) else dec_expand_ratio,
+            dec_skip_connections=dec_skip_connections,
             # stn
             stn=stn,
             stn_chs=s.stn_chs if (stn_chs is _MISSING) else stn_chs,
@@ -220,6 +222,7 @@ class Ae2(AeBase):
         dec_extra_ch: Optional[int] = None,  # useful for helping decode info from bottleneck
         dec_chs: Tuple[int, int, int, int, int] = (16, 16, 32, 64, 128),  # reversed
         dec_expand_ratio: int = 4,
+        dec_skip_connections: Optional[Literal['out', 'inner', 'inner_depthwise']] = None,
         # stn
         stn: bool = True,
         stn_chs: Tuple[int, int, int] = (32, 64, 64),
@@ -237,6 +240,7 @@ class Ae2(AeBase):
         self.dec_extra_ch = dec_extra_ch
         self.dec_chs = dec_chs
         self.dec_expand_ratio = dec_expand_ratio
+        self.dec_skip_connections = dec_skip_connections
 
         self.stn = stn
         self.stn_out_size = stn_out_size
@@ -329,6 +333,23 @@ class Ae2(AeBase):
         self.final_0 = nn.Conv2d(dec_chs[0], 3, 1, bias=False)
         # --> 192x128x3
 
+        # skip connections
+        if self.dec_skip_connections == 'inner':
+            self.dec_skip_inner_1 = nn.Conv2d(dec_chs[1], dec_chs[0], 1, bias=False)
+            self.dec_skip_inner_2 = nn.Conv2d(dec_chs[2], dec_chs[0], 1, bias=False)
+            self.dec_skip_inner_3 = nn.Conv2d(dec_chs[3], dec_chs[0], 1, bias=False)
+            self.dec_skip_inner_4 = nn.Conv2d(dec_chs[4], dec_chs[0], 1, bias=False)
+        elif self.dec_skip_connections == 'inner_depthwise':
+            self.dec_skip_inner_1 = nn.Conv2d(dec_chs[1], dec_chs[0], 1, bias=False, groups=dec_chs[0])
+            self.dec_skip_inner_2 = nn.Conv2d(dec_chs[2], dec_chs[0], 1, bias=False, groups=dec_chs[0])
+            self.dec_skip_inner_3 = nn.Conv2d(dec_chs[3], dec_chs[0], 1, bias=False, groups=dec_chs[0])
+            self.dec_skip_inner_4 = nn.Conv2d(dec_chs[4], dec_chs[0], 1, bias=False, groups=dec_chs[0])
+        else:
+            self.dec_skip_inner_1 = None
+            self.dec_skip_inner_2 = None
+            self.dec_skip_inner_3 = None
+            self.dec_skip_inner_4 = None
+
         self._init_weights()
 
     def _apply_stn(self, x):
@@ -358,9 +379,9 @@ class Ae2(AeBase):
             return z, [
                 self.final_4_env(x4),
                 self.final_3_env(x3),
-                self.final_2_env(x2),
-                self.final_1_env(x1),
-                self.final_0_env(x0),
+                # self.final_2_env(x2),  # too warped
+                # self.final_1_env(x1),
+                # self.final_0_env(x0),
             ]
         else:
             return z, []
@@ -368,23 +389,60 @@ class Ae2(AeBase):
     def _decode(self, z):
         if self.dec_extra is not None:
             z = self.dec_extra(z)
+
+        # --> 6x4x[extraORrepr]
         x4 = self.dec4(z)
+        # --> 12x8x[4]
         x3 = self.dec3(x4)
+        # --> 24x16x[3]
         x2 = self.dec2(x3)
+        # --> 48x32x[2]
         x1 = self.dec1(x2)
+        # --> 96x64x[1]
         x0 = self.dec0(x1)
+        # --> 192x128x[0]
+
+        # modify network
+        if self.dec_skip_connections or self.multiscale:
+            # always for multiscale
+            out0_4 = self.final_4(x4)
+            out0_3 = self.final_3(x3)
+            out0_2 = self.final_2(x2)
+            out0_1 = self.final_1(x1)
+            # handle decoder skip connections, generate out0
+            if self.dec_skip_connections == 'out':
+                out0 = (
+                    self.final_0(x0)
+                    + F.interpolate(out0_4, scale_factor=16, mode='bilinear', align_corners=False)
+                    + F.interpolate(out0_3, scale_factor=8, mode='bilinear', align_corners=False)
+                    + F.interpolate(out0_2, scale_factor=4, mode='bilinear', align_corners=False)
+                    + F.interpolate(out0_1, scale_factor=2, mode='bilinear', align_corners=False)
+                )
+            elif self.dec_skip_connections in ('inner', 'inner_depthwise'):
+                x0 = (
+                    x0
+                    + F.interpolate(self.dec_skip_inner_4(x4), scale_factor=16, mode='bilinear', align_corners=False)
+                    + F.interpolate(self.dec_skip_inner_3(x3), scale_factor=8, mode='bilinear', align_corners=False)
+                    + F.interpolate(self.dec_skip_inner_2(x2), scale_factor=4, mode='bilinear', align_corners=False)
+                    + F.interpolate(self.dec_skip_inner_1(x1), scale_factor=2, mode='bilinear', align_corners=False)
+                )
+                out0 = self.final_0(x0)
+            else:
+                out0 = self.final_0(x0)
+        else:
+            out0 = self.final_0(x0)
+
+        # results
         if self.multiscale:
             return [
-                self.final_0(x0),
-                self.final_1(x1),
-                self.final_2(x2),
-                self.final_3(x3),
-                self.final_4(x4),
+                out0,
+                out0_1,
+                out0_2,
+                out0_3,
+                out0_4,
             ]
         else:
-            return [
-                self.final_0(x0),
-            ]
+            return [out0]
 
 
 if __name__ == '__main__':
