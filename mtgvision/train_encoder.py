@@ -53,8 +53,8 @@ _MODELS = {
     "cnvnxt2ae_nano": lambda w, h, **k: cnv2ae.convnextv2ae_nano(image_size=(w[2], w[1]), num_classes=768),
     "cnvnxt2ae_tiny": lambda w, h, **k: cnv2ae.convnextv2ae_tiny(image_size=(w[2], w[1]), num_classes=768),
     "cnvnxt2ae_base": lambda w, h, **k: cnv2ae.convnextv2ae_base(image_size=(w[2], w[1]), num_classes=768),  # large
-    "cnvnxt2ae_large": lambda w, h, **k: cnv2ae.convnextv2_aelarge(image_size=(w[2], w[1]), num_classes=768),
-    "cnvnxt2ae_huge": lambda w, h, **k: cnv2ae.convnextv2_aehuge(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_large": lambda w, h, **k: cnv2ae.convnextv2ae_large(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_huge": lambda w, h, **k: cnv2ae.convnextv2ae_huge(image_size=(w[2], w[1]), num_classes=768),
 }
 
 
