@@ -5,6 +5,8 @@
 
 import math
 import warnings
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -175,12 +177,23 @@ class Block(nn.Module):
         drop_path: Stochastic depth rate. Default: 0.0
     """
 
-    def __init__(self, dim: int, drop_path: float = 0.):
+    def __init__(
+        self,
+        dim: int,
+        drop_path: float = 0.,
+        act: Optional[callable] = None,
+        norm: Optional[callable] = None,
+    ):
+        if act is None:
+            act = nn.GELU
+        if norm is None:
+            norm = LayerNorm
+
         super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim) # depthwise conv
-        self.norm = LayerNorm(dim, eps=1e-6)
+        self.norm = norm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, 4 * dim)  # pointwise/1x1 convs, implemented with linear layers
-        self.act = nn.GELU()
+        self.act = act()
         self.grn = GRN(4 * dim)
         self.pwconv2 = nn.Linear(4 * dim, dim)
         self.drop_path: "nn.Module" = DropPath(drop_path) if drop_path > 0. else nn.Identity()

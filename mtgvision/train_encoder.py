@@ -47,14 +47,14 @@ _MODELS = {
     Ae2.__name__.lower() + 's': functools.partial(Ae2.create_model_small, stn=False),
     Ae2.__name__.lower() + 's_stn': functools.partial(Ae2.create_model_small, stn=True),
 
-    "cnvnxt2ae_atto": cnv2ae.convnextv2_atto(num_classes=768),
-    "cnvnxt2ae_femto": cnv2ae.convnextv2_femto(num_classes=768),
-    "cnvnxt2ae_pico": cnv2ae.convnextv2ae_pico(num_classes=768),
-    "cnvnxt2ae_nano": cnv2ae.convnextv2ae_nano(num_classes=768),
-    "cnvnxt2ae_tiny": cnv2ae.convnextv2ae_tiny(num_classes=768),
-    "cnvnxt2ae_base": cnv2ae.convnextv2ae_base(num_classes=768),  # large
-    "cnvnxt2ae_large": cnv2ae.convnextv2_aelarge(num_classes=768),
-    "cnvnxt2ae_huge": cnv2ae.convnextv2_aehuge(num_classes=768),
+    "cnvnxt2ae_atto": lambda w, h, **k: cnv2ae.convnextv2_atto(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_femto": lambda w, h, **k: cnv2ae.convnextv2_femto(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_pico": lambda w, h, **k: cnv2ae.convnextv2ae_pico(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_nano": lambda w, h, **k: cnv2ae.convnextv2ae_nano(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_tiny": lambda w, h, **k: cnv2ae.convnextv2ae_tiny(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_base": lambda w, h, **k: cnv2ae.convnextv2ae_base(image_size=(w[2], w[1]), num_classes=768),  # large
+    "cnvnxt2ae_large": lambda w, h, **k: cnv2ae.convnextv2_aelarge(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_huge": lambda w, h, **k: cnv2ae.convnextv2_aehuge(image_size=(w[2], w[1]), num_classes=768),
 }
 
 
@@ -575,7 +575,7 @@ class Config(pydantic.BaseModel):
     gradient_clip_val: float = 0.5
     # losses
     optimizer: Literal['adam', 'radam'] = 'radam'
-    loss: Literal['mse', 'mse+edge'] = 'mse'
+    loss: str = 'mse'
     multiscale: bool = True
     paired: bool = True
     # | cyclic: bool = False
@@ -621,10 +621,11 @@ if __name__ == "__main__":
         "--scale-loss-recon=1.0",
         "--scale-loss-recon-extra=0.0",
         "--scale-loss-multiscale=0.0",
-        "--scale-loss-paired=1.0",
+        "--scale-loss-paired=0",
         "--loss=ssim5+mse",
         "--optimizer=radam",
         "--no-multiscale",
+        "--no-paired",
         "--skip-first-optimizer-load-state",
     ])
     _main()
