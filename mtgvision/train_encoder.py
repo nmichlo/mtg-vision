@@ -2,7 +2,7 @@ import argparse
 import functools
 import sys
 from pathlib import Path
-from typing import Literal, Optional, Tuple
+from typing import Any, IO, Literal, Mapping, Optional, Self, Tuple, Union
 
 import matplotlib.pyplot as plt
 import pydantic
@@ -20,8 +20,8 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import (
     Callback,
     ModelCheckpoint,
-    StochasticWeightAveraging,
 )
+
 
 from mtgdata import ScryfallBulkType, ScryfallImageType
 from mtgvision.models.new_arch2 import Ae2
@@ -139,12 +139,31 @@ class MtgVisionEncoder(pl.LightningModule):
             )
         self.model = model
 
+    def on_load_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
+        self.configure_model()
+
     @classmethod
     def _get_loss(cls, hparams):
         if hparams.loss == 'mse':
             return F.mse_loss, None
         elif hparams.loss == 'mse+edge':
             return F.mse_loss, K.filters.sobel
+        elif hparams.loss == 'l1':
+            return F.l1_loss, None
+        elif hparams.loss == 'l1+edge':
+            return F.l1_loss, K.filters.sobel
+        # ssim
+        elif hparams.loss == 'ssim5':
+            return K.losses.SSIMLoss(5), None
+        elif hparams.loss == 'ssim7':
+            return K.losses.SSIMLoss(7), None
+        elif hparams.loss == 'ssim9':
+            return K.losses.SSIMLoss(9), None
+        # ssim+mse
+        elif hparams.loss == 'ssim5+mse':
+            def loss(x, y):
+                return K.losses.ssim_loss(x, y, 5) * 0.75 + F.mse_loss(x, y) * 0.25
+            return loss, None
         else:
             raise ValueError(f"Unknown loss: {hparams.loss}")
 
@@ -247,7 +266,7 @@ class MtgVisionEncoder(pl.LightningModule):
         # Cycle consistency losses
         # | loss_cyclic = 0
         # | if self.hparams.cyclic:
-        # |     z2 = self.model.encode(out)
+        # |     z2 = self.model.encode(out.detach())
         # |     loss_cyclic = loss_fn(z2, z)
         # |     loss += loss_cyclic * self.hparams.scale_loss_cyclic
 
@@ -275,19 +294,19 @@ class MtgVisionEncoder(pl.LightningModule):
 
     def configure_optimizers(self):
         if self.hparams.optimizer == 'adam':
-            return optim.Adam(
+            opt = optim.Adam(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay
             )
         elif self.hparams.optimizer == 'radam':
-            return optim.RAdam(
+            opt = optim.RAdam(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay
             )
         elif self.hparams.optimizer == 'sgd':
-            return optim.SGD(
+            opt = optim.SGD(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay,
@@ -296,6 +315,20 @@ class MtgVisionEncoder(pl.LightningModule):
             )
         else:
             raise ValueError(f"Unknown optimizer: {self.hparams.optimizer}")
+
+        # reset load
+        if self.hparams.skip_first_optimizer_load_state:
+            _old_ = opt.load_state_dict
+
+            def _skip_load_state_dict_(*args, **kwargs):
+                print("Loading state dict... SKIPPED!, resetting load_state_dict to default.")
+                opt.load_state_dict = _old_
+
+            opt.load_state_dict = _skip_load_state_dict_
+
+        # done!
+        return opt
+
 
 
 class MtgDataModule(pl.LightningDataModule):
@@ -454,6 +487,9 @@ def train(config: "Config"):
         default_root_dir=Path(__file__).parent / "lightning_logs",
     )
 
+    # allow model architecture to be changed
+    model.strict_loading = False
+
     # Run training
     trainer.fit(
         model,
@@ -519,6 +555,7 @@ class Config(pydantic.BaseModel):
     compile: bool = False
     checkpoint: Optional[str] = None
     dec_skip_connections: Optional[Literal['out', 'inner', 'inner_depthwise']] = None
+    skip_first_optimizer_load_state: bool = False  # needed if model architecture changes or optimizer changes
     # optimizer
     max_steps: int = 1_000_000
     batch_size: int = 16
@@ -578,6 +615,7 @@ if __name__ == "__main__":
         "--loss=mse+edge",
         "--optimizer=radam",
         "--no-multiscale",
-        "--dec-skip-connections=out",
+        "--dec-skip-connections=inner",
+        "--skip-first-optimizer-load-state",
     ])
     _main()
