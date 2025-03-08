@@ -90,6 +90,8 @@ class ConvNeXtV2Encoder(_Base):
         dims: tuple[int] = (96, 192, 384, 768),
         head_init_scale: Optional[float] = None,
     ):
+        assert num_classes % (6*4) == 0
+
         super().__init__(
             image_size=image_size,
             in_chans=in_chans,
@@ -129,20 +131,21 @@ class ConvNeXtV2Encoder(_Base):
         # --> Bx[3]x6x4
 
         self.pool = nn.Sequential(
-            GlobalAveragePooling(),
-            Norm2d(dims[3], eps=1e-6),
+            # GlobalAveragePooling(),
+            # Norm2d(dims[3], eps=1e-6),
+            nn.Conv2d(dims[3], num_classes // (6*4), kernel_size=1, stride=1),
         )
         # --> Bx[3]
 
-        self.head = nn.Linear(dims[3], num_classes)  # head
+        self.head = nn.Identity()  # nn.Linear(dims[3], num_classes)  # head
         # --> Bx<num_classes>
 
         # initialize weights
         self.apply(self._init_weights)
         if self.head_init_scale is not None:
             print("init head")
-            self.head.weight.data.mul_(head_init_scale)
-            self.head.bias.data.mul_(head_init_scale)
+            # self.head.weight.data.mul_(head_init_scale)
+            # self.head.bias.data.mul_(head_init_scale)
 
     @property
     def internal_scale(self) -> int:
@@ -195,6 +198,8 @@ class ConvNeXtV2Decoder(_Base):
         dims: tuple[int] = (96, 192, 384, 768),
         head_init_scale: Optional[float] = None,
     ):
+        assert num_classes % (6 * 4) == 0
+
         super().__init__(
             image_size=image_size,
             in_chans=in_chans,
@@ -210,13 +215,15 @@ class ConvNeXtV2Decoder(_Base):
 
         # --> Bx[3]
         self.pool = nn.Sequential(
+            nn.ConvTranspose2d(num_classes // (6*4), dims[-1], kernel_size=1, stride=1),
+
             # Norm(dims[-1], eps=1e-6),
             # --> Bx[3]
-            Index((slice(None), slice(None), None, None)),
+            # Index((slice(None), slice(None), None, None)),
             # --> Bx[3]x1x1
-            nn.ConvTranspose2d(num_classes, dims[-1], kernel_size=self.internal_size[::-1], stride=1),
+            # nn.ConvTranspose2d(num_classes, dims[-1], kernel_size=self.internal_size[::-1], stride=1),
             # --> Bz[3]x6x4
-            Norm2d(dims[-1], eps=1e-6, data_format="channels_first"),
+            # Norm2d(dims[-1], eps=1e-6, data_format="channels_first"),
         )
         # --> Bz[3]x6x4
 
@@ -253,8 +260,8 @@ class ConvNeXtV2Decoder(_Base):
         self.apply(self._init_weights)
         if self.head_init_scale is not None:
             print("init head")
-            self.head[0].weight.data.mul_(head_init_scale)
-            self.head[0].bias.data.mul_(head_init_scale)
+            self.head.weight.data.mul_(head_init_scale)
+            self.head.bias.data.mul_(head_init_scale)
 
     def forward(self, x):
         x = self.head(x)

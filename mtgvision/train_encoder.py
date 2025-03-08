@@ -172,7 +172,7 @@ class MtgVisionEncoder(pl.LightningModule):
         # ssim+mse
         elif hparams.loss == 'ssim5+mse':
             def loss(x, y):
-                return K.losses.ssim_loss(x, y, 5) * 0.75 + F.mse_loss(x, y) * 0.25
+                return K.losses.ssim_loss(x, y, 5) * 0.5 + F.mse_loss(x, y) * 0.5
             return loss, None
         else:
             raise ValueError(f"Unknown loss: {hparams.loss}")
@@ -613,7 +613,7 @@ if __name__ == "__main__":
         "--prefix=cnxt2",
         "--model-name=cnvnxt2ae_tiny",
         "--num-workers=6",
-        "--batch-size=16",
+        "--batch-size=32",
         "--learning-rate=0.001",
         # "--checkpoint=mtgvision_encoder/2__0fz8f6z4/checkpoints/epoch=0-step=270000.ckpt",
         "--accumulate-grad-batches=1",
