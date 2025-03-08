@@ -12,6 +12,20 @@ def Act():
     return nn.Mish(inplace=True)
 
 
+# def Norm2d(*args, **kwargs):
+#     data = kwargs.pop("data_format", None)
+#     if data != "channels_first":
+#         class Norm(nn.BatchNorm2d):
+#             def forward(self, x):
+#                 x = x.permute(0, 3, 1, 2)
+#                 x = super().forward(x)
+#                 x = x.permute(0, 2, 3, 1)
+#                 return x
+#     else:
+#         class Norm(nn.BatchNorm2d):
+#             pass
+#     return Norm(*args, **kwargs)
+
 def Norm2d(*args, **kwargs):
     return LayerNorm(*args, **kwargs)
 
@@ -63,11 +77,10 @@ class _Base(nn.Module):
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.Linear)):
-            print(f"init {m}")
             trunc_normal_(m.weight, std=.02)
             nn.init.constant_(m.bias, 0)
         else:
-            print(f"skipping {m}")
+            print(f"skipping {type(m)}")
 
 
 class ConvNeXtV2Encoder(_Base):
@@ -357,9 +370,9 @@ def convnextv2_aehuge(**kwargs):
 if __name__ == '__main__':
 
     size = (224, 224)
-    enc = ConvNeXtV2Encoder(size, num_classes=512)
-    dec = ConvNeXtV2Decoder(size, num_classes=512)
-    ae = ConvNeXtV2Ae(size, num_classes=512)
+    enc = ConvNeXtV2Encoder(size, num_classes=768)
+    dec = ConvNeXtV2Decoder(size, num_classes=768)
+    ae = ConvNeXtV2Ae(size, num_classes=768)
 
     params_enc = sum(p.numel() for p in enc.parameters())
     params_dec = sum(p.numel() for p in dec.parameters())
