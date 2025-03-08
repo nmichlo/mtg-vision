@@ -1,0 +1,356 @@
+from typing import Optional
+
+import torch
+from torch import nn
+from tqdm import tqdm
+
+from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
+from mtgvision.models.nn import AeBase
+
+
+class GlobalAveragePooling(nn.Module):
+
+    def forward(self, x):
+        return x.mean([-2, -1])  # global average pooling, (N, C, H, W) -> (N, C)
+
+
+class _Base(nn.Module):
+
+    def __init__(
+        self,
+        image_size: tuple[int, int] = (192, 128),
+        in_chans: int = 3,
+        num_classes: int = 1000,
+        depths: tuple[int] = (3, 3, 9, 3),
+        dims: tuple[int] = (96, 192, 384, 768),
+        head_init_scale: Optional[float] = None
+    ):
+        super().__init__()
+        self.image_size = image_size
+        self.in_chans = in_chans
+        self.num_classes = num_classes
+        self.depths = depths
+        self.dims = dims
+        self.head_init_scale = head_init_scale
+
+        assert len(depths) == len(dims)
+        iw, ih = self.get_internal_size(image_size)
+        self.internal_size = (iw, ih)
+
+    @property
+    def internal_scale(self) -> int:
+        return 4 * 2 * 2 * 2
+
+    def get_internal_size(self, in_size: tuple[int, int]) -> tuple[int, int]:
+        assert len(in_size) == 2
+        assert in_size[0] % self.internal_scale == 0
+        assert in_size[1] % self.internal_scale == 0
+        iw = in_size[0] // self.internal_scale
+        ih = in_size[1] // self.internal_scale
+        return iw, ih
+
+    def _init_weights(self, m):
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            trunc_normal_(m.weight, std=.02)
+            nn.init.constant_(m.bias, 0)
+
+
+class ConvNeXtV2Encoder(_Base):
+    """ConvNeXt V2
+
+    Args:
+        in_chans: Number of input image channels. Default: 3
+        num_classes: Number of classes for classification head. Default: 1000
+        depths: Number of blocks at each stage. Default: [3, 3, 9, 3]
+        dims: Feature dimension at each stage. Default: [96, 192, 384, 768]
+        head_init_scale: Init scaling value for classifier weights and biases. Default: 1.
+    """
+
+    def __init__(
+        self,
+        image_size: tuple[int, int] = (224, 224),
+        in_chans: int = 3,
+        num_classes: int = 1000,
+        depths: tuple[int] = (3, 3, 9, 3),
+        dims: tuple[int] = (96, 192, 384, 768),
+        head_init_scale: float = 1.
+    ):
+        super().__init__(
+            image_size=image_size,
+            in_chans=in_chans,
+            num_classes=num_classes,
+            depths=depths,
+            dims=dims,
+            head_init_scale=head_init_scale,
+        )
+
+        # **DOWNSAMPLE LAYERS**
+        # + stem and 3 intermediate downsampling conv layers
+        # + 4 feature resolution stages, each consisting of multiple residual blocks
+        self.backbone = nn.Sequential(
+            # --> Bx3x192x128
+            nn.Sequential(
+                nn.Conv2d(in_chans, dims[0], kernel_size=4, stride=4),
+                LayerNorm(dims[0], eps=1e-6, data_format="channels_first"),
+                nn.Sequential(*[Block(dim=dims[0]) for _ in range(depths[0])]),
+            ),
+            # --> Bx[0]x48x32
+            nn.Sequential(
+                LayerNorm(dims[0], eps=1e-6, data_format="channels_first"),
+                nn.Conv2d(dims[0], dims[1], kernel_size=2, stride=2),
+                nn.Sequential(*[Block(dim=dims[1]) for _ in range(depths[1])]),
+            ),
+            # --> Bx[1]x24x16
+            nn.Sequential(
+                LayerNorm(dims[1], eps=1e-6, data_format="channels_first"),
+                nn.Conv2d(dims[1], dims[2], kernel_size=2, stride=2),
+                nn.Sequential(*[Block(dim=dims[2]) for _ in range(depths[2])]),
+            ),
+            # --> Bx[2]x12x8
+            nn.Sequential(
+                LayerNorm(dims[2], eps=1e-6, data_format="channels_first"),
+                nn.Conv2d(dims[2], dims[3], kernel_size=2, stride=2),
+                nn.Sequential(*[Block(dim=dims[3]) for _ in range(depths[3])]),
+            ),
+            # --> Bx[3]x6x4
+        )
+
+        self.head = nn.Sequential(
+            nn.Sequential(
+                GlobalAveragePooling(),
+                nn.LayerNorm(dims[-1], eps=1e-6),
+            ),
+            # --> Bx[3]
+            nn.Linear(dims[-1], num_classes),  # head
+            # --> Bx<num_classes>
+        )
+
+        # initialize weights
+        self.apply(self._init_weights)
+        if self.head_init_scale is not None:
+            self.head[-1].weight.data.mul_(head_init_scale)
+            self.head[-1].bias.data.mul_(head_init_scale)
+
+    @property
+    def internal_scale(self) -> int:
+        return 4 * 2 * 2 * 2
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = self.head(x)
+        return x
+
+
+class Index(nn.Module):
+
+    def __init__(self, shape):
+        super().__init__()
+        self.shape = shape
+
+    def forward(self, x):
+        return x[self.shape]
+
+
+class Print(nn.Module):
+
+    def forward(self, x):
+        print(x.shape)
+        return x
+
+
+class ConvNeXtV2Decoder(_Base):
+    """ConvNeXt V2
+
+    Args:
+        in_chans: Number of input image channels. Default: 3
+        num_classes: Number of classes for classification head. Default: 1000
+        depths: Number of blocks at each stage. Default: [3, 3, 9, 3]
+        dims: Feature dimension at each stage. Default: [96, 192, 384, 768]
+        head_init_scale: Init scaling value for classifier weights and biases. Default: 1.
+    """
+
+    def __init__(
+        self,
+        image_size: tuple[int, int] = (224, 224),
+        in_chans: int = 3,
+        num_classes: int = 1000,
+        depths: tuple[int] = (3, 3, 9, 3),
+        dims: tuple[int] = (96, 192, 384, 768),
+        head_init_scale: float = 1.
+    ):
+        super().__init__(
+            image_size=image_size,
+            in_chans=in_chans,
+            num_classes=num_classes,
+            depths=depths,
+            dims=dims,
+            head_init_scale=head_init_scale,
+        )
+
+        # **HEAD**
+        self.head = nn.Sequential(
+            # --> Bx<num_classes>
+            nn.Linear(num_classes, dims[-1]),  # head
+            # --> Bx[3]
+            nn.Sequential(
+                nn.LayerNorm(dims[-1], eps=1e-6),
+                # --> Bx[3]
+                Index((slice(None), slice(None), None, None)),
+                # --> Bx[3]x1x1
+                nn.ConvTranspose2d(dims[-1], dims[-1], kernel_size=self.internal_size, stride=1),
+            ),
+            # --> Bz[3]x6x4
+        )
+
+        # **UPSAMPLE LAYERS**
+        # + stem and 3 intermediate upsampling conv layers
+        # + 4 feature resolution stages, each consisting of multiple residual blocks
+        self.backbone = nn.Sequential(
+            # --> Bx[3]x6x4
+            nn.Sequential(
+                nn.Sequential(*[Block(dim=dims[-1]) for _ in range(depths[3])]),
+                nn.ConvTranspose2d(dims[-1], dims[-2], kernel_size=2, stride=2),
+                LayerNorm(dims[2], eps=1e-6, data_format="channels_first"),
+            ),
+            # --> Bx[2]x12x8
+            nn.Sequential(
+                nn.Sequential(*[Block(dim=dims[-2]) for _ in range(depths[2])]),
+                nn.ConvTranspose2d(dims[-2], dims[-3], kernel_size=2, stride=2),
+                LayerNorm(dims[-3], eps=1e-6, data_format="channels_first"),
+            ),
+            # --> Bx[1]x24x16
+            nn.Sequential(
+                nn.Sequential(*[Block(dim=dims[-3]) for _ in range(depths[1])]),
+                nn.ConvTranspose2d(dims[-3], dims[-4], kernel_size=2, stride=2),
+                LayerNorm(dims[-4], eps=1e-6, data_format="channels_first"),
+            ),
+            # --> Bx[0]x48x32
+            nn.Sequential(
+                nn.Sequential(*[Block(dim=dims[-4]) for _ in range(depths[0])]),
+                LayerNorm(dims[-4], eps=1e-6, data_format="channels_first"),
+                nn.ConvTranspose2d(dims[-4], in_chans, kernel_size=4, stride=4),
+            ),
+            # --> Bx3x192x128
+        )
+
+        # initialize weights
+        self.apply(self._init_weights)
+        if self.head_init_scale is not None:
+            self.head[0].weight.data.mul_(head_init_scale)
+            self.head[0].bias.data.mul_(head_init_scale)
+
+    def forward(self, x):
+        x = self.head(x)
+        x = self.backbone(x)
+        return x
+
+
+class ConvNeXtV2Ae(_Base, AeBase):
+
+    def __init__(
+        self,
+        image_size: tuple[int, int] = (224, 224),
+        in_chans: int = 3,
+        num_classes: int = 1000,
+        depths: tuple[int] = (3, 3, 9, 3),
+        dims: tuple[int] = (96, 192, 384, 768),
+        head_init_scale: float = 1.
+    ):
+        super().__init__(
+            image_size=image_size,
+            in_chans=in_chans,
+            num_classes=num_classes,
+            depths=depths,
+            dims=dims,
+            head_init_scale=head_init_scale,
+        )
+        self.encoder = ConvNeXtV2Encoder(
+            image_size=image_size,
+            in_chans=in_chans,
+            num_classes=num_classes,
+            depths=depths,
+            dims=dims,
+            head_init_scale=head_init_scale,
+        )
+        self.decoder = ConvNeXtV2Decoder(
+            image_size=image_size,
+            in_chans=in_chans,
+            num_classes=num_classes,
+            depths=depths,
+            dims=dims,
+            head_init_scale=head_init_scale,
+        )
+
+    def _encode(self, x) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        return self.encoder(x), []
+
+    def _decode(self, z) -> list[torch.Tensor]:
+        return [self.decoder(z)]
+
+
+
+
+
+
+def convnextv2_atto(**kwargs):
+    model = ConvNeXtV2Ae(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
+    return model
+
+def convnextv2_femto(**kwargs):
+    model = ConvNeXtV2Ae(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
+    return model
+
+def convnextv2ae_pico(**kwargs):
+    model = ConvNeXtV2Ae(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
+    return model
+
+def convnextv2ae_nano(**kwargs):
+    model = ConvNeXtV2Ae(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
+    return model
+
+def convnextv2ae_tiny(**kwargs):
+    model = ConvNeXtV2Ae(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
+    return model
+
+def convnextv2ae_base(**kwargs):
+    model = ConvNeXtV2Ae(depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
+    return model
+
+def convnextv2_aelarge(**kwargs):
+    model = ConvNeXtV2Ae(depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs)
+    return model
+
+def convnextv2_aehuge(**kwargs):
+    model = ConvNeXtV2Ae(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
+    return model
+
+
+
+if __name__ == '__main__':
+
+    size = (224, 224)
+    enc = ConvNeXtV2Encoder(size, num_classes=512)
+    dec = ConvNeXtV2Decoder(size, num_classes=512)
+    ae = ConvNeXtV2Ae(size, num_classes=512)
+
+    params_enc = sum(p.numel() for p in enc.parameters())
+    params_dec = sum(p.numel() for p in dec.parameters())
+    params_ae = sum(p.numel() for p in ae.parameters())
+    print(f"params_enc: {params_enc} ({params_enc/1_000_000:.3f}M)")
+    print(f"params_dec: {params_dec} ({params_dec/1_000_000:.3f}M)")
+    print(f"params_ae: {params_ae} ({params_ae/1_000_000:.3f}M)")
+
+    x = torch.randn(1, 3, *size)
+
+    # to mps
+    enc = enc.to(torch.device("mps"))
+    dec = dec.to(torch.device("mps"))
+    ae = ae.to(torch.device("mps"))
+    x = x.to(torch.device("mps"))
+
+    for i in tqdm(range(100)):
+        z = enc(x)
+    for i in tqdm(range(100)):
+        x = dec(z)
+    for i in tqdm(range(100)):
+        _ = ae(x)

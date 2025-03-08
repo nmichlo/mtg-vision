@@ -11,7 +11,7 @@ class AeBase(nn.Module):
     encoded: torch.Tensor = None
     multiscale: bool = False
 
-    def _encode(self, x) -> torch.Tensor:
+    def _encode(self, x) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         raise NotImplementedError
 
     def _decode(self, z) -> List[torch.Tensor]:

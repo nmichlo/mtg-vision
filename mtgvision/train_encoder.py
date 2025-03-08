@@ -24,6 +24,7 @@ from pytorch_lightning.callbacks import (
 
 
 from mtgdata import ScryfallBulkType, ScryfallImageType
+import mtgvision.models.convnextv2ae as cnv2ae
 from mtgvision.models.new_arch2 import Ae2
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
@@ -45,6 +46,15 @@ _MODELS = {
 
     Ae2.__name__.lower() + 's': functools.partial(Ae2.create_model_small, stn=False),
     Ae2.__name__.lower() + 's_stn': functools.partial(Ae2.create_model_small, stn=True),
+
+    "cnvnxt2ae_atto": cnv2ae.convnextv2_atto(num_classes=768),
+    "cnvnxt2ae_femto": cnv2ae.convnextv2_femto(num_classes=768),
+    "cnvnxt2ae_pico": cnv2ae.convnextv2ae_pico(num_classes=768),
+    "cnvnxt2ae_nano": cnv2ae.convnextv2ae_nano(num_classes=768),
+    "cnvnxt2ae_tiny": cnv2ae.convnextv2ae_tiny(num_classes=768),
+    "cnvnxt2ae_base": cnv2ae.convnextv2ae_base(num_classes=768),  # large
+    "cnvnxt2ae_large": cnv2ae.convnextv2_aelarge(num_classes=768),
+    "cnvnxt2ae_huge": cnv2ae.convnextv2_aehuge(num_classes=768),
 }
 
 
@@ -600,22 +610,21 @@ if __name__ == "__main__":
     # end layers are worst culprits?
 
     sys.argv.extend([
-        "--prefix=train",
-        "--model-name=ae2_64x64x128x256x512",
+        "--prefix=cnxt2",
+        "--model-name=cnvnxt2ae_tiny",
         "--num-workers=6",
         "--batch-size=16",
         "--learning-rate=0.001",
-        "--checkpoint=mtgvision_encoder/2__0fz8f6z4/checkpoints/epoch=0-step=270000.ckpt",
+        # "--checkpoint=mtgvision_encoder/2__0fz8f6z4/checkpoints/epoch=0-step=270000.ckpt",
         "--accumulate-grad-batches=1",
         "--gradient-clip-val=1.0",
         "--scale-loss-recon=1.0",
-        "--scale-loss-recon-extra=0.5",
+        "--scale-loss-recon-extra=0.0",
         "--scale-loss-multiscale=0.0",
         "--scale-loss-paired=1.0",
-        "--loss=mse+edge",
+        "--loss=ssim5+mse",
         "--optimizer=radam",
         "--no-multiscale",
-        "--dec-skip-connections=inner",
         "--skip-first-optimizer-load-state",
     ])
     _main()
