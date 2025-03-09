@@ -26,28 +26,10 @@ from pytorch_lightning.callbacks import (
 
 from mtgdata import ScryfallBulkType, ScryfallImageType
 import mtgvision.models.convnextv2ae as cnv2ae
-from mtgvision.models.new_arch2 import Ae2
 from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import GLOBAL_RAN
 
 _MODELS = {
-    # Ae1.__name__.lower(): functools.partial(Ae1.create_model, stn=False),
-
-    # Ae1b.__name__.lower(): functools.partial(Ae1b.create_model, stn=False),
-    # Ae1b.__name__.lower() + '_stn': functools.partial(Ae1b.create_model, stn=True),
-
-    Ae2.__name__.lower() + 'xl': functools.partial(Ae2.create_model_heavy, stn=False),
-    Ae2.__name__.lower() + 'xl_stn': functools.partial(Ae2.create_model_heavy, stn=True),
-
-    Ae2.__name__.lower() + 'l': functools.partial(Ae2.create_model_heavy, stn=False),
-    Ae2.__name__.lower() + 'l_stn': functools.partial(Ae2.create_model_heavy, stn=True),
-
-    Ae2.__name__.lower() + 'm': functools.partial(Ae2.create_model_medium, stn=False),
-    Ae2.__name__.lower() + 'm_stn': functools.partial(Ae2.create_model_medium, stn=True),
-
-    Ae2.__name__.lower() + 's': functools.partial(Ae2.create_model_small, stn=False),
-    Ae2.__name__.lower() + 's_stn': functools.partial(Ae2.create_model_small, stn=True),
-
     "cnvnxt2ae_atto": lambda w, h, **k: cnv2ae.convnextv2_atto(image_wh=(w[2], w[1]), z_size=768),
     "cnvnxt2ae_femto": lambda w, h, **k: cnv2ae.convnextv2_femto(image_wh=(w[2], w[1]), z_size=768),
     "cnvnxt2ae_pico": lambda w, h, **k: cnv2ae.convnextv2ae_pico(image_wh=(w[2], w[1]), z_size=768),
@@ -67,12 +49,14 @@ class RanMtgEncDecDataset(IterableDataset):
         self,
         default_batch_size: int,
         predownload: bool = False,
-        paired: bool = False,  # generate second set of images
+        paired: bool = False,  # for contrastive loss, two random aug of same cards
+        targets: bool = False,
         size: Tuple[int, int] = (192, 128),
     ):
         assert default_batch_size >= 0
         self.default_batch_size = default_batch_size
         self.paired = paired
+        self.targets = targets
         self.size = size
         self.mtg = MtgImages(img_type='small', predownload=predownload)
         self.ilsvrc = IlsvrcImages()
@@ -101,14 +85,15 @@ class RanMtgEncDecDataset(IterableDataset):
         xs0, xs1, ys = [], [], []
         for card, bg0 in cards_bgs:
             _, bg1 = random.choice(cards_bgs)
-            ys.append(MtgImages.make_cropped(card, size=self.size))
+            if self.targets:
+                ys.append(MtgImages.make_cropped(card, size=self.size))
             xs0.append(MtgImages.make_virtual(card, bg0, size=self.size))
             if self.paired:
                 xs1.append(MtgImages.make_virtual(card, bg1, size=self.size))
         # stack
         return {
             "x": np.stack(xs0, axis=0),
-            "y": np.stack(ys, axis=0),
+            **({"y": np.stack(ys, axis=0)} if self.targets else {}),
             **({"x2": np.stack(xs1, axis=0)} if self.paired else {}),
         }
 
@@ -129,65 +114,33 @@ class MtgVisionEncoder(pl.LightningModule):
         self.save_hyperparameters(config)
 
     def configure_model(self) -> None:
-        if self.hparams.model_name in _MODELS:
-            model_fn = _MODELS[self.hparams.model_name]
-            model = model_fn(self.hparams.x_size, self.hparams.y_size, multiscale=self.hparams.multiscale)
-        else:
-            name = self.hparams.model_name
-            if name.startswith('ae2_'):
-                name = name[4:]
-            else:
-                raise ValueError(f"Unknown model name: {name}")
-            stn = False
-            if name.endswith('_stn'):
-                name = name[:-4]
-                stn = True
-            model = Ae2.create_model_verbose(
-                self.hparams.x_size,
-                self.hparams.y_size,
-                model=name,
-                multiscale=self.hparams.multiscale,
-                stn=stn,
-                dec_skip_connections=self.hparams.dec_skip_connections,
-            )
+        model_fn = _MODELS[self.hparams.model_name]
+        model = model_fn(self.hparams.x_size, self.hparams.y_size)
         self.model = model
 
     def on_load_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
         self.configure_model()
 
-    def _get_loss_(self):
-        if self.hparams.loss == 'mse':
-            return F.mse_loss, None
-        elif self.hparams.loss == 'mse+edge':
-            return F.mse_loss, K.filters.sobel
-        elif self.hparams.loss == 'l1':
-            return F.l1_loss, None
-        elif self.hparams.loss == 'l1+edge':
-            return F.l1_loss, K.filters.sobel
-        # ssim
-        elif self.hparams.loss == 'ssim5':
-            return K.losses.SSIMLoss(5), None
-        elif self.hparams.loss == 'ssim7':
-            return K.losses.SSIMLoss(7), None
-        elif self.hparams.loss == 'ssim9':
-            return K.losses.SSIMLoss(9), None
-        # ssim+mse
-        elif self.hparams.loss == 'ssim5+mse':
-            def loss(x, y):
-                return K.losses.ssim_loss(x, y, 5) * 0.5 + F.mse_loss(x, y) * 0.5
-            return loss, None        # ssim+mse
-        elif self.hparams.loss == 'ms_ssim':
-            loss = K.losses.MS_SSIMLoss()
-            loss.to(self.device)
-            return loss, None
-        else:
-            raise ValueError(f"Unknown loss: {self.hparams.loss}")
-
-    def _get_loss(self):
-        # cache loss
-        if getattr(self, "_loss", None) is None:
-            self._loss = self._get_loss_()
-        return self._loss
+    def _get_loss_recon(self):
+        # generate
+        if getattr(self, "_recon_loss", None) is not None:
+            return self._recon_loss
+        # make loss
+        loss_fn = {
+            "mse": F.mse_loss,
+            "l1": F.l1_loss,
+            "ssim5": K.losses.SSIMLoss(5),
+            "ssim7": K.losses.SSIMLoss(7),
+            "ssim9": K.losses.SSIMLoss(9),
+            "ssim5+mse": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5 + F.mse_loss(x, y) * 0.5,
+            "ssim5+l1": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5 + F.l1_loss(x, y) * 0.5,
+            "ssim7+l1": lambda x, y: K.losses.ssim_loss(x, y, 7) * 0.5 + F.l1_loss(x, y) * 0.5,
+            "ms_ssim": K.losses.MS_SSIMLoss(),
+        }[self.hparams.loss_recon]
+        try:
+            return loss_fn.to(self.device)
+        except Exception:
+            return loss_fn
 
     @classmethod
     def test_checkpoint(cls, path):
@@ -217,103 +170,52 @@ class MtgVisionEncoder(pl.LightningModule):
         plt.show()
 
     def forward(self, x):
-        if self.hparams.norm_io:
-            x = x * 2 - 1
         z, multi_out = self.model(x)
-        if self.hparams.norm_io:
-            multi_out = [(out + 1) / 2 for out in multi_out]
-        return z, multi_out
+        return z, multi_out[0]
 
     def encode(self, x):
-        if self.hparams.norm_io:
-            x = x * 2 - 1
         z, multi = self.model.encode(x)
-        return z, multi
+        return z
 
-    def _recon_loss(
-        self,
-        y_target,
-        y_recon,
-        y_recon_multi=None,
-    ):
-        loss_fn, loss_filter = self._get_loss()
-        # loss
-        loss = 0
-        # x - reconstruction loss
-        loss_recon = loss_fn(y_recon, y_target)
-        loss += loss_recon * self.hparams.scale_loss_recon
-        # x - extra loss
-        loss_recon_extra = 0
-        if loss_filter is not None:
-            loss_recon_extra = loss_fn(loss_filter(y_recon), loss_filter(y_target))
-            loss += loss_recon_extra * self.hparams.scale_loss_recon_extra
-        # x - multiscale loss
-        loss_multiscale = 0
-        if self.hparams.multiscale and y_recon_multi:
-            for y_mid_recon in y_recon_multi:
-                loss_multiscale += loss_fn(
-                    F.interpolate(y_mid_recon, size=y_target.size()[2:], mode='bilinear', align_corners=False),
-                    y_target
-                )
-            loss_multiscale /= len(y_recon_multi)
-            loss += loss_multiscale * self.hparams.scale_loss_multiscale
-        return loss, {
-            "loss_recon": loss_recon,
-            "loss_recon_edges": loss_recon_extra,
-            "loss_multiscale_recon": loss_multiscale,
-        }
+    def decode(self, z):
+        multi = self.model.decode(z)
+        return multi[0]
 
     def training_step(self, batch, batch_idx):
+        logs, loss = {}, 0
         # recon loss
-        z, y_recons = self.forward(batch['x'])
-        loss, logs = self._recon_loss(
-            y_target=batch['y'],
-            y_recon=y_recons[0],
-            y_recon_multi=y_recons[1:],
-        )
+        if self.hparams.loss_recon is None:
+            if not self.hparams.loss_contrastive_batched:
+                z = self.encode(batch['x'])
+        else:
+            z, y_recon = self.forward(batch['x'])
+            # recon loss
+            recon_loss_fn = self._get_loss_recon()
+            loss_recon = recon_loss_fn(y_recon, batch['y'])
+            loss_recon *= self.hparams.scale_loss_recon
+            loss += loss_recon
+            logs["loss_recon"] = loss_recon
 
-        # paired loss
-        if 'x2' in batch:
-            z2, _ = self.encode(batch['x2'])
+        # contrastive loss
+        if self.hparams.loss_contrastive is not None:
+            if not self.hparams.loss_contrastive_batched:
+                z2 = self.encode(batch['x2'])
+            else:
+                zs = self.encode(torch.concatenate([batch['x'], batch['x2']], dim=0))
+                z, z2 = zs[:len(zs)//2], zs[len(zs)//2:]
             # shape (B, C, H, W) --> (B, C*H*W)
             z_flat = z.reshape(z.size(0), -1)
             z2_flat = z2.reshape(z2.size(0), -1)
             # self-supervised loss
+            assert self.hparams.loss_contrastive == 'ntxent'
             loss_func = SelfSupervisedLoss(NTXentLoss(temperature=0.07), symmetric=True)
-            loss_cont = loss_func(z_flat, z2_flat) * self.hparams.scale_loss_paired
+            loss_cont = loss_func(z_flat, z2_flat) * self.hparams.scale_loss_contrastive
             # scale
             loss += loss_cont
             logs["loss_contrastive"] = loss_cont
 
         # loss is required key
         logs["loss"] = loss
-        logs["train_loss"] = loss
-
-        # Cycle consistency losses
-        # | loss_cyclic = 0
-        # | if self.hparams.cyclic:
-        # |     z2 = self.model.encode(out.detach())
-        # |     loss_cyclic = loss_fn(z2, z)
-        # |     loss += loss_cyclic * self.hparams.scale_loss_cyclic
-
-        # Target consistency loss
-        # | loss_target = 0
-        # | if self.hparams.target_consistency:
-        # |     z2 = self.model.encode(y)
-        # |     loss_target = loss_fn(z2, z)
-        # |     loss += loss_target * self.hparams.scale_loss_target
-
-        # Cycle WITH target consistency loss
-        # | loss_cycle_target = 0
-        # | if self.hparams.cycle_with_target > 0:
-        # |     assert self.hparams.cycle_with_target % 2 == 0
-        # |     n = self.hparams.cycle_with_target // 2
-        # |     # like cycle and target, but only take first n/2 elements
-        # |     _z = torch.concatenate([z[:n], z[:n]], dim=0)
-        # |     _x = torch.concatenate([x[:n], out[:n]], dim=0)
-        # |     loss_cycle_target += loss_fn(self.model.encode(_x), _z)
-        # |     loss += loss_cycle_target * self.hparams.scale_loss_cycle_target
-
         self.log_dict(logs, on_step=True, on_epoch=True, prog_bar=True)
         # loss is required key
         return logs
@@ -362,7 +264,8 @@ class MtgDataModule(pl.LightningDataModule):
     def __init__(
         self,
         batch_size: int,
-        paired: bool = False,
+        paired: bool = False,  # for contrastive loss, two random aug of same cards
+        targets: bool = False,
         num_workers: int = 3,
         predownload: bool = False,
     ):
@@ -372,6 +275,7 @@ class MtgDataModule(pl.LightningDataModule):
             predownload=predownload,
             default_batch_size=batch_size,
             paired=paired,
+            targets=targets,
         )
 
     def train_dataloader(self):
@@ -410,15 +314,18 @@ class ImageLoggingCallback(Callback):
 
     def log_images(self, model, vis_batch_np):
         print("Logging images...")
+        if model.hparams.loss_recon is None:
+            print("No reconstruction loss, skipping image logging.")
+            return
         logs = {}
         model.eval()
         with torch.no_grad():
             x_np = np.stack([batch['x'] for batch in vis_batch_np], axis=0)
             y_np = np.stack([batch['y'] for batch in vis_batch_np], axis=0)
             x = torch.from_numpy(x_np).float().permute(0, 3, 1, 2).to(model.device)
-            _, multiscale = model(x)
+            _, y = model(x)
             mout_np = []
-            for out in multiscale:
+            for out in [y]:
                 mout_np.append(np.clip(K.tensor_to_image(out), 0, 1))
             # log images
             if self._first_log:
@@ -443,7 +350,8 @@ def train(config: "Config"):
         batch_size=config.batch_size,
         num_workers=config.num_workers,
         predownload=config.force_download,
-        paired=config.paired,
+        paired=config.loss_contrastive is not None,
+        targets=config.loss_recon is not None,
     )
 
     # Initial batch for visualization
@@ -459,15 +367,10 @@ def train(config: "Config"):
     parts = [
         (config.prefix, config.prefix),
         (True, config.model_name),
-        (config.paired, "pairs"),
-        (config.norm_io, "norm"),
-        (config.loss, config.loss),
+        (config.loss_recon, config.loss_recon),
+        (config.loss_contrastive, config.loss_contrastive),
         (config.learning_rate, f"lr={config.learning_rate}"),
         (config.batch_size, f"bs={config.batch_size}"),
-        (config.multiscale, f"Lm={config.scale_loss_multiscale}"),
-        # (config.cyclic, f"Lc={config.scale_loss_cyclic}"),
-        # (config.target_consistency, f"Lt={config.scale_loss_target}"),
-        # (config.cycle_with_target > 0, f"Lct{config.cycle_with_target}={config.scale_loss_cycle_target}"),
     ]
 
     # choose device
@@ -556,62 +459,61 @@ def _main():
     args = parser.parse_args()
 
     config = Config(**vars(args))
+    # update losses
+    if config.loss_contrastive in ('none', 'no') or config.scale_loss_contrastive <= 0:
+        print("No contrastive loss.")
+        config.loss_contrastive = None
+    if config.loss_recon in ('none', 'no') or config.scale_loss_recon <= 0:
+        print("No reconstruction loss.")
+        config.loss_recon = None
+    # train
     print('CONFIG:', config)
     train(config)
 
 
 _CONF_TYPE_OVERRIDES = {
     "checkpoint": str,
-    "loss": str,
+    "loss_recon": str,
+    "loss_contrastive": str,
     "prefix": str,
     "optimizer": str,
     "dec_skip_connections": str,
 }
 
+
 class Config(pydantic.BaseModel):
-    prefix: Optional[str] = None
     seed: int = 42
     # dataset
-    x_size: tuple = (16, 192, 128, 3)
-    y_size: tuple = (16, 192, 128, 3)
     img_type: ScryfallImageType = ScryfallImageType.small
     bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
+    force_download: bool = False
     # model
-    model_name: str = 'N/A'
-    compile: bool = False
-    checkpoint: Optional[str] = None
-    dec_skip_connections: Optional[Literal['out', 'inner', 'inner_depthwise']] = None
-    skip_first_optimizer_load_state: bool = False  # needed if model architecture changes or optimizer changes
-    # optimizer
-    max_steps: int = 1_000_000
-    batch_size: int = 16
+    model_name: str = 'cnvnxt2ae_tiny'
+    x_size: tuple = (16, 192, 128, 3)
+    y_size: tuple = (16, 192, 128, 3)
+    # optimisation
+    optimizer: Literal['adam', 'radam'] = 'radam'
     learning_rate: float = 1e-3
     weight_decay: float = 1e-7
+    batch_size: int = 24
+    gradient_clip_val: float = 1.0
     accumulate_grad_batches: int = 1
-    gradient_clip_val: float = 0.5
-    # losses
-    optimizer: Literal['adam', 'radam'] = 'radam'
-    loss: str = 'mse'
-    multiscale: bool = True
-    paired: bool = True
-    # | cyclic: bool = False
-    # | target_consistency: bool = False
-    # | cycle_with_target: int = 0
-    # loss scaling
+    # loss
+    loss_recon: Optional[str] = 'ms_ssim'  # 'ssim5+l1'
+    loss_contrastive: Optional[str] = 'ntxent'
+    loss_contrastive_batched: bool = False,
     scale_loss_recon: float = 1
-    scale_loss_recon_extra: float = 0
-    scale_loss_multiscale: float = 0.5
-    # | scale_loss_cyclic: float = 100
-    # | scale_loss_target: float = 100
-    # | scale_loss_cycle_target: float = 100
-    scale_loss_paired: float = 100
-    norm_io: bool = False,
-    # dataset
+    scale_loss_contrastive: float = 100
+    # trainer
+    compile: bool = False
+    max_steps: int = 1_000_000
     num_workers: int = 3
-    force_download: bool = False
     # logging
+    prefix: Optional[str] = None
+    checkpoint: Optional[str] = None
     log_every_n_steps: int = 2500
     ckpt_every_n_steps: int = 2500
+    skip_first_optimizer_load_state: bool = True  # needed if model architecture changes or optimizer changes
 
 
 if __name__ == "__main__":
@@ -626,22 +528,10 @@ if __name__ == "__main__":
     # end layers are worst culprits?
 
     sys.argv.extend([
-        "--prefix=cnxt2",
-        "--model-name=cnvnxt2ae_tiny",
+        "--prefix=cont_cnxt2",
         "--num-workers=6",
-        "--batch-size=24",
-        "--learning-rate=0.001",
-        "--checkpoint=mtgvision_encoder/3__psmlcp3p/checkpoints/epoch=0-step=67500.ckpt",
-        "--accumulate-grad-batches=1",
-        "--gradient-clip-val=1.0",
-        "--scale-loss-recon=1.0",
-        "--scale-loss-recon-extra=0.0",
-        "--scale-loss-multiscale=0.0",
-        "--scale-loss-paired=1.0",
-        "--loss=ms_ssim",
-        "--optimizer=radam",
-        "--no-multiscale",
-        # "--no-paired",
-        "--skip-first-optimizer-load-state",
+        "--batch-size=16",
+        "--loss-recon=ssim5+l1",
+        # "--checkpoint=mtgvision_encoder/3__psmlcp3p/checkpoints/*.ckpt",
     ])
     _main()

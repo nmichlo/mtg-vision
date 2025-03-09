@@ -6,7 +6,7 @@ from torch import nn
 from tqdm import tqdm
 
 from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
-from mtgvision.models.nn import AeBase
+from mtgvision.models.ae_base import AeBase
 
 
 def Act():
@@ -350,10 +350,6 @@ class ConvNeXtV2Ae(_Base, AeBase):
 
     def _decode(self, z) -> list[torch.Tensor]:
         return [self.decoder(z)]
-
-
-
-
 
 
 def convnextv2_atto(**kwargs):
