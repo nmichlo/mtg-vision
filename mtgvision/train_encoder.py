@@ -189,6 +189,7 @@ class MtgVisionEncoder(pl.LightningModule):
                 z = self.encode(batch['x'])
         else:
             z, y_recon = self.forward(batch['x'])
+            y_recon = torch.clamp(y_recon, -0.25, 1.25)  # help with gradient explosion
             # recon loss
             recon_loss_fn = self._get_loss_recon()
             loss_recon = recon_loss_fn(y_recon, batch['y'])
@@ -201,11 +202,14 @@ class MtgVisionEncoder(pl.LightningModule):
             if not self.hparams.loss_contrastive_batched:
                 z2 = self.encode(batch['x2'])
             else:
-                zs = self.encode(torch.concatenate([batch['x'], batch['x2']], dim=0))
-                z, z2 = zs[:len(zs)//2], zs[len(zs)//2:]
+                _zs = self.encode(torch.concatenate([batch['x'], batch['x2']], dim=0))
+                z, z2 = _zs[:len(_zs)//2], _zs[len(_zs)//2:]
             # shape (B, C, H, W) --> (B, C*H*W)
             z_flat = z.reshape(z.size(0), -1)
             z2_flat = z2.reshape(z2.size(0), -1)
+            # normalize, may help with gradient explosion?
+            z_flat = F.normalize(z_flat, dim=1)
+            z2_flat = F.normalize(z2_flat, dim=1)
             # self-supervised loss
             assert self.hparams.loss_contrastive == 'ntxent'
             loss_func = SelfSupervisedLoss(NTXentLoss(temperature=0.07), symmetric=True)
@@ -493,10 +497,10 @@ class Config(pydantic.BaseModel):
     y_size: tuple = (16, 192, 128, 3)
     # optimisation
     optimizer: Literal['adam', 'radam'] = 'radam'
-    learning_rate: float = 1e-3
-    weight_decay: float = 1e-7
+    learning_rate: float = 3e-4
+    weight_decay: float = 1e-5
     batch_size: int = 24
-    gradient_clip_val: float = 1.0
+    gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss
     loss_recon: Optional[str] = 'ssim5+l1'  # 'ssim5+l1'
@@ -532,6 +536,8 @@ if __name__ == "__main__":
         "--num-workers=6",
         "--batch-size=16",
         "--loss-recon=ssim5+l1",
+        "--learning-rate=3e-4",
+
         # "--checkpoint=mtgvision_encoder/3__psmlcp3p/checkpoints/*.ckpt",
     ])
     _main()
