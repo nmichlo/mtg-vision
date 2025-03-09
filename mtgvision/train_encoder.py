@@ -47,14 +47,16 @@ _MODELS = {
     Ae2.__name__.lower() + 's': functools.partial(Ae2.create_model_small, stn=False),
     Ae2.__name__.lower() + 's_stn': functools.partial(Ae2.create_model_small, stn=True),
 
-    "cnvnxt2ae_atto": lambda w, h, **k: cnv2ae.convnextv2_atto(image_size=(w[2], w[1]), num_classes=768),
-    "cnvnxt2ae_femto": lambda w, h, **k: cnv2ae.convnextv2_femto(image_size=(w[2], w[1]), num_classes=768),
-    "cnvnxt2ae_pico": lambda w, h, **k: cnv2ae.convnextv2ae_pico(image_size=(w[2], w[1]), num_classes=768),
-    "cnvnxt2ae_nano": lambda w, h, **k: cnv2ae.convnextv2ae_nano(image_size=(w[2], w[1]), num_classes=768),
-    "cnvnxt2ae_tiny": lambda w, h, **k: cnv2ae.convnextv2ae_tiny(image_size=(w[2], w[1]), num_classes=768),
-    "cnvnxt2ae_base": lambda w, h, **k: cnv2ae.convnextv2ae_base(image_size=(w[2], w[1]), num_classes=768),  # large
-    "cnvnxt2ae_large": lambda w, h, **k: cnv2ae.convnextv2ae_large(image_size=(w[2], w[1]), num_classes=768),
-    "cnvnxt2ae_huge": lambda w, h, **k: cnv2ae.convnextv2ae_huge(image_size=(w[2], w[1]), num_classes=768),
+    "cnvnxt2ae_atto": lambda w, h, **k: cnv2ae.convnextv2_atto(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_femto": lambda w, h, **k: cnv2ae.convnextv2_femto(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_pico": lambda w, h, **k: cnv2ae.convnextv2ae_pico(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_nano": lambda w, h, **k: cnv2ae.convnextv2ae_nano(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_tiny": lambda w, h, **k: cnv2ae.convnextv2ae_tiny(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_base_9": lambda w, h, **k: cnv2ae.convnextv2ae_base_9(image_wh=(w[2], w[1]), z_size=768),  # same number of layers as tiny. but more capacity
+    "cnvnxt2ae_base_12": lambda w, h, **k: cnv2ae.convnextv2ae_base_12(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_base": lambda w, h, **k: cnv2ae.convnextv2ae_base(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_large": lambda w, h, **k: cnv2ae.convnextv2ae_large(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_huge": lambda w, h, **k: cnv2ae.convnextv2ae_huge(image_wh=(w[2], w[1]), z_size=768),
 }
 
 
@@ -613,19 +615,19 @@ if __name__ == "__main__":
         "--prefix=cnxt2",
         "--model-name=cnvnxt2ae_tiny",
         "--num-workers=6",
-        "--batch-size=32",
+        "--batch-size=24",
         "--learning-rate=0.001",
-        # "--checkpoint=mtgvision_encoder/2__0fz8f6z4/checkpoints/epoch=0-step=270000.ckpt",
+        "--checkpoint=mtgvision_encoder/3__psmlcp3p/checkpoints/epoch=0-step=67500.ckpt",
         "--accumulate-grad-batches=1",
         "--gradient-clip-val=1.0",
         "--scale-loss-recon=1.0",
         "--scale-loss-recon-extra=0.0",
         "--scale-loss-multiscale=0.0",
-        "--scale-loss-paired=0",
-        "--loss=ssim5+mse",
+        "--scale-loss-paired=1.0",
+        "--loss=ssim5",
         "--optimizer=radam",
         "--no-multiscale",
-        "--no-paired",
+        # "--no-paired",
         "--skip-first-optimizer-load-state",
     ])
     _main()

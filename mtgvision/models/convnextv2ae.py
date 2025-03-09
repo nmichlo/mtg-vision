@@ -151,7 +151,7 @@ class ConvNeXtV2Encoder(_Base):
         if head_type == 'conv':
             self.pool = nn.Sequential(
                 nn.Conv2d(dims[3], z_size // (6 * 4), kernel_size=1, stride=1),
-                View((-1, z_size)),
+                # View((-1, z_size)),
             )
             self.head = nn.Identity()
         elif head_type == 'pool+linear':
@@ -192,14 +192,14 @@ class Index(nn.Module):
         return x[self.shape]
 
 
-class View(nn.Module):
-
-    def __init__(self, shape):
-        super().__init__()
-        self.shape = shape
-
-    def forward(self, x):
-        return x.view(*self.shape)
+# class View(nn.Module):
+#
+#     def __init__(self, shape):
+#         super().__init__()
+#         self.shape = shape
+#
+#     def forward(self, x):
+#         return x.reshape(*self.shape)
 
 
 class Print(nn.Module):
@@ -244,7 +244,7 @@ class ConvNeXtV2Decoder(_Base):
         if head_type == 'conv':
             self.head = nn.Identity()
             self.pool = nn.Sequential(
-                View((-1, z_size // self.internal_num, *self.internal_wh)),
+                # View((-1, z_size // self.internal_num, *self.internal_wh[::-1])),
                 nn.ConvTranspose2d(z_size // self.internal_num, dims[-1], kernel_size=1, stride=1),
             )
         elif head_type == 'pool+linear':
@@ -376,6 +376,14 @@ def convnextv2ae_tiny(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(96, 192, 384, 768), **kwargs)
     return model
 
+def convnextv2ae_base_9(**kwargs):
+    model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(128, 256, 512, 1024), **kwargs)
+    return model
+
+def convnextv2ae_base_12(**kwargs):
+    model = ConvNeXtV2Ae(depths=(3, 3, 12, 3), dims=(128, 256, 512, 1024), **kwargs)
+    return model
+
 def convnextv2ae_base(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 27, 3), dims=(128, 256, 512, 1024), **kwargs)
     return model
@@ -393,14 +401,16 @@ def convnextv2ae_huge(**kwargs):
 if __name__ == '__main__':
 
     for make_fn in [
-        convnextv2_atto,
-        convnextv2_femto,
-        convnextv2ae_pico,
-        convnextv2ae_nano,
-        convnextv2ae_tiny,
-        convnextv2ae_base,
-        convnextv2ae_large,
-        convnextv2ae_huge,
+        # convnextv2_atto,  # ~52it/s
+        # convnextv2_femto,  # ~52it/s
+        # convnextv2ae_pico,  # ~52it/s
+        # convnextv2ae_nano,  # ~47it/s starts slowing on laptop,
+        convnextv2ae_tiny,  # ~33.5it/s
+        convnextv2ae_base_9,  # ~34it/s
+        convnextv2ae_base_12,  # ~34it/s
+        convnextv2ae_base,  # ~21.53it/s
+        # convnextv2ae_large,
+        # convnextv2ae_huge,
     ]:
 
         ae = make_fn(image_wh=(128, 192), z_size=768)
@@ -408,6 +418,8 @@ if __name__ == '__main__':
         params_enc = sum(p.numel() for p in ae.encoder.parameters())
         params_dec = sum(p.numel() for p in ae.decoder.parameters())
         params_ae = sum(p.numel() for p in ae.parameters())
+
+        print(f'\n{make_fn.__name__}')
         print(f"params_ae: {params_ae} ({params_ae/1_000_000:.3f}M)")
         print(f"params_enc: {params_enc} ({params_enc/1_000_000:.3f}M)")
         print(f"params_dec: {params_dec} ({params_dec/1_000_000:.3f}M)")
