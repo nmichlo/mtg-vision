@@ -499,11 +499,11 @@ class Config(pydantic.BaseModel):
     gradient_clip_val: float = 1.0
     accumulate_grad_batches: int = 1
     # loss
-    loss_recon: Optional[str] = 'ms_ssim'  # 'ssim5+l1'
+    loss_recon: Optional[str] = 'ssim5+l1'  # 'ssim5+l1'
     loss_contrastive: Optional[str] = 'ntxent'
     loss_contrastive_batched: bool = False,
     scale_loss_recon: float = 1
-    scale_loss_contrastive: float = 100
+    scale_loss_contrastive: float = 1
     # trainer
     compile: bool = False
     max_steps: int = 1_000_000
