@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import IterableDataset, DataLoader
+from torch.utils.data import IterableDataset, DataLoader, WeightedRandomSampler
 import numpy as np
 import random
 import wandb
@@ -23,7 +23,6 @@ from pytorch_lightning.callbacks import (
     Callback,
     ModelCheckpoint,
 )
-
 
 from mtgdata import ScryfallBulkType, ScryfallImageType
 import mtgvision.models.convnextv2ae as cnv2ae
@@ -263,6 +262,13 @@ class MtgVisionEncoder(pl.LightningModule):
                 nesterov=True,
                 momentum=0.9,
             )
+        elif self.hparams.optimizer == 'deepspeed_cpu_adam':
+            from deepspeed.ops.adam import DeepSpeedCPUAdam
+            opt = DeepSpeedCPUAdam(
+                self.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay,
+            )
         else:
             raise ValueError(f"Unknown optimizer: {self.hparams.optimizer}")
 
@@ -440,17 +446,18 @@ def train(config: "Config"):
         logger=wandb_logger,
         callbacks=[
             ImageLoggingCallback(vis_batch, log_every_n_steps=config.log_every_n_steps),
-            ModelCheckpoint(monitor="train_loss", save_top_k=3, mode="min", every_n_train_steps=config.ckpt_every_n_steps),
+            ModelCheckpoint(monitor="loss_recon", save_top_k=3, mode="min", every_n_train_steps=config.ckpt_every_n_steps),
             # StochasticWeightAveraging(swa_lrs=1e-2),
         ],
         accelerator=device,
         devices=1,
-        precision="16-mixed" if device == "cuda" else 32,
+        precision=16 if device == "cuda" else 32,
         max_steps=config.max_steps,
         accumulate_grad_batches=config.accumulate_grad_batches,
         gradient_clip_val=config.gradient_clip_val,
         enable_checkpointing=True,
         default_root_dir=Path(__file__).parent / "lightning_logs",
+        strategy="deepspeed_stage_2_offload" if config.optimizer == "deepspeed_cpu_adam" else 'auto',
     )
 
     # allow model architecture to be changed
@@ -543,7 +550,7 @@ class Config(pydantic.BaseModel):
     scale_loss_contrastive: float = 1
     # trainer
     compile: bool = False
-    max_steps: int = 1_000_000
+    max_steps: int = 10_000_000
     num_workers: int = 3
     # logging
     prefix: Optional[str] = None
@@ -559,9 +566,10 @@ if __name__ == "__main__":
         "--model-name=cnvnxt2ae_base_9",
         "--num-workers=6",
         "--batch-size=24",
-        "--loss-recon=ssim7+l1",
+        "--optimizer=radam",
+        "--loss-recon=ssim5+l1",
         "--loss-contrastive=none",
-        "--learning-rate=3e-4",
+        "--learning-rate=5e-4",
         # "--checkpoint=mtgvision_encoder/3__psmlcp3p/checkpoints/*.ckpt",
     ])
     _main()
