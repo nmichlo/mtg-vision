@@ -155,30 +155,39 @@ class MtgVisionEncoder(pl.LightningModule):
     def on_load_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
         self.configure_model()
 
-    @classmethod
-    def _get_loss(cls, hparams):
-        if hparams.loss == 'mse':
+    def _get_loss_(self):
+        if self.hparams.loss == 'mse':
             return F.mse_loss, None
-        elif hparams.loss == 'mse+edge':
+        elif self.hparams.loss == 'mse+edge':
             return F.mse_loss, K.filters.sobel
-        elif hparams.loss == 'l1':
+        elif self.hparams.loss == 'l1':
             return F.l1_loss, None
-        elif hparams.loss == 'l1+edge':
+        elif self.hparams.loss == 'l1+edge':
             return F.l1_loss, K.filters.sobel
         # ssim
-        elif hparams.loss == 'ssim5':
+        elif self.hparams.loss == 'ssim5':
             return K.losses.SSIMLoss(5), None
-        elif hparams.loss == 'ssim7':
+        elif self.hparams.loss == 'ssim7':
             return K.losses.SSIMLoss(7), None
-        elif hparams.loss == 'ssim9':
+        elif self.hparams.loss == 'ssim9':
             return K.losses.SSIMLoss(9), None
         # ssim+mse
-        elif hparams.loss == 'ssim5+mse':
+        elif self.hparams.loss == 'ssim5+mse':
             def loss(x, y):
                 return K.losses.ssim_loss(x, y, 5) * 0.5 + F.mse_loss(x, y) * 0.5
+            return loss, None        # ssim+mse
+        elif self.hparams.loss == 'ms_ssim':
+            loss = K.losses.MS_SSIMLoss()
+            loss.to(self.device)
             return loss, None
         else:
-            raise ValueError(f"Unknown loss: {hparams.loss}")
+            raise ValueError(f"Unknown loss: {self.hparams.loss}")
+
+    def _get_loss(self):
+        # cache loss
+        if getattr(self, "_loss", None) is None:
+            self._loss = self._get_loss_()
+        return self._loss
 
     @classmethod
     def test_checkpoint(cls, path):
@@ -221,35 +230,33 @@ class MtgVisionEncoder(pl.LightningModule):
         z, multi = self.model.encode(x)
         return z, multi
 
-    @classmethod
     def _recon_loss(
-        cls,
-        hparams,
+        self,
         y_target,
         y_recon,
         y_recon_multi=None,
     ):
-        loss_fn, loss_filter = cls._get_loss(hparams)
+        loss_fn, loss_filter = self._get_loss()
         # loss
         loss = 0
         # x - reconstruction loss
         loss_recon = loss_fn(y_recon, y_target)
-        loss += loss_recon * hparams.scale_loss_recon
+        loss += loss_recon * self.hparams.scale_loss_recon
         # x - extra loss
         loss_recon_extra = 0
         if loss_filter is not None:
             loss_recon_extra = loss_fn(loss_filter(y_recon), loss_filter(y_target))
-            loss += loss_recon_extra * hparams.scale_loss_recon_extra
+            loss += loss_recon_extra * self.hparams.scale_loss_recon_extra
         # x - multiscale loss
         loss_multiscale = 0
-        if hparams.multiscale and y_recon_multi:
+        if self.hparams.multiscale and y_recon_multi:
             for y_mid_recon in y_recon_multi:
                 loss_multiscale += loss_fn(
                     F.interpolate(y_mid_recon, size=y_target.size()[2:], mode='bilinear', align_corners=False),
                     y_target
                 )
             loss_multiscale /= len(y_recon_multi)
-            loss += loss_multiscale * hparams.scale_loss_multiscale
+            loss += loss_multiscale * self.hparams.scale_loss_multiscale
         return loss, {
             "loss_recon": loss_recon,
             "loss_recon_edges": loss_recon_extra,
@@ -260,7 +267,6 @@ class MtgVisionEncoder(pl.LightningModule):
         # recon loss
         z, y_recons = self.forward(batch['x'])
         loss, logs = self._recon_loss(
-            hparams=self.hparams,
             y_target=batch['y'],
             y_recon=y_recons[0],
             y_recon_multi=y_recons[1:],
@@ -632,7 +638,7 @@ if __name__ == "__main__":
         "--scale-loss-recon-extra=0.0",
         "--scale-loss-multiscale=0.0",
         "--scale-loss-paired=1.0",
-        "--loss=ssim5+mse",
+        "--loss=ms_ssim",
         "--optimizer=radam",
         "--no-multiscale",
         # "--no-paired",
