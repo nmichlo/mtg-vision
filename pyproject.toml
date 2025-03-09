@@ -38,6 +38,7 @@ dependencies = [
     "coremltools",
     "kornia",
     "pytorch_lightning",
+    "pytorch-metric-learning",
 ]
 
 

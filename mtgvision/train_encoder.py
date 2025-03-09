@@ -16,6 +16,7 @@ import random
 import wandb
 import kornia as K
 import pytorch_lightning as pl
+from pytorch_metric_learning.losses import NTXentLoss, SelfSupervisedLoss
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import (
     Callback,
@@ -264,12 +265,19 @@ class MtgVisionEncoder(pl.LightningModule):
             y_recon=y_recons[0],
             y_recon_multi=y_recons[1:],
         )
+
         # paired loss
         if 'x2' in batch:
             z2, _ = self.encode(batch['x2'])
-            loss_paired = F.mse_loss(z, z2) * self.hparams.scale_loss_paired
-            loss += loss_paired
-            logs["loss_paired"] = loss_paired
+            # shape (B, C, H, W) --> (B, C*H*W)
+            z_flat = z.reshape(z.size(0), -1)
+            z2_flat = z2.reshape(z2.size(0), -1)
+            # self-supervised loss
+            loss_func = SelfSupervisedLoss(NTXentLoss(temperature=0.07), symmetric=True)
+            loss_cont = loss_func(z_flat, z2_flat) * self.hparams.scale_loss_paired
+            # scale
+            loss += loss_cont
+            logs["loss_contrastive"] = loss_cont
 
         # loss is required key
         logs["loss"] = loss
@@ -624,7 +632,7 @@ if __name__ == "__main__":
         "--scale-loss-recon-extra=0.0",
         "--scale-loss-multiscale=0.0",
         "--scale-loss-paired=1.0",
-        "--loss=ssim5",
+        "--loss=ssim5+mse",
         "--optimizer=radam",
         "--no-multiscale",
         # "--no-paired",
