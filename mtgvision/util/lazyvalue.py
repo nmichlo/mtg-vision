@@ -25,6 +25,9 @@
 
 import os
 import random
+from pathlib import Path
+from typing import Callable, Generic, TypeVar
+
 from mtgvision.util.files import init_dir
 import mtgvision.util.parallel as upar
 
@@ -34,14 +37,28 @@ import mtgvision.util.parallel as upar
 # ========================================================================= #
 
 
-class Lazy(object):
+K = TypeVar('K')
+V = TypeVar('V')
 
-    def __init__(self, resource, gen):
+
+class ILazy(Generic[V]):
+
+    def get(self, persist: bool = False, force: bool = False) -> V:
+        raise NotImplementedError()
+
+
+class LazyValue(Generic[K, V], ILazy[V]):
+
+    def __init__(self, resource: K, gen: Callable[[K], V]):
         self._resource = resource
         self._gen = gen
         self._obj = None
 
-    def get(self, persist=False, force=False):
+    @property
+    def resource(self) -> K:
+        return self._resource
+
+    def get(self, persist: bool = False, force: bool = False) -> V:
         if force or self._obj is None:
             obj = self._gen(self._resource)
             if persist:
@@ -51,15 +68,26 @@ class Lazy(object):
             return self._obj
 
 
-class LazyFile(object):
-    def __init__(self, resource, local, gen_save, load):
+class LazyFile(Generic[K, V], ILazy[V]):
+
+    def __init__(
+        self,
+        resource: K,
+        local: Path,
+        gen_save: Callable[[K, Path], None],
+        load: Callable[[Path], V],
+    ):
         self._resource = resource
         self._local = local
         self._load = load
         self._gen_save = gen_save
         self._obj = None
 
-    def get(self, persist=False, force=False):
+    @property
+    def resource(self) -> K:
+        return self._resource
+
+    def get(self, persist: bool = False, force: bool = False) -> V:
         if force or self._obj is None:
             if force or not os.path.exists(self._local):
                 init_dir(self._local, is_file=True)
@@ -72,8 +100,8 @@ class LazyFile(object):
             return self._obj
 
 
-class LazyList(object):
-    def __init__(self, lazies, persist=False):
+class LazyList(Generic[V]):
+    def __init__(self, lazies: list[ILazy[V]], persist: bool = False):
         self._lazies = lazies
         self._persist = persist
 
@@ -83,30 +111,30 @@ class LazyList(object):
     def __getitem__(self, item):
         return self.get(item)
 
-    def get(self, item, threads=1):
-        dat = self._lazies[item]
-        if type(item) == slice:
+    def get(self, idx: int | slice, threads: int = 1):
+        dat = self._lazies[idx]
+        if isinstance(idx, slice):
             return [x for x in upar.run_threaded(lambda d: d.get(), dat, threads=threads)]
         else:
             return dat.get(persist=self._persist)
 
-    def ran(self):
+    def ran(self) -> V:
         return random.choice(self)
 
 
-class PregenList(object):
-    def __init__(self, items):
+class PregenList(Generic[V]):
+    def __init__(self, items: list[V]):
         self._items = items
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._items)
 
-    def __getitem__(self, item):
+    def __getitem__(self, item) -> V:
         return self._items[item]
 
-    def get(self, item):
-        return self._items[item]
+    def get(self, idx: int | slice) -> V:
+        return self._items[idx]
 
-    def ran(self):
+    def ran(self) -> V:
         return random.choice(self)
 

@@ -21,6 +21,8 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
+import uuid
+import warnings
 from pathlib import Path
 
 import cv2
@@ -37,7 +39,8 @@ import mtgvision.util.image as uimg
 import mtgvision.util.values as uval
 import mtgvision.util.random as uran
 import mtgvision.util.files as ufls
-import mtgvision.util.lazy as ulzy
+import mtgvision.util.lazyvalue as ulzy
+from mtgdata.scryfall import ScryfallCardFace
 
 
 # ========================================================================= #
@@ -155,7 +158,7 @@ class Dataset(ufls.Folder):
 # ========================================================================= #
 
 
-class IlsvrcImages(ulzy.LazyList):
+class IlsvrcImages(ulzy.LazyList[np.ndarray]):
 
     ILSVRC_SET_TYPES = ['val', 'test', 'train']
 
@@ -167,7 +170,10 @@ class IlsvrcImages(ulzy.LazyList):
             print(" - For example: {}".format(root.to('val', 'ILSVRC2010_val_00000001.JPEG')), 'yellow')
             print("The image versions of the ILSVRC Datasets are for educational purposes only, and cannot be redistributed.", 'yellow')
             print("Please visit: www.image-net.org to obtain the download links.", 'yellow')
-        super().__init__([ulzy.Lazy(file, uimg.imread) for file in ufls.get_image_paths(root.path, prefixed=True)])
+        super().__init__([
+            ulzy.LazyValue(file, uimg.imread)
+            for file in sorted(ufls.get_image_paths(root.path, prefixed=True))
+        ])
 
 
 # ========================================================================= #
@@ -175,12 +181,11 @@ class IlsvrcImages(ulzy.LazyList):
 # ========================================================================= #
 
 
-class MtgImages(ulzy.LazyList):
+class MtgImages(ulzy.LazyList[np.ndarray]):
+
+    _lazies: list[ulzy.LazyValue[ScryfallCardFace, np.ndarray]]
 
     def __init__(self, img_type=ScryfallImageType.small, predownload=False):
-        print(Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data')
-        print(Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data')
-        print(Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data')
         self._ds = ScryfallDataset(
             img_type=img_type,
             data_root=Path(__file__).parent.parent.parent / 'mtg-dataset/mtgdata/data',
@@ -190,13 +195,30 @@ class MtgImages(ulzy.LazyList):
         # open PIL.Image.Image
         super().__init__(self._make_lazy_cards())
 
+    def get_image_by_id(self, id_: uuid.UUID | str):
+        if isinstance(id_, str):
+            id_ = uuid.UUID(id_)
+        # list is sorted, so binary search for ID, checking: `lazy.resource.id` for each lazy in `self._lazies`
+        low = 0
+        high = len(self._lazies) - 1
+        while low <= high:
+            mid = (low + high) // 2
+            mid_val = self._lazies[mid].resource.id
+            if mid_val < id_:
+                low = mid + 1
+            elif mid_val > id_:
+                high = mid - 1
+            else:
+                return self._lazies[mid].get()
+        raise KeyError(f'Card with ID: {id_} not found!')
+
     @classmethod
     def _get_card(cls, card):
         return np.asarray(card.dl_and_open_im_resized(), dtype='float32') / 255
 
-    def _make_lazy_cards(self):
+    def _make_lazy_cards(self) -> list[ulzy.LazyValue[ScryfallCardFace, np.ndarray]]:
         return [
-            ulzy.Lazy(card, self._get_card) for card in self._ds
+            ulzy.LazyValue(card, self._get_card) for card in self._ds
         ]
 
     _RAN_BG = uran.ApplyShuffled(

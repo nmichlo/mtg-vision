@@ -2,7 +2,8 @@ import argparse
 import functools
 import sys
 from pathlib import Path
-from typing import Any, IO, Literal, Mapping, Optional, Self, Tuple, Union
+from typing import Any, Generic, IO, Literal, Mapping, Optional, Self, Tuple, TypedDict, \
+    TypeVar, Union
 
 import matplotlib.pyplot as plt
 import pydantic
@@ -43,6 +44,14 @@ _MODELS = {
 }
 
 
+T = TypeVar("T")
+
+class BatchHint(TypedDict, Generic[T], total=False):
+    x: T
+    y: T
+    x2: T
+
+
 class RanMtgEncDecDataset(IterableDataset):
 
     def __init__(
@@ -68,23 +77,36 @@ class RanMtgEncDecDataset(IterableDataset):
             else:
                 yield self.random_tensor_batch()
 
-    def random_img(self):
+    def get_img_by_id(self, id_: str) -> BatchHint[np.ndarray]:
+        x = self.mtg.get_image_by_id(id_)
+        y = self.ilsvrc.ran()
+        batch = self._make_image_batch([(x, y)])
+        return {k: v[0] for k, v in batch.items()}
+
+    def random_img(self) -> BatchHint[np.ndarray]:
         batch = self.random_image_batch(1)
         return {k: v[0] for k, v in batch.items()}
 
-    def random_tensor(self):
+    def random_tensor(self) -> BatchHint[torch.Tensor]:
         batch = self.random_tensor_batch(1)  # already floats
         return {k: v[0] for k, v in batch.items()}
 
-    def random_image_batch(self, n: Optional[int] = None):
+    def random_image_batch(self, n: Optional[int] = None) -> BatchHint[np.ndarray]:
         if n is None:
             n = self.default_batch_size
         # get random images
-        cards_bgs = [(self.mtg.ran(), self.ilsvrc.ran()) for _ in range(n)]
+        img_pairs = [(self.mtg.ran(), self.ilsvrc.ran()) for _ in range(n)]
+        return self._make_image_batch(img_pairs)
+
+    def random_tensor_batch(self, n: Optional[int] = None) -> BatchHint[torch.Tensor]:
+        batch = self.random_image_batch(n)
+        return {k: K.image_to_tensor(v) for k, v in batch.items()}
+
+    def _make_image_batch(self, img_pairs: list[tuple[np.ndarray, np.ndarray]]) -> BatchHint[np.ndarray]:
         # generate random samples
         xs0, xs1, ys = [], [], []
-        for card, bg0 in cards_bgs:
-            _, bg1 = random.choice(cards_bgs)
+        for card, bg0 in img_pairs:
+            _, bg1 = random.choice(img_pairs)
             if self.targets:
                 ys.append(MtgImages.make_cropped(card, size=self.size))
             xs0.append(MtgImages.make_virtual(card, bg0, size=self.size))
@@ -96,10 +118,6 @@ class RanMtgEncDecDataset(IterableDataset):
             **({"y": np.stack(ys, axis=0)} if self.targets else {}),
             **({"x2": np.stack(xs1, axis=0)} if self.paired else {}),
         }
-
-    def random_tensor_batch(self, n: Optional[int] = None):
-        batch = self.random_image_batch(n)
-        return {k: K.image_to_tensor(v) for k, v in batch.items()}
 
 
 # Define the Lightning Module
@@ -344,10 +362,15 @@ class ImageLoggingCallback(Callback):
         wandb.log(logs)
 
 
+
+def seed_all(seed: int):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    GLOBAL_RAN.reset(seed)
+
+
 def train(config: "Config"):
-    random.seed(config.seed)
-    torch.manual_seed(config.seed)
-    GLOBAL_RAN.reset(config.seed)
+    seed_all(config.seed)
 
     # Initialize model
     data_module = MtgDataModule(
@@ -360,11 +383,18 @@ def train(config: "Config"):
 
     # Initial batch for visualization
     vis_batch = [
-        data_module.train_dataset.random_img(),
-        data_module.train_dataset.random_img(),
-        data_module.train_dataset.random_img(),
-        data_module.train_dataset.random_img(),
-        data_module.train_dataset.random_img(),
+        # https://scryfall.com/card/e02/35/rancor
+        data_module.train_dataset.get_img_by_id("38e281ab-3437-4a2c-a668-9a148bc3eaf7"),
+        # https://scryfall.com/card/2x2/156/rancor
+        data_module.train_dataset.get_img_by_id("86d6b411-4a31-4bfc-8dd6-e19f553bb29b"),
+        # https://scryfall.com/card/bro/238b/urza-planeswalker
+        data_module.train_dataset.get_img_by_id("40a01679-3224-427e-bd1d-b797b0ab68b7"),
+        # https://scryfall.com/card/ugl/70/blacker-lotus
+        data_module.train_dataset.get_img_by_id("4a2e428c-dd25-484c-bbc8-2d6ce10ef42c"),
+        # https://scryfall.com/card/zen/249/forest
+        data_module.train_dataset.get_img_by_id("341b05e6-93bb-4071-b8c6-1644f56e026d"),
+        # https://scryfall.com/card/mh3/132/ral-and-the-implicit-maze
+        data_module.train_dataset.get_img_by_id("ebadb7dc-69a4-43c9-a2f8-d846b231c71c"),
     ]
 
     # Initialize wandb
@@ -384,6 +414,9 @@ def train(config: "Config"):
         device = "mps"
     else:
         device = "cpu"
+
+    # set seed again
+    seed_all(config.seed)
 
     # Initialize model and compile
     model = MtgVisionEncoder(config.model_dump())
@@ -521,23 +554,14 @@ class Config(pydantic.BaseModel):
 
 
 if __name__ == "__main__":
-
-    # ae2_16x32x64x128x256
-    # ae2_32x32x64x64x128
-    # ae2_32x64x64x128x128
-    # ae2_32x32x64x128x256
-    # ae2_64x64x64x128x256
-
-    # MID LAYERS DON'T SEEM TO INCREASE TIME MUCH
-    # end layers are worst culprits?
-
     sys.argv.extend([
-        "--prefix=cont_cnxt2",
+        "--prefix=cnxt2",
+        "--model-name=cnvnxt2ae_base_9",
         "--num-workers=6",
-        "--batch-size=16",
-        "--loss-recon=ssim5+l1",
+        "--batch-size=24",
+        "--loss-recon=ssim7+l1",
+        "--loss-contrastive=none",
         "--learning-rate=3e-4",
-
         # "--checkpoint=mtgvision_encoder/3__psmlcp3p/checkpoints/*.ckpt",
     ])
     _main()
