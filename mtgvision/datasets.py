@@ -21,6 +21,7 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
+
 import uuid
 from pathlib import Path
 
@@ -41,10 +42,12 @@ from mtgdata.scryfall import ScryfallCardFace
 # ========================================================================= #
 
 
-# TODO: replace with skimage functions
-
-
 class Mutate:
+    """
+    A collection of image random image transformations.
+    # TODO: replace with random transforms from e.g. albumentations
+    """
+
     @staticmethod
     def flip(img, horr=True, vert=True):
         return uimg.flip(
@@ -132,11 +135,6 @@ class Mutate:
 # ========================================================================= #
 
 
-# if 'darwin' in platform.system().lower():
-#     DATASETS_ROOT = os.getenv('DATASETS_ROOT', os.path.join(os.environ['HOME'], 'Downloads/datasets'))
-# else:
-#     DATASETS_ROOT = os.getenv('DATASETS_ROOT', '/datasets')
-
 DATASETS_ROOT = Path(__file__).parent.parent.parent / "mtg-dataset/mtgdata/data"
 
 print(f"DATASETS_ROOT={DATASETS_ROOT}")
@@ -148,6 +146,12 @@ print(f"DATASETS_ROOT={DATASETS_ROOT}")
 
 
 class IlsvrcImages:
+    """
+    Dataset of ILSVRC 2010 Images. This is a small dataset of random images from
+    different categories. This is intended to be used as background images for
+    the MTG Dataset.
+    """
+
     ILSVRC_SET_TYPES = ["val", "test", "train"]
 
     def __init__(self):
@@ -188,8 +192,19 @@ class IlsvrcImages:
 # Dataset - MTG Images                                                      #
 # ========================================================================= #
 
+SizeHW = tuple[int, int]
+PathOrImg = str | np.ndarray
 
-class MtgImages:
+
+class SyntheticBgFgMtgImages:
+    """
+    Dataset of Magic The Gathering Card Images. This generates Synthetic data of
+    slightly distorted images of cards with random backgrounds.
+
+    This is intended to mimic the results that would be fed into an embedding model
+    as the result of some detection or segmentation task.
+    """
+
     def __init__(self, img_type=ScryfallImageType.small, predownload=False):
         self._ds = ScryfallDataset(
             img_type=img_type,
@@ -257,7 +272,11 @@ class MtgImages:
     )
 
     @staticmethod
-    def make_cropped(path_or_img, size_hw=None, half_upsidedown=False):
+    def make_cropped(
+        path_or_img: PathOrImg,
+        size_hw: SizeHW | None = None,
+        half_upsidedown: bool = False,
+    ):
         card = (
             uimg.imread_float(path_or_img)
             if isinstance(path_or_img, str)
@@ -272,8 +291,8 @@ class MtgImages:
             uran.ApplyChoice(Mutate.upsidedown, None)(ret) if half_upsidedown else ret
         )
 
-    @staticmethod
-    def make_masked(path_or_img):
+    @classmethod
+    def make_masked(cls, path_or_img: PathOrImg) -> np.ndarray:
         card = (
             uimg.imread_float(path_or_img)
             if isinstance(path_or_img, str)
@@ -290,19 +309,25 @@ class MtgImages:
         )
         return ret
 
-    @staticmethod
-    def make_bg(bg_path_or_img, size):
+    @classmethod
+    def make_bg(cls, bg_path_or_img: PathOrImg, size_hw: SizeHW) -> np.ndarray:
         bg = (
             uimg.imread_float(bg_path_or_img)
             if isinstance(bg_path_or_img, str)
             else bg_path_or_img
         )
-        bg = MtgImages._RAN_BG(bg)
-        bg = uimg.crop_to_size(bg, size)
+        bg = cls._RAN_BG(bg)
+        bg = uimg.crop_to_size(bg, size_hw)
         return bg
 
-    @staticmethod
-    def make_virtual(card_path_or_img, bg_path_or_img, size, half_upsidedown=False):
+    @classmethod
+    def make_virtual(
+        cls,
+        card_path_or_img: PathOrImg,
+        bg_path_or_img: PathOrImg,
+        size_hw: SizeHW,
+        half_upsidedown: bool = False,
+    ) -> np.ndarray:
         card = (
             uimg.imread_float(card_path_or_img)
             if isinstance(card_path_or_img, str)
@@ -312,31 +337,36 @@ class MtgImages:
             uran.ApplyChoice(Mutate.upsidedown, None)(card) if half_upsidedown else card
         )
         # fg - card
-        fg = MtgImages.make_masked(card)
-        fg = uimg.crop_to_size(fg, size, pad=True)
-        fg = MtgImages._RAN_FG(fg)
+        fg = cls.make_masked(card)
+        fg = uimg.crop_to_size(fg, size_hw, pad=True)
+        fg = cls._RAN_FG(fg)
         # bg
-        bg = MtgImages.make_bg(bg_path_or_img, size)
+        bg = cls.make_bg(bg_path_or_img, size_hw)
         # merge
         virtual = uimg.rgba_over_rgb(fg, bg)
-        virtual = MtgImages._RAN_VRTL(virtual)
-        assert virtual.shape[:2] == size
+        virtual = cls._RAN_VRTL(virtual)
+        assert virtual.shape[:2] == size_hw
         return virtual
 
-    @staticmethod
+    @classmethod
     def make_virtual_pair(
-        card_path_or_img, bg_path_or_img, x_size, y_size, half_upsidedown=False
-    ):
+        cls,
+        card_path_or_img: PathOrImg,
+        bg_path_or_img: PathOrImg,
+        x_size_hw: SizeHW,
+        y_size_hw: SizeHW,
+        half_upsidedown: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray]:
         card = (
             uimg.imread_float(card_path_or_img)
             if isinstance(card_path_or_img, str)
             else card_path_or_img
         )
         # only inputs are flipped
-        x = MtgImages.make_virtual(
-            card, bg_path_or_img, size=x_size, half_upsidedown=half_upsidedown
+        x = cls.make_virtual(
+            card, bg_path_or_img, size_hw=x_size_hw, half_upsidedown=half_upsidedown
         )
-        y = MtgImages.make_cropped(card, size_hw=y_size)
+        y = cls.make_cropped(card, size_hw=y_size_hw)
         return x, y
 
 
@@ -346,14 +376,16 @@ class MtgImages:
 
 
 if __name__ == "__main__":
-    orig = MtgImages(img_type="normal")
+    orig = SyntheticBgFgMtgImages(img_type="normal")
     ilsvrc = IlsvrcImages()
 
     while True:
         _o = orig.ran()
         _l = ilsvrc.ran()
 
-        x, y = MtgImages.make_virtual_pair(_o, _l, (192, 128), (192, 128), True)
+        x, y = SyntheticBgFgMtgImages.make_virtual_pair(
+            _o, _l, (192, 128), (192, 128), True
+        )
 
         uimg.imshow_loop(x, "asdf")
         uimg.imshow_loop(y, "asdf")

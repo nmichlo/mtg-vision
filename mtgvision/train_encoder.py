@@ -23,7 +23,7 @@ from pytorch_lightning.callbacks import (
 
 from mtgdata import ScryfallBulkType, ScryfallImageType
 import mtgvision.models.convnextv2ae as cnv2ae
-from mtgvision.datasets import IlsvrcImages, MtgImages
+from mtgvision.datasets import IlsvrcImages, SyntheticBgFgMtgImages
 from mtgvision.util.random import seed_all
 
 _MODELS = {
@@ -65,6 +65,10 @@ _MODELS = {
     ),
 }
 
+# ========================================================================= #
+# Basic Mtg Dataset                                                         #
+# ========================================================================= #
+
 
 class BatchHintNumpy(TypedDict, total=False):
     x: np.ndarray
@@ -92,7 +96,7 @@ class RanMtgEncDecDataset(IterableDataset):
         self.paired = paired
         self.targets = targets
         self.size = size
-        self.mtg = MtgImages(img_type="small", predownload=predownload)
+        self.mtg = SyntheticBgFgMtgImages(img_type="small", predownload=predownload)
         self.ilsvrc = IlsvrcImages()
 
     def __iter__(self):
@@ -135,10 +139,14 @@ class RanMtgEncDecDataset(IterableDataset):
         for card, bg0 in img_pairs:
             _, bg1 = random.choice(img_pairs)
             if self.targets:
-                ys.append(MtgImages.make_cropped(card, size=self.size))
-            xs0.append(MtgImages.make_virtual(card, bg0, size=self.size))
+                ys.append(SyntheticBgFgMtgImages.make_cropped(card, size_hw=self.size))
+            xs0.append(
+                SyntheticBgFgMtgImages.make_virtual(card, bg0, size_hw=self.size)
+            )
             if self.paired:
-                xs1.append(MtgImages.make_virtual(card, bg1, size=self.size))
+                xs1.append(
+                    SyntheticBgFgMtgImages.make_virtual(card, bg1, size_hw=self.size)
+                )
         # stack
         return {
             "x": np.stack(xs0, axis=0),
@@ -147,7 +155,11 @@ class RanMtgEncDecDataset(IterableDataset):
         }
 
 
-# Define the Lightning Module
+# ========================================================================= #
+# Lightning Mtg Model & Optimisation                                        #
+# ========================================================================= #
+
+
 class MtgVisionEncoder(pl.LightningModule):
     hparams: "Config"
     model: "nn.Module"
@@ -340,6 +352,11 @@ class MtgVisionEncoder(pl.LightningModule):
         return opt
 
 
+# ========================================================================= #
+# Lightning Mtg Dataset                                                     #
+# ========================================================================= #
+
+
 class MtgDataModule(pl.LightningDataModule):
     def __init__(
         self,
@@ -365,6 +382,11 @@ class MtgDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
         )
+
+
+# ========================================================================= #
+# Lightning Image Logging Callback                                          #
+# ========================================================================= #
 
 
 class ImageLoggingCallback(Callback):
@@ -428,6 +450,11 @@ class ImageLoggingCallback(Callback):
         # stop logging after the first time
         self._first_log = False
         wandb.log(logs)
+
+
+# ========================================================================= #
+# Training Entrypoint                                                       #
+# ========================================================================= #
 
 
 def train(config: "Config"):
@@ -551,7 +578,12 @@ def train(config: "Config"):
     # | print("Model trained and converted to CoreML. Saved as 'model.mlmodel'.")
 
 
-def _main():
+# ========================================================================= #
+# CLI                                                                       #
+# ========================================================================= #
+
+
+def _cli():
     # generate parser
     _BOOLS = []
     parser = argparse.ArgumentParser()
@@ -619,24 +651,24 @@ class Config(pydantic.BaseModel):
     model_name: str = "cnvnxt2ae_tiny"
     x_size: tuple = (16, 192, 128, 3)
     y_size: tuple = (16, 192, 128, 3)
-    norm_io: bool = False
+    norm_io: bool = True
     # optimisation
     optimizer: Literal["adam", "radam"] = "radam"
-    learning_rate: float = 3e-4
+    learning_rate: float = 1e-3
     weight_decay: float = 1e-9  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
-    batch_size: int = 24
+    batch_size: int = 32
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss
-    loss_recon: Optional[str] = "ssim5+l1"  # 'ssim5+l1'
-    loss_contrastive: Optional[str] = "ntxent"
+    loss_recon: Optional[str] = "ssim5+mse"  # 'ssim5+l1'
+    loss_contrastive: Optional[str] = "none"  # ntxent
     loss_contrastive_batched: bool = False
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
     # trainer
     compile: bool = False
     max_steps: int = 10_000_000
-    num_workers: int = 3
+    num_workers: int = 6
     # logging
     prefix: Optional[str] = None
     checkpoint: Optional[str] = None
@@ -647,21 +679,11 @@ class Config(pydantic.BaseModel):
     )
 
 
-if __name__ == "__main__":
-    sys.argv.extend(
-        [
-            "--prefix=cnxt2",
-            "--model-name=cnvnxt2ae_tiny",
-            "--num-workers=6",
-            "--batch-size=32",
-            "--optimizer=radam",
-            "--loss-recon=ssim5+mse",
-            "--loss-contrastive=none",
-            "--learning-rate=1e-3",
-            "--norm-io=yes",
-        ]
-    )
-    _main()
+# ========================================================================= #
+# END                                                                       #
+# ========================================================================= #
 
-    # CONFIG: seed=42 img_type=<ScryfallImageType.small: 'small'> bulk_type=<ScryfallBulkType.default_cards: 'default_cards'> force_download=False model_name='cnvnxt2ae_tiny_9_128' x_size=(16, 192, 128, 3) y_size=(16, 192, 128, 3) norm_io=False optimizer='radam' learning_rate=0.001 weight_decay=1e-05 batch_size=32 gradient_clip_val=0.5 accumulate_grad_batches=1 loss_recon='ssim5+mse' loss_contrastive=None loss_contrastive_batched=True scale_loss_recon=1.0 scale_loss_contrastive=1.0 compile=False max_steps=10000000 num_workers=6 prefix='cnxt2' checkpoint=None log_every_n_steps=2500 ckpt_every_n_steps=2500 skip_first_optimizer_load_state=True
-    # CONFIG: seed=42 img_type=<ScryfallImageType.small: 'small'> bulk_type=<ScryfallBulkType.default_cards: 'default_cards'> force_download=False model_name='cnvnxt2ae_tiny_9_128' x_size=(16, 192, 128, 3) y_size=(16, 192, 128, 3) norm_io=False optimizer='radam' learning_rate=0.001 weight_decay=1e-05 batch_size=32 gradient_clip_val=0.5 accumulate_grad_batches=1 loss_recon='ssim5+mse' loss_contrastive=None loss_contrastive_batched=True scale_loss_recon=1.0 scale_loss_contrastive=1.0 compile=False max_steps=10000000 num_workers=6 prefix='cnxt2' checkpoint=None log_every_n_steps=2500 ckpt_every_n_steps=2500 skip_first_optimizer_load_state=True
+
+if __name__ == "__main__":
+    sys.argv.extend(["--prefix=cnxt2"])
+    _cli()
