@@ -1,4 +1,5 @@
 import time
+import warnings
 from typing import Literal, Optional
 
 import torch
@@ -238,6 +239,7 @@ class ConvNeXtV2Decoder(_Base):
             dims=dims,
             head_init_scale=head_init_scale,
         )
+        self.head_type = head_type
 
         # **HEAD**
         # --> Bx<z_size>
@@ -300,6 +302,9 @@ class ConvNeXtV2Decoder(_Base):
                 self.head.bias.data.mul_(head_init_scale)
 
     def forward(self, x):
+        if x.ndim == 2 and self.head_type == 'conv':
+            x = x.view(-1, self.z_size // self.internal_num, *self.internal_wh[::-1])
+            warnings.warn("reshaping z to (B, C, H, W) for head_type='conv'")
         x = self.head(x)
         x = self.pool(x)
         x = self.block3(x)
@@ -372,6 +377,14 @@ def convnextv2ae_tiny(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(96, 192, 384, 768), **kwargs)
     return model
 
+def convnextv2ae_tiny_9_128(**kwargs):
+    model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(128, 256, 384, 768), **kwargs)
+    return model
+
+def convnextv2ae_tiny_12_128(**kwargs):
+    model = ConvNeXtV2Ae(depths=(3, 3, 12, 3), dims=(128, 256, 384, 768), **kwargs)
+    return model
+
 def convnextv2ae_base_9(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(128, 256, 512, 1024), **kwargs)
     return model
@@ -402,6 +415,8 @@ if __name__ == '__main__':
         # convnextv2ae_pico,  # ~52it/s
         # convnextv2ae_nano,  # ~47it/s starts slowing on laptop,
         convnextv2ae_tiny,  # ~33.5it/s
+        convnextv2ae_tiny_9_128,
+        convnextv2ae_tiny_12_128,
         convnextv2ae_base_9,  # ~34it/s
         convnextv2ae_base_12,  # ~34it/s
         convnextv2ae_base,  # ~21.53it/s

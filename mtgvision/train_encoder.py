@@ -35,6 +35,8 @@ _MODELS = {
     "cnvnxt2ae_pico": lambda w, h, **k: cnv2ae.convnextv2ae_pico(image_wh=(w[2], w[1]), z_size=768),
     "cnvnxt2ae_nano": lambda w, h, **k: cnv2ae.convnextv2ae_nano(image_wh=(w[2], w[1]), z_size=768),
     "cnvnxt2ae_tiny": lambda w, h, **k: cnv2ae.convnextv2ae_tiny(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_tiny_9_128": lambda w, h, **k: cnv2ae.convnextv2ae_tiny_9_128(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_tiny_12_128": lambda w, h, **k: cnv2ae.convnextv2ae_tiny_12_128(image_wh=(w[2], w[1]), z_size=768),
     "cnvnxt2ae_base_9": lambda w, h, **k: cnv2ae.convnextv2ae_base_9(image_wh=(w[2], w[1]), z_size=768),  # same number of layers as tiny. but more capacity
     "cnvnxt2ae_base_12": lambda w, h, **k: cnv2ae.convnextv2ae_base_12(image_wh=(w[2], w[1]), z_size=768),
     "cnvnxt2ae_base": lambda w, h, **k: cnv2ae.convnextv2ae_base(image_wh=(w[2], w[1]), z_size=768),
@@ -187,16 +189,26 @@ class MtgVisionEncoder(pl.LightningModule):
         plt.show()
 
     def forward(self, x):
+        if self.hparams.norm_io:
+            x = (x + 1) / 2
         z, multi_out = self.model(x)
-        return z, multi_out[0]
+        out = multi_out[0]
+        if self.hparams.norm_io:
+            out = (out * 2) - 1
+        return z, out
 
     def encode(self, x):
+        if self.hparams.norm_io:
+            x = (x + 1) / 2
         z, multi = self.model.encode(x)
         return z
 
     def decode(self, z):
         multi = self.model.decode(z)
-        return multi[0]
+        out = multi[0]
+        if self.hparams.norm_io:
+            out = (out * 2) - 1
+        return out
 
     def training_step(self, batch, batch_idx):
         logs, loss = {}, 0
@@ -486,13 +498,19 @@ def train(config: "Config"):
 
 
 def _main():
+    # generate parser
+    _BOOLS = []
     parser = argparse.ArgumentParser()
     for name, field in Config().model_fields.items():
         if field.annotation is bool:
-            if field.default:
-                parser.add_argument(f"--no-{name}".replace("_", "-"), action="store_false", help=field.description, dest=name)
-            else:
-                parser.add_argument(f"--{name}".replace("_", "-"), action="store_true", help=field.description)
+            _BOOLS.append(name)
+            print("BOOL:", name, field.default)
+            parser.add_argument(
+                f"--{name}".replace("_", "-"),
+                type=str,
+                default='yes' if field.default else (None if field.default is None else 'no'),
+                help=str(field.description) + " (y/n/yes/no/true/false)",
+            )
         else:
             parser.add_argument(
                 f"--{name}".replace("_", "-"),
@@ -500,9 +518,18 @@ def _main():
                 default=field.default,
                 help=field.description,
             )
-    args = parser.parse_args()
 
+    # parse args
+    args = parser.parse_args()
+    for name in _BOOLS:
+        val = getattr(args, name)
+        if val is not None:
+            setattr(args, name, val.lower() in ('y', 'yes', 'true'))
+
+    # get config
+    print("ARGS:", args)
     config = Config(**vars(args))
+
     # update losses
     if config.loss_contrastive in ('none', 'no') or config.scale_loss_contrastive <= 0:
         print("No contrastive loss.")
@@ -510,8 +537,9 @@ def _main():
     if config.loss_recon in ('none', 'no') or config.scale_loss_recon <= 0:
         print("No reconstruction loss.")
         config.loss_recon = None
+
     # train
-    print('CONFIG:', config)
+    print('CONFIG:', config.model_dump_json(indent=2))
     train(config)
 
 
@@ -535,6 +563,7 @@ class Config(pydantic.BaseModel):
     model_name: str = 'cnvnxt2ae_tiny'
     x_size: tuple = (16, 192, 128, 3)
     y_size: tuple = (16, 192, 128, 3)
+    norm_io: bool = False
     # optimisation
     optimizer: Literal['adam', 'radam'] = 'radam'
     learning_rate: float = 3e-4
@@ -545,7 +574,7 @@ class Config(pydantic.BaseModel):
     # loss
     loss_recon: Optional[str] = 'ssim5+l1'  # 'ssim5+l1'
     loss_contrastive: Optional[str] = 'ntxent'
-    loss_contrastive_batched: bool = False,
+    loss_contrastive_batched: bool = False
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
     # trainer
@@ -563,13 +592,15 @@ class Config(pydantic.BaseModel):
 if __name__ == "__main__":
     sys.argv.extend([
         "--prefix=cnxt2",
-        "--model-name=cnvnxt2ae_base_9",
+        "--model-name=cnvnxt2ae_tiny",
         "--num-workers=6",
-        "--batch-size=24",
+        "--batch-size=32",
         "--optimizer=radam",
-        "--loss-recon=ssim5+l1",
+        "--loss-recon=ssim5+mse",
         "--loss-contrastive=none",
-        "--learning-rate=5e-4",
-        # "--checkpoint=mtgvision_encoder/3__psmlcp3p/checkpoints/*.ckpt",
+        "--learning-rate=1e-3",
     ])
     _main()
+
+    # CONFIG: seed=42 img_type=<ScryfallImageType.small: 'small'> bulk_type=<ScryfallBulkType.default_cards: 'default_cards'> force_download=False model_name='cnvnxt2ae_tiny_9_128' x_size=(16, 192, 128, 3) y_size=(16, 192, 128, 3) norm_io=False optimizer='radam' learning_rate=0.001 weight_decay=1e-05 batch_size=32 gradient_clip_val=0.5 accumulate_grad_batches=1 loss_recon='ssim5+mse' loss_contrastive=None loss_contrastive_batched=True scale_loss_recon=1.0 scale_loss_contrastive=1.0 compile=False max_steps=10000000 num_workers=6 prefix='cnxt2' checkpoint=None log_every_n_steps=2500 ckpt_every_n_steps=2500 skip_first_optimizer_load_state=True
+    # CONFIG: seed=42 img_type=<ScryfallImageType.small: 'small'> bulk_type=<ScryfallBulkType.default_cards: 'default_cards'> force_download=False model_name='cnvnxt2ae_tiny_9_128' x_size=(16, 192, 128, 3) y_size=(16, 192, 128, 3) norm_io=False optimizer='radam' learning_rate=0.001 weight_decay=1e-05 batch_size=32 gradient_clip_val=0.5 accumulate_grad_batches=1 loss_recon='ssim5+mse' loss_contrastive=None loss_contrastive_batched=True scale_loss_recon=1.0 scale_loss_contrastive=1.0 compile=False max_steps=10000000 num_workers=6 prefix='cnxt2' checkpoint=None log_every_n_steps=2500 ckpt_every_n_steps=2500 skip_first_optimizer_load_state=True
