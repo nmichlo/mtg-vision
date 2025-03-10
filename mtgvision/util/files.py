@@ -24,7 +24,7 @@
 
 
 import os
-import mtgvision.util.values as uval
+from os import PathLike
 
 
 # ========================================================================= #
@@ -32,12 +32,13 @@ import mtgvision.util.values as uval
 # ========================================================================= #
 
 
-def get_image_paths(folder, extensions=None, prefixed=False) -> list:
-    extensions = uval.default(extensions, lambda: [".jpg", ".png", ".jpeg"])
+def get_image_paths(
+    folder: str | PathLike, extensions: list[str] | None = None, prefixed: bool = False
+) -> list:
+    if not extensions:
+        extensions = [".jpg", ".png", ".jpeg"]
     images = []
-
-    folder = os.path.join(folder, "")
-
+    folder = os.path.join(str(folder), "")  # ensure trailing slash
     for root, dirs, files in os.walk(folder):
         # strip roots
         if not prefixed:
@@ -53,40 +54,9 @@ def get_image_paths(folder, extensions=None, prefixed=False) -> list:
     return images
 
 
-def init_dir(*paths, is_file=False) -> str:
-    path = os.path.join(*paths)
+def init_dir(*parts: str, is_file: bool = False) -> str:
+    path: str = os.path.join(*parts)
     dirs = path if not is_file else os.path.dirname(path)
     if not os.path.isdir(dirs):
         os.makedirs(dirs)
     return path
-
-
-# ========================================================================= #
-# PATH BUILDER                                                              #
-# ========================================================================= #
-
-
-class Folder(object):
-    def __init__(self, *paths, init=False):
-        self._root = os.path.join(*paths)
-        if init:
-            init_dir(self._root)
-
-    @property
-    def path(self):
-        return self._root
-
-    def cd(self, *paths, init=False):
-        return Folder(self._root, *paths, init=init)
-
-    def to(self, *paths, init=False, is_file=False):
-        path = os.path.join(self._root, *paths)
-        if init:
-            return init_dir(path, is_file=is_file)
-        return path
-
-    def __str__(self):
-        return self._root
-
-    def __repr__(self):
-        return str(self)

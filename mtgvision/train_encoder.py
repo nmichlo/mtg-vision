@@ -623,7 +623,7 @@ class Config(pydantic.BaseModel):
     # optimisation
     optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 3e-4
-    weight_decay: float = 1e-7
+    weight_decay: float = 1e-9  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
     batch_size: int = 24
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
