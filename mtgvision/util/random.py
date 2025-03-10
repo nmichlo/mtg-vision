@@ -24,34 +24,26 @@
 
 
 import abc
+import warnings
 from abc import ABC
 import random
-from random import Random
-
-import mtgvision.util.values as uval
-
-# ============================================================================ #
-# Global Random Singleton                                                      #
-# ============================================================================ #
 
 
-class GLOBAL_RAN(uval.ISingleton):
-
-    _seed = Random().randint(0, 1000000)
-    _ran = Random(_seed)
-
-    @staticmethod
-    def random():
-        return GLOBAL_RAN._ran.random()
-
-    @staticmethod
-    def randint(a, b):
-        return GLOBAL_RAN._ran.randint(a, b)
-
-    @staticmethod
-    def reset(seed=_seed):
-        GLOBAL_RAN._ran.seed(seed)
-
+def seed_all(seed: int):
+    # random
+    random.seed(seed)
+    # numpy
+    try:
+        import np
+        np.random.seed(seed)
+    except ImportError:
+        warnings.warn('numpy not found, skipping seed')
+    # torch
+    try:
+        import torch
+        torch.manual_seed(seed)
+    except ImportError:
+        warnings.warn('torch not found, skipping seed')
 
 # ============================================================================ #
 # Random Application of Functions                                              #
@@ -94,6 +86,7 @@ class ApplyShuffled(Applicator):
     def __init__(self, *callables):
         super().__init__(callables)
         self.indices = list(range(len(self.callables)))
+
     def _apply(self, x):
         random.shuffle(self.indices)
         for i in self.indices:

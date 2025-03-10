@@ -27,7 +27,7 @@ from pytorch_lightning.callbacks import (
 from mtgdata import ScryfallBulkType, ScryfallImageType
 import mtgvision.models.convnextv2ae as cnv2ae
 from mtgvision.datasets import IlsvrcImages, MtgImages
-from mtgvision.util.random import GLOBAL_RAN
+from mtgvision.util.random import seed_all
 
 _MODELS = {
     "cnvnxt2ae_atto": lambda w, h, **k: cnv2ae.convnextv2_atto(image_wh=(w[2], w[1]), z_size=768),
@@ -188,26 +188,32 @@ class MtgVisionEncoder(pl.LightningModule):
         plt.imshow(outy)
         plt.show()
 
+    def _scale_in(self, x):
+        # x image is in range [0, 1], --> [-1, 1]
+        if self.hparams.norm_io:
+            return (x * 2) - 1
+        return x
+
+    def _scale_out(self, out):
+        # out is in range [-1, 1], --> [0, 1]
+        if self.hparams.norm_io:
+            return (out + 1) / 2
+        return out
+
     def forward(self, x):
-        if self.hparams.norm_io:
-            x = (x + 1) / 2
+        x = self._scale_in(x)
         z, multi_out = self.model(x)
-        out = multi_out[0]
-        if self.hparams.norm_io:
-            out = (out * 2) - 1
+        out = self._scale_out(multi_out[0])
         return z, out
 
     def encode(self, x):
-        if self.hparams.norm_io:
-            x = (x + 1) / 2
+        x = self._scale_in(x)
         z, multi = self.model.encode(x)
         return z
 
     def decode(self, z):
         multi = self.model.decode(z)
-        out = multi[0]
-        if self.hparams.norm_io:
-            out = (out * 2) - 1
+        out = self._scale_out(multi[0])
         return out
 
     def training_step(self, batch, batch_idx):
@@ -378,13 +384,6 @@ class ImageLoggingCallback(Callback):
         # stop logging after the first time
         self._first_log = False
         wandb.log(logs)
-
-
-
-def seed_all(seed: int):
-    random.seed(seed)
-    torch.manual_seed(seed)
-    GLOBAL_RAN.reset(seed)
 
 
 def train(config: "Config"):
@@ -599,6 +598,7 @@ if __name__ == "__main__":
         "--loss-recon=ssim5+mse",
         "--loss-contrastive=none",
         "--learning-rate=1e-3",
+        "--norm-io=no",
     ])
     _main()
 
