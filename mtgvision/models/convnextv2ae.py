@@ -324,6 +324,8 @@ class ConvNeXtV2Ae(_Base, AeBase):
         depths: tuple[int, int, int, int] = (3, 3, 9, 3),
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
         head_init_scale: Optional[float] = None,
+        encoder_enabled: bool = True,
+        decoder_enabled: bool = True,
     ):
         super().__init__(
             image_wh=image_wh,
@@ -333,27 +335,39 @@ class ConvNeXtV2Ae(_Base, AeBase):
             dims=dims,
             head_init_scale=head_init_scale,
         )
-        self.encoder = ConvNeXtV2Encoder(
-            image_wh=image_wh,
-            in_chans=in_chans,
-            z_size=z_size,
-            depths=depths,
-            dims=dims,
-            head_init_scale=head_init_scale,
-        )
-        self.decoder = ConvNeXtV2Decoder(
-            image_wh=image_wh,
-            in_chans=in_chans,
-            z_size=z_size,
-            depths=depths,
-            dims=dims,
-            head_init_scale=head_init_scale,
-        )
+
+        if encoder_enabled:
+            self.encoder = ConvNeXtV2Encoder(
+                image_wh=image_wh,
+                in_chans=in_chans,
+                z_size=z_size,
+                depths=depths,
+                dims=dims,
+                head_init_scale=head_init_scale,
+            )
+        else:
+            self.encoder = None
+
+        if decoder_enabled:
+            self.decoder = ConvNeXtV2Decoder(
+                image_wh=image_wh,
+                in_chans=in_chans,
+                z_size=z_size,
+                depths=depths,
+                dims=dims,
+                head_init_scale=head_init_scale,
+            )
+        else:
+            self.decoder = None
 
     def _encode(self, x) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        if self.encoder is None:
+            raise RuntimeError(f"encoder is not enabled on: {self.__class__.__name__}")
         return self.encoder(x), []
 
     def _decode(self, z) -> list[torch.Tensor]:
+        if self.decoder is None:
+            raise RuntimeError(f"decoder is not enabled on: {self.__class__.__name__}")
         return [self.decoder(z)]
 
 

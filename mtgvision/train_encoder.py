@@ -1,17 +1,14 @@
 import argparse
-import functools
 import sys
 from pathlib import Path
-from typing import Any, Generic, IO, Literal, Mapping, Optional, Self, Tuple, TypedDict, \
-    TypeVar, Union
-
+from typing import Any, Literal, Mapping, Optional, Tuple, TypedDict
 import matplotlib.pyplot as plt
 import pydantic
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import IterableDataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import IterableDataset, DataLoader
 import numpy as np
 import random
 import wandb
@@ -45,12 +42,16 @@ _MODELS = {
 }
 
 
-T = TypeVar("T")
+class BatchHintNumpy(TypedDict, total=False):
+    x: np.ndarray
+    y: np.ndarray
+    x2: np.ndarray
 
-class BatchHint(TypedDict, Generic[T], total=False):
-    x: T
-    y: T
-    x2: T
+
+class BatchHintTensor(TypedDict, total=False):
+    x: torch.Tensor
+    y: torch.Tensor
+    x2: torch.Tensor
 
 
 class RanMtgEncDecDataset(IterableDataset):
@@ -78,32 +79,32 @@ class RanMtgEncDecDataset(IterableDataset):
             else:
                 yield self.random_tensor_batch()
 
-    def get_img_by_id(self, id_: str) -> BatchHint[np.ndarray]:
+    def get_img_by_id(self, id_: str) -> BatchHintNumpy:
         x = self.mtg.get_image_by_id(id_)
         y = self.ilsvrc.ran()
         batch = self._make_image_batch([(x, y)])
         return {k: v[0] for k, v in batch.items()}
 
-    def random_img(self) -> BatchHint[np.ndarray]:
+    def random_img(self) -> BatchHintNumpy:
         batch = self.random_image_batch(1)
         return {k: v[0] for k, v in batch.items()}
 
-    def random_tensor(self) -> BatchHint[torch.Tensor]:
+    def random_tensor(self) -> BatchHintTensor:
         batch = self.random_tensor_batch(1)  # already floats
         return {k: v[0] for k, v in batch.items()}
 
-    def random_image_batch(self, n: Optional[int] = None) -> BatchHint[np.ndarray]:
+    def random_image_batch(self, n: Optional[int] = None) -> BatchHintNumpy:
         if n is None:
             n = self.default_batch_size
         # get random images
         img_pairs = [(self.mtg.ran(), self.ilsvrc.ran()) for _ in range(n)]
         return self._make_image_batch(img_pairs)
 
-    def random_tensor_batch(self, n: Optional[int] = None) -> BatchHint[torch.Tensor]:
+    def random_tensor_batch(self, n: Optional[int] = None) -> BatchHintTensor:
         batch = self.random_image_batch(n)
         return {k: K.image_to_tensor(v) for k, v in batch.items()}
 
-    def _make_image_batch(self, img_pairs: list[tuple[np.ndarray, np.ndarray]]) -> BatchHint[np.ndarray]:
+    def _make_image_batch(self, img_pairs: list[tuple[np.ndarray, np.ndarray]]) -> BatchHintNumpy:
         # generate random samples
         xs0, xs1, ys = [], [], []
         for card, bg0 in img_pairs:
@@ -134,7 +135,12 @@ class MtgVisionEncoder(pl.LightningModule):
 
     def configure_model(self) -> None:
         model_fn = _MODELS[self.hparams.model_name]
-        model = model_fn(self.hparams.x_size, self.hparams.y_size)
+        model = model_fn(
+            self.hparams.x_size,
+            self.hparams.y_size,
+            encoder_enabled=True,
+            decoder_enabled=self.hparams.loss_recon is not None,
+        )
         self.model = model
 
     def on_load_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
@@ -302,7 +308,6 @@ class MtgVisionEncoder(pl.LightningModule):
 
         # done!
         return opt
-
 
 
 class MtgDataModule(pl.LightningDataModule):
@@ -566,7 +571,7 @@ class Config(pydantic.BaseModel):
     # optimisation
     optimizer: Literal['adam', 'radam'] = 'radam'
     learning_rate: float = 3e-4
-    weight_decay: float = 1e-5
+    weight_decay: float = 1e-7
     batch_size: int = 24
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
@@ -598,7 +603,7 @@ if __name__ == "__main__":
         "--loss-recon=ssim5+mse",
         "--loss-contrastive=none",
         "--learning-rate=1e-3",
-        "--norm-io=no",
+        "--norm-io=yes",
     ])
     _main()
 
