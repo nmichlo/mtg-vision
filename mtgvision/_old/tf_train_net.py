@@ -108,7 +108,7 @@ def create_model(x_size, y_size, batch_size):
     incept(128, 256)
     b.pool((3, 2))  # (3, 2) -> (1, 1)
 
-    b.conv(960, 1) #, name='encoded')
+    b.conv(960, 1)  # , name='encoded')
     encoding_layer = b.last
 
     b.grow((3, 2))  # (1, 1) -> (3, 2)
@@ -132,6 +132,7 @@ def create_model(x_size, y_size, batch_size):
     # ================================= #
     return b.get_model(), encoding_layer
 
+
 # ========================================================================= #
 # MAIN                                                                      #
 # ========================================================================= #
@@ -146,22 +147,25 @@ if __name__ == "__main__":
     # x_size, y_size = (640, 448), (640, 448)
 
     # VARS
-    print('Dataset Root:', DATASETS_ROOT)
+    print("Dataset Root:", DATASETS_ROOT)
 
-    opt_runs = os.getenv('RUNS', 512)
-    opt_epochs = os.getenv('EPOCHS', 32)
-    opt_samples = os.getenv('SAMPLES', 4096)
-    opt_batch_size = os.getenv('BATCH_SIZE', 16)
-    opt_test_size = os.getenv('TEST_SIZE', 128)
-    opt_vis_size = os.getenv('VIS_SIZE', 20)
-    opt_jit = os.getenv('JIT', None)
-    opt_model = os.getenv('MODEL', None)
+    opt_runs = os.getenv("RUNS", 512)
+    opt_epochs = os.getenv("EPOCHS", 32)
+    opt_samples = os.getenv("SAMPLES", 4096)
+    opt_batch_size = os.getenv("BATCH_SIZE", 16)
+    opt_test_size = os.getenv("TEST_SIZE", 128)
+    opt_vis_size = os.getenv("VIS_SIZE", 20)
+    opt_jit = os.getenv("JIT", None)
+    opt_model = os.getenv("MODEL", None)
 
     # CONFIG
-    os.environ['TF_ENABLE_AUTO_MIXED_PRECISION'] = '1'
+    os.environ["TF_ENABLE_AUTO_MIXED_PRECISION"] = "1"
     config = ConfigProto()
     config.gpu_options.allow_growth = True
-    if opt_jit is not None: config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
+    if opt_jit is not None:
+        config.graph_options.optimizer_options.global_jit_level = (
+            tf.OptimizerOptions.ON_1
+        )
 
     # START TIME IN SECONDS
     time_str = time.strftime("%Y-%m-%d__%H-%M-%S")
@@ -170,48 +174,72 @@ if __name__ == "__main__":
     with Session(config=config) as sess:
         # MODEL:
         if opt_model is not None:
-            print('Loading: {}'.format(opt_model))
+            print("Loading: {}".format(opt_model))
             model = load_model(opt_model, compile=False)
-            encoding_layer = next(l for l in model.layers if 'encoded' in l.name)
-            print('Loaded: {} [{}]'.format(opt_model, encoding_layer))
+            encoding_layer = next(
+                layer for layer in model.layers if "encoded" in layer.name
+            )
+            print("Loaded: {} [{}]".format(opt_model, encoding_layer))
         else:
-            print('Making:')
-            model, encoding_layer = create_model((*x_size, 3), (*y_size, 3), batch_size=opt_batch_size)
-            print('Made:')
+            print("Making:")
+            model, encoding_layer = create_model(
+                (*x_size, 3), (*y_size, 3), batch_size=opt_batch_size
+            )
+            print("Made:")
 
         # COMPILE & LOSS:
-        optimizer = tf.keras.optimizers.Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, amsgrad=False)
-        model.compile(loss='binary_crossentropy', optimizer=optimizer)
+        optimizer = tf.keras.optimizers.Adam(
+            lr=0.0001, beta_1=0.9, beta_2=0.999, amsgrad=False
+        )
+        model.compile(loss="binary_crossentropy", optimizer=optimizer)
         # model.compile(loss='mse', optimizer=optimizer)
         model.summary()
 
         # DATA:
-        dataset = MtgLocalFiles(img_type='small', x_size=x_size, y_size=y_size)
+        dataset = MtgLocalFiles(img_type="small", x_size=x_size, y_size=y_size)
         out_x, out_y, out_o = dataset.gen_warp_crop_orig_set(opt_vis_size, save=False)
 
         # CALLBACKS:
-        log_dir = './cache/tensorboard/{}'.format(time_str)
+        log_dir = "./cache/tensorboard/{}".format(time_str)
         callbacks = [
-            TensorBoard(log_dir=log_dir, histogram_freq=0, batch_size=opt_batch_size, write_graph=True, write_grads=False, write_images=False),
+            TensorBoard(
+                log_dir=log_dir,
+                histogram_freq=0,
+                batch_size=opt_batch_size,
+                write_graph=True,
+                write_grads=False,
+                write_images=False,
+            ),
             # ReduceLROnPlateau(factor=0.95, patience=8, cooldown=5),
-            TensorBoardOutputImages(x_test=out_x, y_test=out_y, x_orig=out_o, log_dir=log_dir),
+            TensorBoardOutputImages(
+                x_test=out_x, y_test=out_y, x_orig=out_o, log_dir=log_dir
+            ),
             # TensorBoardMatch(encoding_layer, n=opt_vis_size, x_size=x_size, y_size=y_size, log_dir=log_dir)
         ]
 
         # TRAIN:
         for run in range(opt_runs):
-            print('\nRUN: {:02d}'.format(run))
-            x_train, y_train = dataset.gen_warp_crop_set(opt_samples + opt_test_size, save=False)
+            print("\nRUN: {:02d}".format(run))
+            x_train, y_train = dataset.gen_warp_crop_set(
+                opt_samples + opt_test_size, save=False
+            )
 
             model.fit(
-                x_train, y_train,
-                validation_split=opt_test_size/(opt_samples+opt_test_size),
+                x_train,
+                y_train,
+                validation_split=opt_test_size / (opt_samples + opt_test_size),
                 epochs=opt_epochs,
                 batch_size=opt_batch_size,
-                callbacks=callbacks + [
-                    ModelCheckpoint(filepath=util.init_dir('./model/{}'.format(time_str)) + '/weights.{:02d}'.format(run) + '.{epoch:02d}-{val_loss:.4f}.hdf5', save_best_only=False, period=opt_epochs),
-
-                ]
+                callbacks=callbacks
+                + [
+                    ModelCheckpoint(
+                        filepath=util.init_dir("./model/{}".format(time_str))
+                        + "/weights.{:02d}".format(run)
+                        + ".{epoch:02d}-{val_loss:.4f}.hdf5",
+                        save_best_only=False,
+                        period=opt_epochs,
+                    ),
+                ],
             )
             del x_train
             del y_train

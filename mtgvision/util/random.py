@@ -35,15 +35,18 @@ def seed_all(seed: int):
     # numpy
     try:
         import np
+
         np.random.seed(seed)
     except ImportError:
-        warnings.warn('numpy not found, skipping seed')
+        warnings.warn("numpy not found, skipping seed")
     # torch
     try:
         import torch
+
         torch.manual_seed(seed)
     except ImportError:
-        warnings.warn('torch not found, skipping seed')
+        warnings.warn("torch not found, skipping seed")
+
 
 # ============================================================================ #
 # Random Application of Functions                                              #
@@ -56,7 +59,7 @@ class Applicator(ABC):
         if len(self.callables) == 1 and type(self.callables[0]) in [list, set, tuple]:
             self.callables = self.callables[0]
         if len(self.callables) < 1:
-            raise RuntimeError('There must be a callable')
+            raise RuntimeError("There must be a callable")
 
     def __call__(self, x):
         return self._apply(x)
@@ -68,7 +71,7 @@ class Applicator(ABC):
         elif callable(c):
             return c(x)
         else:
-            raise RuntimeError('Unsupported Callable Type: {}'.format(type(c)))
+            raise RuntimeError("Unsupported Callable Type: {}".format(type(c)))
 
     @abc.abstractmethod
     def _apply(self, x):

@@ -32,7 +32,6 @@ import time
 
 
 class GLOBAL_TIMER:
-
     _timers = {}
     _init_time = time.time()
 

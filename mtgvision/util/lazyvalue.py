@@ -37,18 +37,16 @@ import mtgvision.util.parallel as upar
 # ========================================================================= #
 
 
-K = TypeVar('K')
-V = TypeVar('V')
+K = TypeVar("K")
+V = TypeVar("V")
 
 
 class ILazy(Generic[V]):
-
     def get(self, persist: bool = False, force: bool = False) -> V:
         raise NotImplementedError()
 
 
 class LazyValue(Generic[K, V], ILazy[V]):
-
     def __init__(self, resource: K, gen: Callable[[K], V]):
         self._resource = resource
         self._gen = gen
@@ -69,7 +67,6 @@ class LazyValue(Generic[K, V], ILazy[V]):
 
 
 class LazyFile(Generic[K, V], ILazy[V]):
-
     def __init__(
         self,
         resource: K,
@@ -114,7 +111,9 @@ class LazyList(Generic[V]):
     def get(self, idx: int | slice, threads: int = 1):
         dat = self._lazies[idx]
         if isinstance(idx, slice):
-            return [x for x in upar.run_threaded(lambda d: d.get(), dat, threads=threads)]
+            return [
+                x for x in upar.run_threaded(lambda d: d.get(), dat, threads=threads)
+            ]
         else:
             return dat.get(persist=self._persist)
 
@@ -137,4 +136,3 @@ class PregenList(Generic[V]):
 
     def ran(self) -> V:
         return random.choice(self)
-

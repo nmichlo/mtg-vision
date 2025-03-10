@@ -36,7 +36,7 @@ import mtgvision.util.values as uimg
 
 def cv2_poly_is_convex(pts):
     if len(pts) < 3:
-        raise Exception('Need at least 3 pts')
+        raise Exception("Need at least 3 pts")
     total, i, pts = 0, 0, list(np.array(pts).reshape((-1, 2)))
     for (ax, ay), (bx, by), (cx, cy) in zip(pts, pts[1:] + pts[:1], pts[2:] + pts[:2]):
         dx1 = bx - ax
@@ -81,6 +81,7 @@ def cv2_poly_center(poly):
 # CV2 Image Helper Functions                                                   #
 # ============================================================================ #
 
+
 def cv2_warp_imgs_onto(img, cards, bounds):
     img = img.copy()
     for card, bound in zip(cards, bounds):
@@ -89,7 +90,10 @@ def cv2_warp_imgs_onto(img, cards, bounds):
 
         card = uimg.img_uint8(card)
 
-        src_pts = np.array([(0, 0), (0, scard[0]), (scard[1], scard[0]), (scard[1], 0)], dtype=np.float32)
+        src_pts = np.array(
+            [(0, 0), (0, scard[0]), (scard[1], scard[0]), (scard[1], 0)],
+            dtype=np.float32,
+        )
         dst_pts = np.array([p[0] for p in bound], dtype=np.float32)
 
         M = cv2.getPerspectiveTransform(src_pts, dst_pts)

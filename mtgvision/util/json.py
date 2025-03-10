@@ -34,6 +34,7 @@ import json
 
 CACHE = True
 
+
 # # TODO, make this easier to use... and more reliable
 class JsonCache(object):
     def __init__(self, cache_file, refresh=not CACHE):
@@ -49,7 +50,7 @@ class JsonCache(object):
             self.refresh = False
         else:
             try:
-                with open(self.path, 'r') as file_stream:
+                with open(self.path, "r") as file_stream:
                     self.data = json.load(file_stream)
             except Exception as e:
                 self.data = {}
@@ -59,8 +60,8 @@ class JsonCache(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         ufls.init_dir(self.path, is_file=True)
         if self.save:
-            with open(self.path, 'w') as file_stream:
+            with open(self.path, "w") as file_stream:
                 json.dump(self.data, file_stream)
         else:
-            print('Skipping Save Cache: {}'.format(self.path))
+            print("Skipping Save Cache: {}".format(self.path))
         self.data = None

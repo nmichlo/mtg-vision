@@ -25,7 +25,6 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from tqdm import tqdm
 from functools import partial
 
@@ -33,11 +32,14 @@ from functools import partial
 # HELPER                                                                    #
 # ========================================================================= #
 
-def join(itr, sep='x'):
+
+def join(itr, sep="x"):
     return sep.join([str(i) for i in itr])
 
+
 def p(string):
-    return (string + '_') if string is not None else ''
+    return (string + "_") if string is not None else ""
+
 
 # PyTorch equivalents of TensorFlow conv layers
 conv1x1 = partial(nn.Conv2d, kernel_size=1)
@@ -47,6 +49,7 @@ conv3x1 = partial(nn.Conv2d, kernel_size=(3, 1), padding=(1, 0))
 conv1x5 = partial(nn.Conv2d, kernel_size=(1, 5), padding=(0, 2))
 conv5x1 = partial(nn.Conv2d, kernel_size=(5, 1), padding=(2, 0))
 conv5x5 = partial(nn.Conv2d, kernel_size=5, padding=2)
+
 
 class ModelBuilder(nn.Module):
     def __init__(self, x_size, y_size):
@@ -89,7 +92,7 @@ class ModelBuilder(nn.Module):
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -115,7 +118,7 @@ class ModelBuilder(nn.Module):
                 # Shape: (1, 3, 192, 128)
 
         # Stage 0: conv(64, (7, 7))
-        reset = self._begin_layer('stage_0')
+        reset = self._begin_layer("stage_0")
         x = self.conv_0_0(x)
         # Shape: (1, 64, 192, 128) - 7x7 conv with padding=3 keeps spatial size
         x = self.bn_0_1(x)
@@ -127,7 +130,7 @@ class ModelBuilder(nn.Module):
         self._end_layer(reset)
 
         # Stage 1: pool((3, 3), 2)
-        reset = self._begin_layer('stage_1')
+        reset = self._begin_layer("stage_1")
         x = self.pool_1_0(x)
         # Shape: (1, 64, 96, 64) - 3x3 pool with stride=2 halves H and W (192/2=96, 128/2=64)
         self._l += 1
@@ -135,7 +138,7 @@ class ModelBuilder(nn.Module):
         self._end_layer(reset)
 
         # Stage 2: incept(128, 128, 192, 32, 96, 64)
-        reset = self._begin_layer('stage_2')
+        reset = self._begin_layer("stage_2")
         # 1x1 branch
         conv1 = self.incept_1x1(x)
         conv1 = self.incept_relu(conv1)
@@ -174,7 +177,7 @@ class ModelBuilder(nn.Module):
         self._end_layer(reset)
 
         # Stage 3: pool((3, 3), 2)
-        reset = self._begin_layer('stage_3')
+        reset = self._begin_layer("stage_3")
         x = self.pool_3_0(x)
         # Shape: (1, 480, 48, 32) - 3x3 pool with stride=2 halves H and W (96/2=48, 64/2=32)
         self._l += 1
@@ -184,6 +187,7 @@ class ModelBuilder(nn.Module):
         # Note: TF code ends here, so output matches (batch, 48, 32, 480) in NHWC -> (1, 480, 48, 32) in NCHW
         return x
 
+
 def create_model(x_size, y_size):
     assert len(x_size) == 4 and len(y_size) == 4
     model_x_size = (x_size[0], x_size[3], x_size[1], x_size[2])  # Convert to NCHW
@@ -192,7 +196,7 @@ def create_model(x_size, y_size):
     return model, model.encoded
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     x_size = (1, 192, 128, 3)  # NHWC format
     y_size = (1, 48, 32, 480)  # NHWC format, matches TF output
 
@@ -212,5 +216,5 @@ if __name__ == '__main__':
             output = model(dummy_input)
 
     print(f"Input shape: {dummy_input.shape}")  # (1, 192, 128, 3) NHWC
-    print(f"Output shape: {output.shape}")    # (1, 480, 48, 32) NCHW
+    print(f"Output shape: {output.shape}")  # (1, 480, 48, 32) NCHW
     print(f"Encoding shape: {model.encoded.shape}")  # (1, 480, 96, 64) NCHW

@@ -28,6 +28,7 @@ def Act():
 #             pass
 #     return Norm(*args, **kwargs)
 
+
 def Norm2d(*args, **kwargs):
     return LayerNorm(*args, **kwargs)
 
@@ -37,13 +38,11 @@ def ConvBlock(**kwargs):
 
 
 class GlobalAveragePooling(nn.Module):
-
     def forward(self, x):
         return x.mean([-2, -1])  # global average pooling, (N, C, H, W) -> (N, C)
 
 
 class _Base(nn.Module):
-
     def __init__(
         self,
         image_wh: tuple[int, int] = (192, 128),
@@ -51,7 +50,7 @@ class _Base(nn.Module):
         z_size: int = 1000,
         depths: tuple[int, int, int, int] = (3, 3, 9, 3),
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
-        head_init_scale: Optional[float] = None
+        head_init_scale: Optional[float] = None,
     ):
         super().__init__()
         self.image_wh = image_wh
@@ -82,7 +81,7 @@ class _Base(nn.Module):
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.Linear)):
-            trunc_normal_(m.weight, std=.02)
+            trunc_normal_(m.weight, std=0.02)
             nn.init.constant_(m.bias, 0)
         # else:
         #     print(f"skipping {type(m)}")
@@ -106,7 +105,7 @@ class ConvNeXtV2Encoder(_Base):
         z_size: int = 1000,
         depths: tuple[int, int, int, int] = (3, 3, 9, 3),
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
-        head_type: Literal['conv', 'pool+linear'] = 'conv',
+        head_type: Literal["conv", "pool+linear"] = "conv",
         head_init_scale: Optional[float] = None,
     ):
         super().__init__(
@@ -149,13 +148,13 @@ class ConvNeXtV2Encoder(_Base):
 
         # **HEAD**
         # --> Bx[3]x6x4
-        if head_type == 'conv':
+        if head_type == "conv":
             self.pool = nn.Sequential(
                 nn.Conv2d(dims[3], z_size // (6 * 4), kernel_size=1, stride=1),
                 # View((-1, z_size)),
             )
             self.head = nn.Identity()
-        elif head_type == 'pool+linear':
+        elif head_type == "pool+linear":
             self.pool = nn.Sequential(
                 GlobalAveragePooling(),
                 Norm2d(dims[3], eps=1e-6),
@@ -169,7 +168,7 @@ class ConvNeXtV2Encoder(_Base):
         # initialize weights
         self.apply(self._init_weights)
         if self.head_init_scale is not None:
-            if head_type == 'pool+linear':
+            if head_type == "pool+linear":
                 self.head.weight.data.mul_(head_init_scale)
                 self.head.bias.data.mul_(head_init_scale)
 
@@ -184,7 +183,6 @@ class ConvNeXtV2Encoder(_Base):
 
 
 class Index(nn.Module):
-
     def __init__(self, shape):
         super().__init__()
         self.shape = shape
@@ -204,7 +202,6 @@ class Index(nn.Module):
 
 
 class Print(nn.Module):
-
     def forward(self, x):
         print(x.shape)
         return x
@@ -228,7 +225,7 @@ class ConvNeXtV2Decoder(_Base):
         z_size: int = 768,
         depths: tuple[int, int, int, int] = (3, 3, 9, 3),
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
-        head_type: Literal['conv', 'pool+linear'] = 'conv',
+        head_type: Literal["conv", "pool+linear"] = "conv",
         head_init_scale: Optional[float] = None,
     ):
         super().__init__(
@@ -243,13 +240,15 @@ class ConvNeXtV2Decoder(_Base):
 
         # **HEAD**
         # --> Bx<z_size>
-        if head_type == 'conv':
+        if head_type == "conv":
             self.head = nn.Identity()
             self.pool = nn.Sequential(
                 # View((-1, z_size // self.internal_num, *self.internal_wh[::-1])),
-                nn.ConvTranspose2d(z_size // self.internal_num, dims[-1], kernel_size=1, stride=1),
+                nn.ConvTranspose2d(
+                    z_size // self.internal_num, dims[-1], kernel_size=1, stride=1
+                ),
             )
-        elif head_type == 'pool+linear':
+        elif head_type == "pool+linear":
             self.head = nn.Linear(z_size, dims[-1])
             # --> Bx[3]
             self.pool = nn.Sequential(
@@ -257,7 +256,9 @@ class ConvNeXtV2Decoder(_Base):
                 # --> Bx[3]
                 Index((slice(None), slice(None), None, None)),
                 # --> Bx[3]x1x1
-                nn.ConvTranspose2d(dims[-1], dims[-1], kernel_size=self.internal_wh[::-1], stride=1),
+                nn.ConvTranspose2d(
+                    dims[-1], dims[-1], kernel_size=self.internal_wh[::-1], stride=1
+                ),
                 # --> Bz[3]x6x4
                 Norm2d(dims[-1], eps=1e-6),  # extra, not in encoder
             )
@@ -268,7 +269,7 @@ class ConvNeXtV2Decoder(_Base):
         # **UPSAMPLE LAYERS**
         # + stem and 3 intermediate upsampling conv layers
         # + 4 feature resolution stages, each consisting of multiple residual blocks
-            # --> Bx[3]x6x4
+        # --> Bx[3]x6x4
         self.block3 = nn.Sequential(
             nn.Sequential(*[ConvBlock(dim=dims[-1]) for _ in range(depths[3])]),
             nn.ConvTranspose2d(dims[-1], dims[-2], kernel_size=2, stride=2),
@@ -297,12 +298,12 @@ class ConvNeXtV2Decoder(_Base):
         # initialize weights
         self.apply(self._init_weights)
         if self.head_init_scale is not None:
-            if head_type == 'pool+linear':
+            if head_type == "pool+linear":
                 self.head.weight.data.mul_(head_init_scale)
                 self.head.bias.data.mul_(head_init_scale)
 
     def forward(self, x):
-        if x.ndim == 2 and self.head_type == 'conv':
+        if x.ndim == 2 and self.head_type == "conv":
             x = x.view(-1, self.z_size // self.internal_num, *self.internal_wh[::-1])
             warnings.warn("reshaping z to (B, C, H, W) for head_type='conv'")
         x = self.head(x)
@@ -315,7 +316,6 @@ class ConvNeXtV2Decoder(_Base):
 
 
 class ConvNeXtV2Ae(_Base, AeBase):
-
     def __init__(
         self,
         image_wh: tuple[int, int] = (224, 224),
@@ -375,54 +375,63 @@ def convnextv2_atto(**kwargs):
     model = ConvNeXtV2Ae(depths=(2, 2, 6, 2), dims=(40, 80, 160, 320), **kwargs)
     return model
 
+
 def convnextv2_femto(**kwargs):
     model = ConvNeXtV2Ae(depths=(2, 2, 6, 2), dims=(48, 96, 192, 384), **kwargs)
     return model
+
 
 def convnextv2ae_pico(**kwargs):
     model = ConvNeXtV2Ae(depths=(2, 2, 6, 2), dims=(64, 128, 256, 512), **kwargs)
     return model
 
+
 def convnextv2ae_nano(**kwargs):
     model = ConvNeXtV2Ae(depths=(2, 2, 8, 2), dims=(80, 160, 320, 640), **kwargs)
     return model
+
 
 def convnextv2ae_tiny(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(96, 192, 384, 768), **kwargs)
     return model
 
+
 def convnextv2ae_tiny_9_128(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(128, 256, 384, 768), **kwargs)
     return model
+
 
 def convnextv2ae_tiny_12_128(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 12, 3), dims=(128, 256, 384, 768), **kwargs)
     return model
 
+
 def convnextv2ae_base_9(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(128, 256, 512, 1024), **kwargs)
     return model
+
 
 def convnextv2ae_base_12(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 12, 3), dims=(128, 256, 512, 1024), **kwargs)
     return model
 
+
 def convnextv2ae_base(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 27, 3), dims=(128, 256, 512, 1024), **kwargs)
     return model
 
+
 def convnextv2ae_large(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 27, 3), dims=(192, 384, 768, 1536), **kwargs)
     return model
+
 
 def convnextv2ae_huge(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 27, 3), dims=(352, 704, 1408, 2816), **kwargs)
     return model
 
 
-
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     for make_fn in [
         # convnextv2_atto,  # ~52it/s
         # convnextv2_femto,  # ~52it/s
@@ -437,17 +446,16 @@ if __name__ == '__main__':
         # convnextv2ae_large,
         # convnextv2ae_huge,
     ]:
-
         ae = make_fn(image_wh=(128, 192), z_size=768)
 
         params_enc = sum(p.numel() for p in ae.encoder.parameters())
         params_dec = sum(p.numel() for p in ae.decoder.parameters())
         params_ae = sum(p.numel() for p in ae.parameters())
 
-        print(f'\n{make_fn.__name__}')
-        print(f"params_ae: {params_ae} ({params_ae/1_000_000:.3f}M)")
-        print(f"params_enc: {params_enc} ({params_enc/1_000_000:.3f}M)")
-        print(f"params_dec: {params_dec} ({params_dec/1_000_000:.3f}M)")
+        print(f"\n{make_fn.__name__}")
+        print(f"params_ae: {params_ae} ({params_ae / 1_000_000:.3f}M)")
+        print(f"params_enc: {params_enc} ({params_enc / 1_000_000:.3f}M)")
+        print(f"params_dec: {params_dec} ({params_dec / 1_000_000:.3f}M)")
 
         x = torch.randn(1, 3, *ae.image_wh[::])
         z = torch.randn(1, ae.z_size)
@@ -457,13 +465,12 @@ if __name__ == '__main__':
         x = x.to(torch.device("mps"))
         z = z.to(torch.device("mps"))
 
-
         def _repeat_secs(fn, sec=3):
             with tqdm() as pbar:
                 start_t = last_t = time.time()
                 while True:
                     t = time.time()
-                    delta, last_t = t - last_t, t
+                    _delta, last_t = t - last_t, t
                     pbar.update()
                     if t - start_t > sec:
                         break

@@ -34,7 +34,7 @@ from threading import Thread
 
 def _starfunc(x: tuple):
     """Map a tuple: (func, *args) to the function: func(*args)"""
-    return x[0](*x[1] if type(x[1]) == tuple else x[1])
+    return x[0](*x[1] if isinstance(x[1], tuple) else x[1])
 
 
 _POOL = None
@@ -42,7 +42,7 @@ _DISABLE_PARALLEL = False
 
 
 def run_parallel(func: callable, task_iter: iter) -> iter:
-    if type(task_iter) == int:
+    if isinstance(task_iter, int):
         task_iter = range(task_iter)
     tasks = ((func, task) for task in task_iter)
 
@@ -57,7 +57,7 @@ def run_parallel(func: callable, task_iter: iter) -> iter:
 
 
 def run_threaded(func: callable, task_iter: iter, threads=mp.cpu_count()):
-    if type(task_iter) == int:
+    if isinstance(task_iter, int):
         task_iter = range(task_iter)
 
     if threads < 2:
@@ -88,4 +88,4 @@ class ThreadLoop:
             self.update()
 
     def update(self):
-        raise NotImplementedError('Implement Me')
+        raise NotImplementedError("Implement Me")

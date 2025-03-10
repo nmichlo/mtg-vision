@@ -33,18 +33,18 @@ import mtgvision.util.values as uval
 
 
 def get_image_paths(folder, extensions=None, prefixed=False) -> list:
-    extensions = uval.default(extensions, lambda: ['.jpg', '.png', '.jpeg'])
+    extensions = uval.default(extensions, lambda: [".jpg", ".png", ".jpeg"])
     images = []
 
-    folder = os.path.join(folder, '')
+    folder = os.path.join(folder, "")
 
     for root, dirs, files in os.walk(folder):
         # strip roots
         if not prefixed:
             if root.startswith(folder):
-                root = root[len(folder):]
+                root = root[len(folder) :]
             else:
-                raise Exception('This should never happen')
+                raise Exception("This should never happen")
         # append files
         for file in files:
             if os.path.splitext(file)[1].lower() in extensions:

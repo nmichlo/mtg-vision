@@ -27,18 +27,42 @@ from mtgvision.datasets import IlsvrcImages, MtgImages
 from mtgvision.util.random import seed_all
 
 _MODELS = {
-    "cnvnxt2ae_atto": lambda w, h, **k: cnv2ae.convnextv2_atto(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_femto": lambda w, h, **k: cnv2ae.convnextv2_femto(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_pico": lambda w, h, **k: cnv2ae.convnextv2ae_pico(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_nano": lambda w, h, **k: cnv2ae.convnextv2ae_nano(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_tiny": lambda w, h, **k: cnv2ae.convnextv2ae_tiny(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_tiny_9_128": lambda w, h, **k: cnv2ae.convnextv2ae_tiny_9_128(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_tiny_12_128": lambda w, h, **k: cnv2ae.convnextv2ae_tiny_12_128(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_base_9": lambda w, h, **k: cnv2ae.convnextv2ae_base_9(image_wh=(w[2], w[1]), z_size=768),  # same number of layers as tiny. but more capacity
-    "cnvnxt2ae_base_12": lambda w, h, **k: cnv2ae.convnextv2ae_base_12(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_base": lambda w, h, **k: cnv2ae.convnextv2ae_base(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_large": lambda w, h, **k: cnv2ae.convnextv2ae_large(image_wh=(w[2], w[1]), z_size=768),
-    "cnvnxt2ae_huge": lambda w, h, **k: cnv2ae.convnextv2ae_huge(image_wh=(w[2], w[1]), z_size=768),
+    "cnvnxt2ae_atto": lambda w, h, **k: cnv2ae.convnextv2_atto(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_femto": lambda w, h, **k: cnv2ae.convnextv2_femto(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_pico": lambda w, h, **k: cnv2ae.convnextv2ae_pico(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_nano": lambda w, h, **k: cnv2ae.convnextv2ae_nano(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_tiny": lambda w, h, **k: cnv2ae.convnextv2ae_tiny(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_tiny_9_128": lambda w, h, **k: cnv2ae.convnextv2ae_tiny_9_128(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_tiny_12_128": lambda w, h, **k: cnv2ae.convnextv2ae_tiny_12_128(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_base_9": lambda w, h, **k: cnv2ae.convnextv2ae_base_9(
+        image_wh=(w[2], w[1]), z_size=768
+    ),  # same number of layers as tiny. but more capacity
+    "cnvnxt2ae_base_12": lambda w, h, **k: cnv2ae.convnextv2ae_base_12(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_base": lambda w, h, **k: cnv2ae.convnextv2ae_base(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_large": lambda w, h, **k: cnv2ae.convnextv2ae_large(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
+    "cnvnxt2ae_huge": lambda w, h, **k: cnv2ae.convnextv2ae_huge(
+        image_wh=(w[2], w[1]), z_size=768
+    ),
 }
 
 
@@ -55,7 +79,6 @@ class BatchHintTensor(TypedDict, total=False):
 
 
 class RanMtgEncDecDataset(IterableDataset):
-
     def __init__(
         self,
         default_batch_size: int,
@@ -69,7 +92,7 @@ class RanMtgEncDecDataset(IterableDataset):
         self.paired = paired
         self.targets = targets
         self.size = size
-        self.mtg = MtgImages(img_type='small', predownload=predownload)
+        self.mtg = MtgImages(img_type="small", predownload=predownload)
         self.ilsvrc = IlsvrcImages()
 
     def __iter__(self):
@@ -104,7 +127,9 @@ class RanMtgEncDecDataset(IterableDataset):
         batch = self.random_image_batch(n)
         return {k: K.image_to_tensor(v) for k, v in batch.items()}
 
-    def _make_image_batch(self, img_pairs: list[tuple[np.ndarray, np.ndarray]]) -> BatchHintNumpy:
+    def _make_image_batch(
+        self, img_pairs: list[tuple[np.ndarray, np.ndarray]]
+    ) -> BatchHintNumpy:
         # generate random samples
         xs0, xs1, ys = [], [], []
         for card, bg0 in img_pairs:
@@ -124,7 +149,6 @@ class RanMtgEncDecDataset(IterableDataset):
 
 # Define the Lightning Module
 class MtgVisionEncoder(pl.LightningModule):
-
     hparams: "Config"
     model: "nn.Module"
 
@@ -157,9 +181,12 @@ class MtgVisionEncoder(pl.LightningModule):
             "ssim5": K.losses.SSIMLoss(5),
             "ssim7": K.losses.SSIMLoss(7),
             "ssim9": K.losses.SSIMLoss(9),
-            "ssim5+mse": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5 + F.mse_loss(x, y) * 0.5,
-            "ssim5+l1": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5 + F.l1_loss(x, y) * 0.5,
-            "ssim7+l1": lambda x, y: K.losses.ssim_loss(x, y, 7) * 0.5 + F.l1_loss(x, y) * 0.5,
+            "ssim5+mse": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5
+            + F.mse_loss(x, y) * 0.5,
+            "ssim5+l1": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5
+            + F.l1_loss(x, y) * 0.5,
+            "ssim7+l1": lambda x, y: K.losses.ssim_loss(x, y, 7) * 0.5
+            + F.l1_loss(x, y) * 0.5,
             "ms_ssim": K.losses.MS_SSIMLoss(),
         }[self.hparams.loss_recon]
         try:
@@ -174,8 +201,8 @@ class MtgVisionEncoder(pl.LightningModule):
         data_module = MtgDataModule(batch_size=1)
         # Initial batch for visualization
         batch = data_module.train_dataset.random_tensor_batch(1)
-        x = batch['x'].cpu()[0]
-        y = batch['y'].cpu()[0]
+        x = batch["x"].cpu()[0]
+        y = batch["y"].cpu()[0]
         # feed forward
         _, ([outx], *_) = model(x[None])
         _, ([outy], *_) = model(y[None])
@@ -227,13 +254,13 @@ class MtgVisionEncoder(pl.LightningModule):
         # recon loss
         if self.hparams.loss_recon is None:
             if not self.hparams.loss_contrastive_batched:
-                z = self.encode(batch['x'])
+                z = self.encode(batch["x"])
         else:
-            z, y_recon = self.forward(batch['x'])
+            z, y_recon = self.forward(batch["x"])
             y_recon = torch.clamp(y_recon, -0.25, 1.25)  # help with gradient explosion
             # recon loss
             recon_loss_fn = self._get_loss_recon()
-            loss_recon = recon_loss_fn(y_recon, batch['y'])
+            loss_recon = recon_loss_fn(y_recon, batch["y"])
             loss_recon *= self.hparams.scale_loss_recon
             loss += loss_recon
             logs["loss_recon"] = loss_recon
@@ -241,10 +268,10 @@ class MtgVisionEncoder(pl.LightningModule):
         # contrastive loss
         if self.hparams.loss_contrastive is not None:
             if not self.hparams.loss_contrastive_batched:
-                z2 = self.encode(batch['x2'])
+                z2 = self.encode(batch["x2"])
             else:
-                _zs = self.encode(torch.concatenate([batch['x'], batch['x2']], dim=0))
-                z, z2 = _zs[:len(_zs)//2], _zs[len(_zs)//2:]
+                _zs = self.encode(torch.concatenate([batch["x"], batch["x2"]], dim=0))
+                z, z2 = _zs[: len(_zs) // 2], _zs[len(_zs) // 2 :]
             # shape (B, C, H, W) --> (B, C*H*W)
             z_flat = z.reshape(z.size(0), -1)
             z2_flat = z2.reshape(z2.size(0), -1)
@@ -252,7 +279,7 @@ class MtgVisionEncoder(pl.LightningModule):
             z_flat = F.normalize(z_flat, dim=1)
             z2_flat = F.normalize(z2_flat, dim=1)
             # self-supervised loss
-            assert self.hparams.loss_contrastive == 'ntxent'
+            assert self.hparams.loss_contrastive == "ntxent"
             loss_func = SelfSupervisedLoss(NTXentLoss(temperature=0.07), symmetric=True)
             loss_cont = loss_func(z_flat, z2_flat) * self.hparams.scale_loss_contrastive
             # scale
@@ -266,19 +293,19 @@ class MtgVisionEncoder(pl.LightningModule):
         return logs
 
     def configure_optimizers(self):
-        if self.hparams.optimizer == 'adam':
+        if self.hparams.optimizer == "adam":
             opt = optim.Adam(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
-                weight_decay=self.hparams.weight_decay
+                weight_decay=self.hparams.weight_decay,
             )
-        elif self.hparams.optimizer == 'radam':
+        elif self.hparams.optimizer == "radam":
             opt = optim.RAdam(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
-                weight_decay=self.hparams.weight_decay
+                weight_decay=self.hparams.weight_decay,
             )
-        elif self.hparams.optimizer == 'sgd':
+        elif self.hparams.optimizer == "sgd":
             opt = optim.SGD(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
@@ -286,8 +313,9 @@ class MtgVisionEncoder(pl.LightningModule):
                 nesterov=True,
                 momentum=0.9,
             )
-        elif self.hparams.optimizer == 'deepspeed_cpu_adam':
+        elif self.hparams.optimizer == "deepspeed_cpu_adam":
             from deepspeed.ops.adam import DeepSpeedCPUAdam
+
             opt = DeepSpeedCPUAdam(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
@@ -301,7 +329,9 @@ class MtgVisionEncoder(pl.LightningModule):
             _old_ = opt.load_state_dict
 
             def _skip_load_state_dict_(*args, **kwargs):
-                print("Loading state dict... SKIPPED!, resetting load_state_dict to default.")
+                print(
+                    "Loading state dict... SKIPPED!, resetting load_state_dict to default."
+                )
                 opt.load_state_dict = _old_
 
             opt.load_state_dict = _skip_load_state_dict_
@@ -311,7 +341,6 @@ class MtgVisionEncoder(pl.LightningModule):
 
 
 class MtgDataModule(pl.LightningDataModule):
-
     def __init__(
         self,
         batch_size: int,
@@ -339,11 +368,10 @@ class MtgDataModule(pl.LightningDataModule):
 
 
 class ImageLoggingCallback(Callback):
-
     def __init__(self, vis_batch, log_every_n_steps=1000):
         self.vis_batch = vis_batch
         self.log_every_n_steps = log_every_n_steps
-        self.last_steps = -(log_every_n_steps*10)
+        self.last_steps = -(log_every_n_steps * 10)
         self._first_log = True
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
@@ -358,7 +386,12 @@ class ImageLoggingCallback(Callback):
         if images[0].dtype in [np.float16, np.float32, np.float64]:
             const = 0.5
         images = [
-            np.pad(image, [(padding, padding), (padding, padding), (0, 0)], mode='constant', constant_values=const)
+            np.pad(
+                image,
+                [(padding, padding), (padding, padding), (0, 0)],
+                mode="constant",
+                constant_values=const,
+            )
             for image in images
         ]
         return np.concatenate(images, axis=1)
@@ -371,8 +404,8 @@ class ImageLoggingCallback(Callback):
         logs = {}
         model.eval()
         with torch.no_grad():
-            x_np = np.stack([batch['x'] for batch in vis_batch_np], axis=0)
-            y_np = np.stack([batch['y'] for batch in vis_batch_np], axis=0)
+            x_np = np.stack([batch["x"] for batch in vis_batch_np], axis=0)
+            y_np = np.stack([batch["y"] for batch in vis_batch_np], axis=0)
             x = torch.from_numpy(x_np).float().permute(0, 3, 1, 2).to(model.device)
             _, y = model(x)
             mout_np = []
@@ -380,12 +413,18 @@ class ImageLoggingCallback(Callback):
                 mout_np.append(np.clip(K.tensor_to_image(out), 0, 1))
             # log images
             if self._first_log:
-                logs["images_x"] = wandb.Image(self.join_images_into_row(x_np), caption="Input")
+                logs["images_x"] = wandb.Image(
+                    self.join_images_into_row(x_np), caption="Input"
+                )
             if self._first_log:
-                logs["images_y"] = wandb.Image(self.join_images_into_row(y_np), caption="Target")
+                logs["images_y"] = wandb.Image(
+                    self.join_images_into_row(y_np), caption="Target"
+                )
             for i, out_np in enumerate(mout_np):
-                name = "images_out" if i == 0 else f"images_out_{i+1}"
-                logs[name] = wandb.Image(self.join_images_into_row(out_np), caption=f"Output {i}")
+                name = "images_out" if i == 0 else f"images_out_{i + 1}"
+                logs[name] = wandb.Image(
+                    self.join_images_into_row(out_np), caption=f"Output {i}"
+                )
         # stop logging after the first time
         self._first_log = False
         wandb.log(logs)
@@ -446,7 +485,11 @@ def train(config: "Config"):
         # torch._dynamo.list_backends() # ['cudagraphs', 'inductor', 'onnxrt', 'openxla', 'tvm']
         model = torch.compile(
             model,
-            **({"backend": "aot_eager"} if device == 'mps' else {"mode": "reduce-overhead"}),
+            **(
+                {"backend": "aot_eager"}
+                if device == "mps"
+                else {"mode": "reduce-overhead"}
+            ),
         )
 
     # logger
@@ -462,7 +505,12 @@ def train(config: "Config"):
         logger=wandb_logger,
         callbacks=[
             ImageLoggingCallback(vis_batch, log_every_n_steps=config.log_every_n_steps),
-            ModelCheckpoint(monitor="loss_recon", save_top_k=3, mode="min", every_n_train_steps=config.ckpt_every_n_steps),
+            ModelCheckpoint(
+                monitor="loss_recon",
+                save_top_k=3,
+                mode="min",
+                every_n_train_steps=config.ckpt_every_n_steps,
+            ),
             # StochasticWeightAveraging(swa_lrs=1e-2),
         ],
         accelerator=device,
@@ -473,7 +521,9 @@ def train(config: "Config"):
         gradient_clip_val=config.gradient_clip_val,
         enable_checkpointing=True,
         default_root_dir=Path(__file__).parent / "lightning_logs",
-        strategy="deepspeed_stage_2_offload" if config.optimizer == "deepspeed_cpu_adam" else 'auto',
+        strategy="deepspeed_stage_2_offload"
+        if config.optimizer == "deepspeed_cpu_adam"
+        else "auto",
     )
 
     # allow model architecture to be changed
@@ -512,7 +562,9 @@ def _main():
             parser.add_argument(
                 f"--{name}".replace("_", "-"),
                 type=str,
-                default='yes' if field.default else (None if field.default is None else 'no'),
+                default="yes"
+                if field.default
+                else (None if field.default is None else "no"),
                 help=str(field.description) + " (y/n/yes/no/true/false)",
             )
         else:
@@ -528,22 +580,22 @@ def _main():
     for name in _BOOLS:
         val = getattr(args, name)
         if val is not None:
-            setattr(args, name, val.lower() in ('y', 'yes', 'true'))
+            setattr(args, name, val.lower() in ("y", "yes", "true"))
 
     # get config
     print("ARGS:", args)
     config = Config(**vars(args))
 
     # update losses
-    if config.loss_contrastive in ('none', 'no') or config.scale_loss_contrastive <= 0:
+    if config.loss_contrastive in ("none", "no") or config.scale_loss_contrastive <= 0:
         print("No contrastive loss.")
         config.loss_contrastive = None
-    if config.loss_recon in ('none', 'no') or config.scale_loss_recon <= 0:
+    if config.loss_recon in ("none", "no") or config.scale_loss_recon <= 0:
         print("No reconstruction loss.")
         config.loss_recon = None
 
     # train
-    print('CONFIG:', config.model_dump_json(indent=2))
+    print("CONFIG:", config.model_dump_json(indent=2))
     train(config)
 
 
@@ -564,20 +616,20 @@ class Config(pydantic.BaseModel):
     bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
     force_download: bool = False
     # model
-    model_name: str = 'cnvnxt2ae_tiny'
+    model_name: str = "cnvnxt2ae_tiny"
     x_size: tuple = (16, 192, 128, 3)
     y_size: tuple = (16, 192, 128, 3)
     norm_io: bool = False
     # optimisation
-    optimizer: Literal['adam', 'radam'] = 'radam'
+    optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 3e-4
     weight_decay: float = 1e-7
     batch_size: int = 24
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss
-    loss_recon: Optional[str] = 'ssim5+l1'  # 'ssim5+l1'
-    loss_contrastive: Optional[str] = 'ntxent'
+    loss_recon: Optional[str] = "ssim5+l1"  # 'ssim5+l1'
+    loss_contrastive: Optional[str] = "ntxent"
     loss_contrastive_batched: bool = False
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
@@ -590,21 +642,25 @@ class Config(pydantic.BaseModel):
     checkpoint: Optional[str] = None
     log_every_n_steps: int = 2500
     ckpt_every_n_steps: int = 2500
-    skip_first_optimizer_load_state: bool = True  # needed if model architecture changes or optimizer changes
+    skip_first_optimizer_load_state: bool = (
+        True  # needed if model architecture changes or optimizer changes
+    )
 
 
 if __name__ == "__main__":
-    sys.argv.extend([
-        "--prefix=cnxt2",
-        "--model-name=cnvnxt2ae_tiny",
-        "--num-workers=6",
-        "--batch-size=32",
-        "--optimizer=radam",
-        "--loss-recon=ssim5+mse",
-        "--loss-contrastive=none",
-        "--learning-rate=1e-3",
-        "--norm-io=yes",
-    ])
+    sys.argv.extend(
+        [
+            "--prefix=cnxt2",
+            "--model-name=cnvnxt2ae_tiny",
+            "--num-workers=6",
+            "--batch-size=32",
+            "--optimizer=radam",
+            "--loss-recon=ssim5+mse",
+            "--loss-contrastive=none",
+            "--learning-rate=1e-3",
+            "--norm-io=yes",
+        ]
+    )
     _main()
 
     # CONFIG: seed=42 img_type=<ScryfallImageType.small: 'small'> bulk_type=<ScryfallBulkType.default_cards: 'default_cards'> force_download=False model_name='cnvnxt2ae_tiny_9_128' x_size=(16, 192, 128, 3) y_size=(16, 192, 128, 3) norm_io=False optimizer='radam' learning_rate=0.001 weight_decay=1e-05 batch_size=32 gradient_clip_val=0.5 accumulate_grad_batches=1 loss_recon='ssim5+mse' loss_contrastive=None loss_contrastive_batched=True scale_loss_recon=1.0 scale_loss_contrastive=1.0 compile=False max_steps=10000000 num_workers=6 prefix='cnxt2' checkpoint=None log_every_n_steps=2500 ckpt_every_n_steps=2500 skip_first_optimizer_load_state=True

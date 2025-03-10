@@ -6,7 +6,6 @@ import torch.nn as nn
 
 
 class AeBase(nn.Module):
-
     encoded: torch.Tensor = None
     multiscale: bool = False
 
@@ -20,7 +19,7 @@ class AeBase(nn.Module):
         """Initialize weights for convolutional and batch norm layers."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -39,7 +38,7 @@ class AeBase(nn.Module):
         # if x.size(1) != 3:
         #     if x.size(3) == 3:
         #         x = x.permute(0, 3, 1, 2)
-                # Shape: (1, 3, 192, 128)
+        # Shape: (1, 3, 192, 128)
         z, multi = self._encode(x)
         self.encoded = z
         return z, multi
@@ -51,14 +50,21 @@ class AeBase(nn.Module):
         return z, multiout + multi
 
     @classmethod
-    def create_model(cls, x_size, y_size, **kwargs) -> 'AeBase':
+    def create_model(cls, x_size, y_size, **kwargs) -> "AeBase":
         assert len(x_size) == 4 and len(y_size) == 4
         assert x_size[1:] == (192, 128, 3) and y_size[1:] == (192, 128, 3)
         model = cls(**kwargs)
         return model
 
     @classmethod
-    def quick_test(cls, batch_size: int = 16, n: int = 100, model=None, compile: bool = False, **model_kwargs):
+    def quick_test(
+        cls,
+        batch_size: int = 16,
+        n: int = 100,
+        model=None,
+        compile: bool = False,
+        **model_kwargs,
+    ):
         from tqdm import tqdm
 
         # Define input and output sizes in NHWC format
@@ -75,7 +81,7 @@ class AeBase(nn.Module):
         # details
         num_params = model.num_params()
         print(model)
-        print(f"params: {num_params} ({num_params/1_000_000:.3f}M)")
+        print(f"params: {num_params} ({num_params / 1_000_000:.3f}M)")
 
         device = torch.device("mps")
         model = model.to(device)
@@ -105,4 +111,3 @@ class AeBase(nn.Module):
 
     def num_params(self) -> int:
         return sum(p.numel() for p in self.parameters())
-
