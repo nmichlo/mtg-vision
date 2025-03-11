@@ -376,7 +376,7 @@ class SyntheticBgFgMtgImages:
 
 
 if __name__ == "__main__":
-    orig = SyntheticBgFgMtgImages(img_type="normal")
+    orig = SyntheticBgFgMtgImages(img_type="small")
     ilsvrc = IlsvrcImages()
 
     while True:

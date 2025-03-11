@@ -159,11 +159,13 @@ def img_clip(img: np.ndarray) -> np.ndarray:
     and int or uint images in range [0, 255].
     """
     if img.dtype in [np.float16, np.float32, np.float64]:
-        return np.clip(img, 0, 1)
-    elif img.dtype in [np.uint8, np.int32]:
-        return np.clip(img, 0, 255)
+        im = np.clip(img, 0, 1)
+    elif img.dtype in [np.uint8, np.int32, np.int64, np.uint64]:
+        im = np.clip(img, 0, 255)
     else:
         raise Exception(f"Unsupported Type: {img.dtype}")
+    assert im.dtype == img.dtype
+    return im
 
 
 def img_uint8(img: np.ndarray | Image.Image) -> np.ndarray[np.uint8]:
@@ -177,9 +179,9 @@ def img_uint8(img: np.ndarray | Image.Image) -> np.ndarray[np.uint8]:
         if img.dtype in [np.uint8]:
             return img
         elif img.dtype in [np.float16, np.float32, np.float64]:
-            return np.clip(img * 255, 0, 255).astype(np.uint8)
+            return np.multiply(img_clip(img), 255.0, dtype=np.uint8)
         elif img.dtype in [np.int32]:
-            return np.clip(img, 0, 255).astype(np.uint8)
+            return img_clip(img)
         else:
             raise Exception(f"Unsupported Numpy Type: {img.dtype}")
     else:
@@ -192,14 +194,14 @@ def img_float32(img: np.ndarray | Image.Image) -> np.ndarray[np.float32]:
     and int or uint images in range [0, 255].
     """
     if isinstance(img, Image.Image):
-        return img_float32(np.asarray(img, dtype=np.float32))
+        return np.divide(img, 255.0, dtype=np.float32)
     elif isinstance(img, np.ndarray):
         if img.dtype in [np.float32]:
-            return img
+            return img_clip(img)
         elif img.dtype in [np.float16, np.float64]:
-            return np.clip(img.astype(np.float32), 0, 1)
+            return img_clip(img.astype(np.float32))
         elif img.dtype in [np.uint8, np.int32]:
-            return np.divide(np.clip(img, 0, 255), 255.0, dtype=np.float32)
+            return img_clip(np.divide(img, 255.0, dtype=np.float32))
         else:
             raise Exception(f"Unsupported Numpy Type: {img.dtype}")
     else:
@@ -270,7 +272,7 @@ def resize(
     # OpenCV is W*H not H*W
     return cv2.resize(
         img,
-        (h, w),
+        (w, h),
         interpolation=cv2.INTER_AREA if shrink else cv2.INTER_CUBIC,
     )
 
@@ -296,6 +298,7 @@ def crop_to_size(
     if the new size is smaller than the original. Otherwise, the image is
     cropped to the center.
     """
+    assert len(img.shape) == 3
     (ih, iw), (sh, sw) = (img.shape[:2], size_hw)
     if ih == sh and iw == sw:
         ret = img

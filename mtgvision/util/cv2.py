@@ -25,7 +25,8 @@
 
 import numpy as np
 import cv2
-import mtgvision.util.values as uimg
+
+from mtgvision.util.image import img_uint8
 
 
 # ============================================================================ #
@@ -88,7 +89,7 @@ def cv2_warp_imgs_onto(img, cards, bounds):
         scnvs = img.shape
         scard = card.shape
 
-        card = uimg.img_uint8(card)
+        card = img_uint8(card)
 
         src_pts = np.array(
             [(0, 0), (0, scard[0]), (scard[1], scard[0]), (scard[1], 0)],

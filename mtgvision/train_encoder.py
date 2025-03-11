@@ -26,43 +26,26 @@ import mtgvision.models.convnextv2ae as cnv2ae
 from mtgvision.datasets import IlsvrcImages, SyntheticBgFgMtgImages
 from mtgvision.util.random import seed_all
 
+
+def _cnv2ae_fn(fn):
+    return lambda hw, **k: fn(image_wh=hw[::-1], z_size=768, **k)
+
+
 _MODELS = {
-    "cnvnxt2ae_atto": lambda w, h, **k: cnv2ae.convnextv2_atto(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_femto": lambda w, h, **k: cnv2ae.convnextv2_femto(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_pico": lambda w, h, **k: cnv2ae.convnextv2ae_pico(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_nano": lambda w, h, **k: cnv2ae.convnextv2ae_nano(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_tiny": lambda w, h, **k: cnv2ae.convnextv2ae_tiny(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_tiny_9_128": lambda w, h, **k: cnv2ae.convnextv2ae_tiny_9_128(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_tiny_12_128": lambda w, h, **k: cnv2ae.convnextv2ae_tiny_12_128(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_base_9": lambda w, h, **k: cnv2ae.convnextv2ae_base_9(
-        image_wh=(w[2], w[1]), z_size=768
-    ),  # same number of layers as tiny. but more capacity
-    "cnvnxt2ae_base_12": lambda w, h, **k: cnv2ae.convnextv2ae_base_12(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_base": lambda w, h, **k: cnv2ae.convnextv2ae_base(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_large": lambda w, h, **k: cnv2ae.convnextv2ae_large(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
-    "cnvnxt2ae_huge": lambda w, h, **k: cnv2ae.convnextv2ae_huge(
-        image_wh=(w[2], w[1]), z_size=768
-    ),
+    "cnvnxt2ae_atto": _cnv2ae_fn(cnv2ae.convnextv2_atto),
+    "cnvnxt2ae_femto": _cnv2ae_fn(cnv2ae.convnextv2_femto),
+    "cnvnxt2ae_pico": _cnv2ae_fn(cnv2ae.convnextv2ae_pico),
+    "cnvnxt2ae_nano": _cnv2ae_fn(cnv2ae.convnextv2ae_nano),
+    "cnvnxt2ae_tiny": _cnv2ae_fn(cnv2ae.convnextv2ae_tiny),
+    # same number of layers as tiny. but more capacity
+    "cnvnxt2ae_tiny_9_128": _cnv2ae_fn(cnv2ae.convnextv2ae_tiny_9_128),
+    "cnvnxt2ae_tiny_12_128": _cnv2ae_fn(cnv2ae.convnextv2ae_tiny_12_128),
+    # same number of layers as tiny. but more capacity
+    "cnvnxt2ae_base_9": _cnv2ae_fn(cnv2ae.convnextv2ae_base_9),
+    "cnvnxt2ae_base_12": _cnv2ae_fn(cnv2ae.convnextv2ae_base_12),
+    "cnvnxt2ae_base": _cnv2ae_fn(cnv2ae.convnextv2ae_base),
+    "cnvnxt2ae_large": _cnv2ae_fn(cnv2ae.convnextv2ae_large),
+    "cnvnxt2ae_huge": _cnv2ae_fn(cnv2ae.convnextv2ae_huge),
 }
 
 # ========================================================================= #
@@ -89,13 +72,15 @@ class RanMtgEncDecDataset(IterableDataset):
         predownload: bool = False,
         paired: bool = False,  # for contrastive loss, two random aug of same cards
         targets: bool = False,
-        size: Tuple[int, int] = (192, 128),
+        x_size_hw: Tuple[int, int] = (192, 128),
+        y_size_hw: Tuple[int, int] = (192, 128),
     ):
         assert default_batch_size >= 0
         self.default_batch_size = default_batch_size
         self.paired = paired
         self.targets = targets
-        self.size = size
+        self.x_size_hw = x_size_hw
+        self.y_size_hw = y_size_hw
         self.mtg = SyntheticBgFgMtgImages(img_type="small", predownload=predownload)
         self.ilsvrc = IlsvrcImages()
 
@@ -139,13 +124,17 @@ class RanMtgEncDecDataset(IterableDataset):
         for card, bg0 in img_pairs:
             _, bg1 = random.choice(img_pairs)
             if self.targets:
-                ys.append(SyntheticBgFgMtgImages.make_cropped(card, size_hw=self.size))
+                ys.append(
+                    SyntheticBgFgMtgImages.make_cropped(card, size_hw=self.y_size_hw)
+                )
             xs0.append(
-                SyntheticBgFgMtgImages.make_virtual(card, bg0, size_hw=self.size)
+                SyntheticBgFgMtgImages.make_virtual(card, bg0, size_hw=self.x_size_hw)
             )
             if self.paired:
                 xs1.append(
-                    SyntheticBgFgMtgImages.make_virtual(card, bg1, size_hw=self.size)
+                    SyntheticBgFgMtgImages.make_virtual(
+                        card, bg1, size_hw=self.x_size_hw
+                    )
                 )
         # stack
         return {
@@ -171,9 +160,11 @@ class MtgVisionEncoder(pl.LightningModule):
 
     def configure_model(self) -> None:
         model_fn = _MODELS[self.hparams.model_name]
+        assert self.hparams.x_size_hw == self.hparams.y_size_hw, (
+            f"different sizes: {self.hparams.x_size_hw} != {self.hparams.y_size_hw} are not yet supported."
+        )
         model = model_fn(
-            self.hparams.x_size,
-            self.hparams.y_size,
+            self.hparams.x_size_hw,
             encoder_enabled=True,
             decoder_enabled=self.hparams.loss_recon is not None,
         )
@@ -210,7 +201,11 @@ class MtgVisionEncoder(pl.LightningModule):
     def test_checkpoint(cls, path):
         model = MtgVisionEncoder.load_from_checkpoint(path, map_location="cpu")
         # Initialize model
-        data_module = MtgDataModule(batch_size=1)
+        data_module = MtgDataModule(
+            batch_size=1,
+            x_size_hw=model.hparams.x_size_hw,
+            y_size_hw=model.hparams.y_size_hw,
+        )
         # Initial batch for visualization
         batch = data_module.train_dataset.random_tensor_batch(1)
         x = batch["x"].cpu()[0]
@@ -365,6 +360,8 @@ class MtgDataModule(pl.LightningDataModule):
         targets: bool = False,
         num_workers: int = 3,
         predownload: bool = False,
+        x_size_hw: Tuple[int, int] = (192, 128),
+        y_size_hw: Tuple[int, int] = (192, 128),
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -373,6 +370,8 @@ class MtgDataModule(pl.LightningDataModule):
             default_batch_size=batch_size,
             paired=paired,
             targets=targets,
+            x_size_hw=x_size_hw,
+            y_size_hw=y_size_hw,
         )
 
     def train_dataloader(self):
@@ -467,6 +466,8 @@ def train(config: "Config"):
         predownload=config.force_download,
         paired=config.loss_contrastive is not None,
         targets=config.loss_recon is not None,
+        x_size_hw=config.x_size_hw,
+        y_size_hw=config.y_size_hw,
     )
 
     # Initial batch for visualization
@@ -649,8 +650,8 @@ class Config(pydantic.BaseModel):
     force_download: bool = False
     # model
     model_name: str = "cnvnxt2ae_tiny"
-    x_size: tuple = (16, 192, 128, 3)
-    y_size: tuple = (16, 192, 128, 3)
+    x_size_hw: tuple[int, int] = (192, 128)
+    y_size_hw: tuple[int, int] = (192, 128)
     norm_io: bool = True
     # optimisation
     optimizer: Literal["adam", "radam"] = "radam"
