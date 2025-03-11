@@ -140,3 +140,4 @@ data/
 *.db
 wandb/
 *.ckpt
+mtgvision_encoder/

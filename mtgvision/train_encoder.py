@@ -74,6 +74,7 @@ class RanMtgEncDecDataset(IterableDataset):
         targets: bool = False,
         x_size_hw: Tuple[int, int] = (192, 128),
         y_size_hw: Tuple[int, int] = (192, 128),
+        half_upsidedown: bool = False,
     ):
         assert default_batch_size >= 0
         self.default_batch_size = default_batch_size
@@ -83,6 +84,7 @@ class RanMtgEncDecDataset(IterableDataset):
         self.y_size_hw = y_size_hw
         self.mtg = SyntheticBgFgMtgImages(img_type="small", predownload=predownload)
         self.ilsvrc = IlsvrcImages()
+        self.half_upsidedown = half_upsidedown
 
     def __iter__(self):
         while True:
@@ -128,12 +130,20 @@ class RanMtgEncDecDataset(IterableDataset):
                     SyntheticBgFgMtgImages.make_cropped(card, size_hw=self.y_size_hw)
                 )
             xs0.append(
-                SyntheticBgFgMtgImages.make_virtual(card, bg0, size_hw=self.x_size_hw)
+                SyntheticBgFgMtgImages.make_virtual(
+                    card,
+                    bg0,
+                    size_hw=self.x_size_hw,
+                    half_upsidedown=self.half_upsidedown,
+                )
             )
             if self.paired:
                 xs1.append(
                     SyntheticBgFgMtgImages.make_virtual(
-                        card, bg1, size_hw=self.x_size_hw
+                        card,
+                        bg1,
+                        size_hw=self.x_size_hw,
+                        half_upsidedown=self.half_upsidedown,
                     )
                 )
         # stack
@@ -142,6 +152,21 @@ class RanMtgEncDecDataset(IterableDataset):
             **({"y": np.stack(ys, axis=0)} if self.targets else {}),
             **({"x2": np.stack(xs1, axis=0)} if self.paired else {}),
         }
+
+    def set_batch_size(self, batch_size):
+        self.default_batch_size = batch_size
+
+    @classmethod
+    def from_hparams(cls, hparams: "Config"):
+        return cls(
+            default_batch_size=hparams.batch_size,
+            predownload=hparams.force_download,
+            paired=hparams.loss_contrastive is not None,
+            targets=hparams.loss_recon is not None,
+            x_size_hw=hparams.x_size_hw,
+            y_size_hw=hparams.y_size_hw,
+            half_upsidedown=hparams.half_upsidedown,
+        )
 
 
 # ========================================================================= #
@@ -202,9 +227,9 @@ class MtgVisionEncoder(pl.LightningModule):
         model = MtgVisionEncoder.load_from_checkpoint(path, map_location="cpu")
         # Initialize model
         data_module = MtgDataModule(
+            train_dataset=RanMtgEncDecDataset.from_hparams(model.hparams),
+            num_workers=0,
             batch_size=1,
-            x_size_hw=model.hparams.x_size_hw,
-            y_size_hw=model.hparams.y_size_hw,
         )
         # Initial batch for visualization
         batch = data_module.train_dataset.random_tensor_batch(1)
@@ -355,24 +380,15 @@ class MtgVisionEncoder(pl.LightningModule):
 class MtgDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        batch_size: int,
-        paired: bool = False,  # for contrastive loss, two random aug of same cards
-        targets: bool = False,
+        train_dataset: RanMtgEncDecDataset,
         num_workers: int = 3,
-        predownload: bool = False,
-        x_size_hw: Tuple[int, int] = (192, 128),
-        y_size_hw: Tuple[int, int] = (192, 128),
+        batch_size: Optional[int] = None,
     ):
         super().__init__()
         self.num_workers = num_workers
-        self.train_dataset = RanMtgEncDecDataset(
-            predownload=predownload,
-            default_batch_size=batch_size,
-            paired=paired,
-            targets=targets,
-            x_size_hw=x_size_hw,
-            y_size_hw=y_size_hw,
-        )
+        self.train_dataset = train_dataset
+        if batch_size is not None:
+            self.train_dataset.set_batch_size(batch_size)
 
     def train_dataloader(self):
         return DataLoader(
@@ -463,11 +479,7 @@ def train(config: "Config"):
     data_module = MtgDataModule(
         batch_size=config.batch_size,
         num_workers=config.num_workers,
-        predownload=config.force_download,
-        paired=config.loss_contrastive is not None,
-        targets=config.loss_recon is not None,
-        x_size_hw=config.x_size_hw,
-        y_size_hw=config.y_size_hw,
+        train_dataset=RanMtgEncDecDataset.from_hparams(config),
     )
 
     # Initial batch for visualization
@@ -648,8 +660,9 @@ class Config(pydantic.BaseModel):
     img_type: ScryfallImageType = ScryfallImageType.small
     bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
     force_download: bool = False
+    half_upsidedown: bool = False
     # model
-    model_name: str = "cnvnxt2ae_tiny"
+    model_name: str = "cnvnxt2ae_tiny_9_128"
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     norm_io: bool = True
@@ -675,9 +688,8 @@ class Config(pydantic.BaseModel):
     checkpoint: Optional[str] = None
     log_every_n_steps: int = 2500
     ckpt_every_n_steps: int = 2500
-    skip_first_optimizer_load_state: bool = (
-        True  # needed if model architecture changes or optimizer changes
-    )
+    # needed if model architecture changes or optimizer changes
+    skip_first_optimizer_load_state: bool = True
 
 
 # ========================================================================= #
