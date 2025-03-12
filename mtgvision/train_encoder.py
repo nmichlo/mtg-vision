@@ -669,12 +669,12 @@ class Config(pydantic.BaseModel):
     # optimisation
     optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 1e-3
-    weight_decay: float = 1e-9  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
+    weight_decay: float = 1e-7  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
     batch_size: int = 32
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss
-    loss_recon: Optional[str] = "ssim5+mse"  # 'ssim5+l1'
+    loss_recon: Optional[str] = "ssim5+l1"  # 'ssim5+l1'
     loss_contrastive: Optional[str] = "none"  # ntxent
     loss_contrastive_batched: bool = False
     scale_loss_recon: float = 1
