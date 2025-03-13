@@ -669,14 +669,14 @@ class Config(pydantic.BaseModel):
     force_download: bool = False
     half_upsidedown: bool = False
     # model
-    model_name: str = "cnvnxt2ae_tiny_9_128"
+    model_name: str = "cnvnxt2ae_base_12"
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
     optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 1e-3
     weight_decay: float = 1e-7  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
-    batch_size: int = 32
+    batch_size: int = 16
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss
@@ -692,7 +692,7 @@ class Config(pydantic.BaseModel):
     # logging
     prefix: Optional[str] = None
     checkpoint: Optional[str] = None
-    log_every_n_steps: int = 2500
+    log_every_n_steps: int = 5000
     ckpt_every_n_steps: int = 2500
     # needed if model architecture changes or optimizer changes
     skip_first_optimizer_load_state: bool = True

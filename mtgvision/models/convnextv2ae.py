@@ -190,7 +190,7 @@ class ConvNeXtV2Encoder(_Base):
         x = self.pool(x)
         x = self.head(x)
         if self.reshape_z:
-            x = x.view(x.size(0), -1)
+            x = x.reshape(x.size(0), -1)
         return x
 
     def to_coreml(self):
@@ -322,10 +322,10 @@ class ConvNeXtV2Decoder(_Base):
 
     def forward(self, x):
         if self.reshape_z:
-            x = x.view(x.size(0), -1, *self.get_internal_wh(self.image_wh)[::-1])
+            x = x.reshape(x.size(0), -1, *self.get_internal_wh(self.image_wh)[::-1])
         else:
             if x.ndim == 2 and self.head_type == "conv":
-                x = x.view(
+                x = x.reshape(
                     -1, self.z_size // self.internal_num, *self.internal_wh[::-1]
                 )
                 warnings.warn("reshaping z to (B, C, H, W) for head_type='conv'")
