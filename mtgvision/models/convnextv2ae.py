@@ -68,6 +68,10 @@ class _Base(nn.Module):
         assert z_size % self.internal_num == 0
 
     @property
+    def tensor_shape(self) -> tuple[int, int, int]:
+        return 3, self.image_wh[1], self.image_wh[0]
+
+    @property
     def internal_scale(self) -> int:
         return 4 * 2 * 2 * 2
 
@@ -107,6 +111,8 @@ class ConvNeXtV2Encoder(_Base):
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
         head_type: Literal["conv", "pool+linear"] = "conv",
         head_init_scale: Optional[float] = None,
+        scale_io: bool = True,
+        reshape_z: bool = True,
     ):
         super().__init__(
             image_wh=image_wh,
@@ -117,6 +123,8 @@ class ConvNeXtV2Encoder(_Base):
             head_init_scale=head_init_scale,
         )
         self.head_type = head_type
+        self.scale_io = scale_io
+        self.reshape_z = reshape_z
 
         # **DOWNSAMPLE LAYERS**
         # + stem and 3 intermediate downsampling conv layers
@@ -173,13 +181,29 @@ class ConvNeXtV2Encoder(_Base):
                 self.head.bias.data.mul_(head_init_scale)
 
     def forward(self, x):
+        if self.scale_io:
+            x = (x * 2) - 1
         x = self.block0(x)
         x = self.block1(x)
         x = self.block2(x)
         x = self.block3(x)
         x = self.pool(x)
         x = self.head(x)
+        if self.reshape_z:
+            x = x.view(x.size(0), -1)
         return x
+
+    def to_coreml(self):
+        from coremltools import convert, TensorType
+
+        i = torch.randn((1, *self.tensor_shape)).to("cpu")
+        m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
+        c = convert(
+            m_jit,
+            inputs=[TensorType(name="x", shape=i.shape)],
+            outputs=[TensorType(name="z")],
+        )
+        return c  # coremltools.models.MLModel
 
 
 class Index(nn.Module):
@@ -189,16 +213,6 @@ class Index(nn.Module):
 
     def forward(self, x):
         return x[self.shape]
-
-
-# class View(nn.Module):
-#
-#     def __init__(self, shape):
-#         super().__init__()
-#         self.shape = shape
-#
-#     def forward(self, x):
-#         return x.reshape(*self.shape)
 
 
 class Print(nn.Module):
@@ -227,6 +241,8 @@ class ConvNeXtV2Decoder(_Base):
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
         head_type: Literal["conv", "pool+linear"] = "conv",
         head_init_scale: Optional[float] = None,
+        scale_io: bool = True,
+        reshape_z: bool = True,
     ):
         super().__init__(
             image_wh=image_wh,
@@ -237,6 +253,8 @@ class ConvNeXtV2Decoder(_Base):
             head_init_scale=head_init_scale,
         )
         self.head_type = head_type
+        self.scale_io = scale_io
+        self.reshape_z = reshape_z
 
         # **HEAD**
         # --> Bx<z_size>
@@ -303,19 +321,53 @@ class ConvNeXtV2Decoder(_Base):
                 self.head.bias.data.mul_(head_init_scale)
 
     def forward(self, x):
-        if x.ndim == 2 and self.head_type == "conv":
-            x = x.view(-1, self.z_size // self.internal_num, *self.internal_wh[::-1])
-            warnings.warn("reshaping z to (B, C, H, W) for head_type='conv'")
+        if self.reshape_z:
+            x = x.view(x.size(0), -1, *self.get_internal_wh(self.image_wh)[::-1])
+        else:
+            if x.ndim == 2 and self.head_type == "conv":
+                x = x.view(
+                    -1, self.z_size // self.internal_num, *self.internal_wh[::-1]
+                )
+                warnings.warn("reshaping z to (B, C, H, W) for head_type='conv'")
         x = self.head(x)
         x = self.pool(x)
         x = self.block3(x)
         x = self.block2(x)
         x = self.block1(x)
         x = self.block0(x)
+        if self.scale_io:
+            x = (x + 1) / 2
         return x
+
+    def to_coreml(self):
+        from coremltools import convert, TensorType
+
+        i = torch.randn((1, self.z_size)).to("cpu")
+        m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
+        c = convert(
+            m_jit,
+            inputs=[
+                TensorType(
+                    name="z",
+                    shape=(
+                        1,
+                        *(
+                            (self.z_size,)
+                            if self.reshape_z
+                            else self.get_internal_wh(self.image_wh)[::-1]
+                        ),
+                    ),
+                )
+            ],
+            outputs=[TensorType(name="x_hat")],
+        )
+        return c  # coremltools.models.MLModel
 
 
 class ConvNeXtV2Ae(_Base, AeBase):
+    encoder: Optional[ConvNeXtV2Encoder]
+    decoder: Optional[ConvNeXtV2Decoder]
+
     def __init__(
         self,
         image_wh: tuple[int, int] = (224, 224),
@@ -326,6 +378,8 @@ class ConvNeXtV2Ae(_Base, AeBase):
         head_init_scale: Optional[float] = None,
         encoder_enabled: bool = True,
         decoder_enabled: bool = True,
+        scale_io: bool = True,
+        reshape_z: bool = True,
     ):
         super().__init__(
             image_wh=image_wh,
@@ -344,6 +398,8 @@ class ConvNeXtV2Ae(_Base, AeBase):
                 depths=depths,
                 dims=dims,
                 head_init_scale=head_init_scale,
+                scale_io=scale_io,
+                reshape_z=reshape_z,
             )
         else:
             self.encoder = None
@@ -356,6 +412,8 @@ class ConvNeXtV2Ae(_Base, AeBase):
                 depths=depths,
                 dims=dims,
                 head_init_scale=head_init_scale,
+                scale_io=scale_io,
+                reshape_z=reshape_z,
             )
         else:
             self.decoder = None

@@ -5,7 +5,6 @@ from typing import Any, Literal, Mapping, Optional, Tuple, TypedDict
 import matplotlib.pyplot as plt
 import pydantic
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import IterableDataset, DataLoader
@@ -28,7 +27,11 @@ from mtgvision.util.random import seed_all
 
 
 def _cnv2ae_fn(fn):
-    return lambda hw, **k: fn(image_wh=hw[::-1], z_size=768, **k)
+    return lambda hw, **k: fn(
+        image_wh=hw[::-1],
+        z_size=768,
+        **k,
+    )
 
 
 _MODELS = {
@@ -176,7 +179,7 @@ class RanMtgEncDecDataset(IterableDataset):
 
 class MtgVisionEncoder(pl.LightningModule):
     hparams: "Config"
-    model: "nn.Module"
+    model: "cnv2ae.ConvNeXtV2Ae"
 
     def __init__(self, config: dict):
         super().__init__()
@@ -253,33 +256,24 @@ class MtgVisionEncoder(pl.LightningModule):
         plt.imshow(outy)
         plt.show()
 
-    def _scale_in(self, x):
-        # x image is in range [0, 1], --> [-1, 1]
-        if self.hparams.norm_io:
-            return (x * 2) - 1
-        return x
-
-    def _scale_out(self, out):
-        # out is in range [-1, 1], --> [0, 1]
-        if self.hparams.norm_io:
-            return (out + 1) / 2
-        return out
-
     def forward(self, x):
-        x = self._scale_in(x)
-        z, multi_out = self.model(x)
-        out = self._scale_out(multi_out[0])
-        return z, out
+        z, multi = self.model(x)
+        return z, multi[0]
+
+    def forward_img(self, img):
+        assert img.ndim == 3
+        assert img.shape[-1] == 3
+        assert img.dtype == np.float32  # in range [0, 1]
+        _, [y, *_] = self(K.image_to_tensor(img)[None, ...])
+        return K.tensor_to_image(y)
 
     def encode(self, x):
-        x = self._scale_in(x)
         z, multi = self.model.encode(x)
         return z
 
     def decode(self, z):
         multi = self.model.decode(z)
-        out = self._scale_out(multi[0])
-        return out
+        return multi[0]
 
     def training_step(self, batch, batch_idx):
         logs, loss = {}, 0
@@ -472,6 +466,32 @@ class ImageLoggingCallback(Callback):
 # ========================================================================= #
 
 
+def get_test_images(
+    train_dataset: RanMtgEncDecDataset,
+    seed: int = None,
+):
+    if seed is not None:
+        seed_all(seed)
+
+    # Initial batch for visualization
+    vis_batch = [
+        # https://scryfall.com/card/e02/35/rancor
+        train_dataset.get_img_by_id("38e281ab-3437-4a2c-a668-9a148bc3eaf7"),
+        # https://scryfall.com/card/2x2/156/rancor
+        train_dataset.get_img_by_id("86d6b411-4a31-4bfc-8dd6-e19f553bb29b"),
+        # https://scryfall.com/card/bro/238b/urza-planeswalker
+        train_dataset.get_img_by_id("40a01679-3224-427e-bd1d-b797b0ab68b7"),
+        # https://scryfall.com/card/ugl/70/blacker-lotus
+        train_dataset.get_img_by_id("4a2e428c-dd25-484c-bbc8-2d6ce10ef42c"),
+        # https://scryfall.com/card/zen/249/forest
+        train_dataset.get_img_by_id("341b05e6-93bb-4071-b8c6-1644f56e026d"),
+        # https://scryfall.com/card/mh3/132/ral-and-the-implicit-maze
+        train_dataset.get_img_by_id("ebadb7dc-69a4-43c9-a2f8-d846b231c71c"),
+    ]
+
+    return vis_batch
+
+
 def train(config: "Config"):
     seed_all(config.seed)
 
@@ -483,20 +503,7 @@ def train(config: "Config"):
     )
 
     # Initial batch for visualization
-    vis_batch = [
-        # https://scryfall.com/card/e02/35/rancor
-        data_module.train_dataset.get_img_by_id("38e281ab-3437-4a2c-a668-9a148bc3eaf7"),
-        # https://scryfall.com/card/2x2/156/rancor
-        data_module.train_dataset.get_img_by_id("86d6b411-4a31-4bfc-8dd6-e19f553bb29b"),
-        # https://scryfall.com/card/bro/238b/urza-planeswalker
-        data_module.train_dataset.get_img_by_id("40a01679-3224-427e-bd1d-b797b0ab68b7"),
-        # https://scryfall.com/card/ugl/70/blacker-lotus
-        data_module.train_dataset.get_img_by_id("4a2e428c-dd25-484c-bbc8-2d6ce10ef42c"),
-        # https://scryfall.com/card/zen/249/forest
-        data_module.train_dataset.get_img_by_id("341b05e6-93bb-4071-b8c6-1644f56e026d"),
-        # https://scryfall.com/card/mh3/132/ral-and-the-implicit-maze
-        data_module.train_dataset.get_img_by_id("ebadb7dc-69a4-43c9-a2f8-d846b231c71c"),
-    ]
+    vis_batch = get_test_images(data_module.train_dataset, seed=config.seed)
 
     # Initialize wandb
     parts = [
@@ -665,7 +672,6 @@ class Config(pydantic.BaseModel):
     model_name: str = "cnvnxt2ae_tiny_9_128"
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
-    norm_io: bool = True
     # optimisation
     optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 1e-3
