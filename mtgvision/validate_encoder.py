@@ -1,8 +1,8 @@
 import dataclasses
 import itertools
 import json
+import time
 from typing import Any, Iterable
-from uuid import UUID
 
 import duckdb
 from tqdm import tqdm
@@ -13,6 +13,15 @@ from mtgvision.export_encoder import CoreMlEncoder, MODEL_PATH
 
 from mtgvision.train_encoder import RanMtgEncDecDataset
 from mtgvision.util.image import imread_float
+
+
+def _dump_card(card):
+    data = dataclasses.asdict(card)
+    for k in ["oracle_id", "id"]:
+        data[k] = str(data[k])
+    for k in ["_img_type", "_bulk_type", "_sets_dir", "_proxy"]:
+        data.pop(k, None)
+    return data
 
 
 @dataclasses.dataclass
@@ -141,11 +150,16 @@ class VectorStoreDuckDB(VectorStoreBase):
         )
 
     def query(self, vector: list[float], k: int) -> list[Point]:
+        # duckdb.duckdb.BinderException: Binder Error: No function matches the given name and argument types 'array_cosine_distance(FLOAT[768], DOUBLE[])'. You might need to add explicit type casts.
+        # 	Candidate functions:
+        # 	array_cosine_distance(FLOAT[ANY], FLOAT[ANY]) -> FLOAT
+        # 	array_cosine_distance(DOUBLE[ANY], DOUBLE[ANY]) -> DOUBLE
+
         results = self.conn.execute(
             """
             SELECT id, payload, vector
             FROM mtg_vectors
-            ORDER BY array_cosine_distance(vector, ?)
+            ORDER BY array_distance(vector, ?::FLOAT[768]) ASC
             LIMIT ?
         """,
             [vector, k],
@@ -208,9 +222,6 @@ def _cli():
     # 1. create dataset of embeddings
     def _yield_gt_points():
         for card in tqdm(dataset.mtg.card_iter(), total=len(dataset.mtg)):
-            if isinstance(card.id, UUID):
-                card.__dict__["id"] = card.id.hex
-                assert isinstance(card.id, str)
             card.download(proxy=proxy)
             x = SyntheticBgFgMtgImages.make_cropped(
                 imread_float(card.img_path),
@@ -222,9 +233,6 @@ def _cli():
     # 2. check accuracy
     def _yield_virtual_points():
         for card in tqdm(dataset.mtg.card_iter(), total=len(dataset.mtg)):
-            if isinstance(card.id, UUID):
-                card.__dict__["id"] = card.id.hex
-                assert isinstance(card.id, str)
             card.download(proxy=proxy)
             x = SyntheticBgFgMtgImages.make_virtual(
                 imread_float(card.img_path),
@@ -234,32 +242,34 @@ def _cli():
             z = encoder.predict(x).tolist()
             yield z, card
 
-    N = 100
+    N = 10000
 
     # actually generate and query
     db.save_points(
-        Point(id=card.id, vector=z, payload=card.__dict__)
+        Point(id=card.id, vector=z, payload=_dump_card(card))
         for z, card in itertools.islice(_yield_gt_points(), N)
     )
 
     # actually query db
     top_1_correct = 0
     top_5_correct = 0
-    with tqdm() as pbar:
-        for i, (z, card) in enumerate(itertools.islice(_yield_virtual_points(), N)):
-            print(card)
-            results = db.query(z, k=5)
-            print(results)
-            if card.id == results[0].id:
-                top_1_correct += 1
-            if card.id in {point.id for point in results}:
-                top_5_correct += 1
-            pbar.set_postfix(
-                {
-                    "top_1": f"{top_1_correct / (i + 1) * 100:.2f}%",
-                    "top_5": f"{top_5_correct / (i + 1) * 100:.2f}%",
-                }
-            )
+
+    def _print_correct():
+        print(
+            f"top_1: {top_1_correct / N * 100:.2f}%, top_5: {top_5_correct / N * 100:.2f}%"
+        )
+
+    t = time.time()
+    for i, (z, card) in enumerate(itertools.islice(_yield_virtual_points(), N)):
+        results = db.query(z, k=5)
+        if card.id == results[0].id:
+            top_1_correct += 1
+        if card.id in {point.id for point in results}:
+            top_5_correct += 1
+        if time.time() - t > 2:
+            t = time.time()
+            _print_correct()
+    _print_correct()
 
 
 if __name__ == "__main__":
