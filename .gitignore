@@ -141,5 +141,8 @@ data/
 wandb/
 *.ckpt
 mtgvision_encoder/
+
+# duckdb
 *.duckdb
 *.ddb
+*.wal
