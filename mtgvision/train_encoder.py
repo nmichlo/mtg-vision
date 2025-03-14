@@ -674,11 +674,11 @@ class Config(pydantic.BaseModel):
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
     optimizer: Literal["adam", "radam"] = "adam"
-    learning_rate: float = 3e-4
-    weight_decay: float = 1e-7  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-8  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
     batch_size: int = 16
     gradient_clip_val: float = 0.5
-    accumulate_grad_batches: int = 1
+    accumulate_grad_batches: int = 2
     # loss
     loss_recon: Optional[str] = "ssim5+l1"  # 'ssim5+l1'
     loss_contrastive: Optional[str] = "none"  # ntxent
@@ -708,7 +708,8 @@ if __name__ == "__main__":
         [
             "--prefix=cnxt2",
             # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6__dvea3b14/checkpoints/epoch=0-step=67500.ckpt",
-            "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.1__o0yxl20m/checkpoints/epoch=0-step=125000.ckpt",
+            # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.2__o0yxl20m/checkpoints/epoch=0-step=125000.ckpt",
+            "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.2__5u5qqmvz/checkpoints/epoch=0-step=217500.ckpt",
         ]
     )
     _cli()
