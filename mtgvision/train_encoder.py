@@ -99,7 +99,7 @@ class RanMtgEncDecDataset(IterableDataset):
     def get_img_by_id(self, id_: str) -> BatchHintNumpy:
         x = self.mtg.get_image_by_id(id_)
         y = self.ilsvrc.ran()
-        batch = self._make_image_batch([(x, y)])
+        batch = self.make_image_batch([(x, y)])
         return {k: v[0] for k, v in batch.items()}
 
     def random_img(self) -> BatchHintNumpy:
@@ -115,13 +115,13 @@ class RanMtgEncDecDataset(IterableDataset):
             n = self.default_batch_size
         # get random images
         img_pairs = [(self.mtg.ran(), self.ilsvrc.ran()) for _ in range(n)]
-        return self._make_image_batch(img_pairs)
+        return self.make_image_batch(img_pairs)
 
     def random_tensor_batch(self, n: Optional[int] = None) -> BatchHintTensor:
         batch = self.random_image_batch(n)
         return {k: K.image_to_tensor(v) for k, v in batch.items()}
 
-    def _make_image_batch(
+    def make_image_batch(
         self, img_pairs: list[tuple[np.ndarray, np.ndarray]]
     ) -> BatchHintNumpy:
         # generate random samples
@@ -673,8 +673,8 @@ class Config(pydantic.BaseModel):
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
-    optimizer: Literal["adam", "radam"] = "radam"
-    learning_rate: float = 1e-3
+    optimizer: Literal["adam", "radam"] = "adam"
+    learning_rate: float = 3e-4
     weight_decay: float = 1e-7  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
     batch_size: int = 16
     gradient_clip_val: float = 0.5
@@ -704,5 +704,11 @@ class Config(pydantic.BaseModel):
 
 
 if __name__ == "__main__":
-    sys.argv.extend(["--prefix=cnxt2"])
+    sys.argv.extend(
+        [
+            "--prefix=cnxt2",
+            # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6__dvea3b14/checkpoints/epoch=0-step=67500.ckpt",
+            "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.1__o0yxl20m/checkpoints/epoch=0-step=125000.ckpt",
+        ]
+    )
     _cli()

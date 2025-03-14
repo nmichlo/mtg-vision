@@ -24,6 +24,7 @@
 
 import uuid
 from pathlib import Path
+from typing import Iterator
 
 import cv2
 import numpy as np
@@ -166,7 +167,7 @@ class IlsvrcImages:
                 f"The image versions of the ILSVRC Datasets are for educational purposes only, and cannot be redistributed.\n"
                 f"Please visit: www.image-net.org to obtain the download links.\n",
             )
-        self._paths = sorted(ufls.get_image_paths(root, prefixed=True))
+        self._paths: "list[str]" = sorted(ufls.get_image_paths(root, prefixed=True))
 
     def _load_image(self, path):
         return uimg.imread_float(path)
@@ -181,8 +182,11 @@ class IlsvrcImages:
         for card in self._paths:
             yield self._load_image(card)
 
+    def ran_path(self) -> str:
+        return random.choice(self._paths)
+
     def ran(self) -> np.ndarray:
-        return self._load_image(random.choice(self._paths))
+        return self._load_image(self.ran_path())
 
     def get(self, idx) -> np.ndarray:
         return self[idx]
@@ -247,6 +251,10 @@ class SyntheticBgFgMtgImages:
     def __iter__(self):
         for card in self._cards:
             yield self._load_card_image(card)
+
+    def card_iter(self) -> Iterator[ScryfallCardFace]:
+        for card in self._cards:
+            yield card
 
     def ran(self) -> np.ndarray:
         return self._load_card_image(random.choice(self._cards))

@@ -34,7 +34,7 @@ from os import PathLike
 
 def get_image_paths(
     folder: str | PathLike, extensions: list[str] | None = None, prefixed: bool = False
-) -> list:
+) -> list[str]:
     if not extensions:
         extensions = [".jpg", ".png", ".jpeg"]
     images = []
