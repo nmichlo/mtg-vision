@@ -22,6 +22,8 @@
 #  SOFTWARE.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
+
+import abc
 import uuid
 from pathlib import Path
 from typing import Iterator
@@ -30,106 +32,12 @@ import cv2
 import numpy as np
 from math import ceil
 import random
+import albumentations as A
 
 from mtgdata import ScryfallDataset, ScryfallImageType
 import mtgvision.util.image as uimg
-import mtgvision.util.random as uran
 import mtgvision.util.files as ufls
 from mtgdata.scryfall import ScryfallCardFace
-
-
-# ========================================================================= #
-# RANDOM TRANSFORMS                                                         #
-# ========================================================================= #
-
-
-class Mutate:
-    """
-    A collection of image random image transformations.
-    # TODO: replace with random transforms from e.g. albumentations
-    """
-
-    @staticmethod
-    def flip(img, horr=True, vert=True):
-        return uimg.flip(
-            img,
-            horr=horr and (random.random() >= 0.5),
-            vert=vert and (random.random() >= 0.5),
-        )
-
-    @staticmethod
-    def rotate_bounded(img, deg_min=0, deg_max=360):
-        return uimg.rotate_bounded(
-            img, deg_min + np.random.random() * (deg_max - deg_min)
-        )
-
-    @staticmethod
-    def upsidedown(img):
-        return np.rot90(img, k=2)
-
-    @staticmethod
-    def warp(img, warp_ratio=0.15, warp_ratio_min=-0.05):
-        # [top left, top right, bottom left, bottom right]
-        (h, w) = (img.shape[0] - 1, img.shape[1] - 1)
-        src_pts = np.asarray([(0, 0), (0, w), (h, 0), (h, w)], dtype=np.float32)
-        ran = warp_ratio_min + np.random.rand(4, 2) * (
-            abs(warp_ratio - warp_ratio_min) * 0.5
-        )
-        dst_pts = (
-            ran * np.asarray([(h, w), (h, -w), (-h, w), (-h, -w)], dtype=np.float32)
-            + src_pts
-        )
-        dst_pts = np.asarray(dst_pts, dtype=np.float32)
-        # transform matrix
-        transform = cv2.getPerspectiveTransform(src_pts, dst_pts)
-        # warp
-        return cv2.warpPerspective(img, transform, (img.shape[1], img.shape[0]))
-
-    @staticmethod
-    def warp_inv(img, warp_ratio=0.5, warp_ratio_min=0.25):
-        return Mutate.warp(img, warp_ratio=-warp_ratio, warp_ratio_min=-warp_ratio_min)
-
-    @staticmethod
-    def noise(img, amount=0.75):
-        noise_type = random.choice(["speckle", "gaussian", "pepper", "poisson"])
-        if noise_type == "speckle":
-            noisy = uimg.noise_speckle(img, strength=0.3)
-        elif noise_type == "gaussian":
-            noisy = uimg.noise_gaussian(img, mean=0, var=0.05)
-        elif noise_type == "pepper":
-            noisy = uimg.noise_salt_pepper(img, strength=0.1, svp=0.5)
-        elif noise_type == "poisson":
-            noisy = uimg.noise_poisson(img, peak=0.8, amount=0.5)
-        else:
-            raise Exception("Invalid Choice")
-        ratio = np.random.random() * amount
-        img[:, :, :3] = (ratio) * noisy[:, :, :3] + (1 - ratio) * img[:, :, :3]
-        return img
-
-    @staticmethod
-    def blur(img, n_max=3):
-        n = np.random.randint(0, (n_max - 1) // 2 + 1) * 2 + 1
-        return cv2.GaussianBlur(img, (n, n), 0)
-
-    @staticmethod
-    def tint(img, amount=0.15):
-        for i in range(3):
-            r = 1 + amount * (2 * np.random.random() - 1)
-            img[:, :, i] = uimg.img_clip(r * img[:, :, i])
-        return img
-
-    @staticmethod
-    def fade_white(img, amount=0.33):
-        ratio = np.random.random() * amount
-        img[:, :, :3] = (ratio) * 1 + (1 - ratio) * img[:, :, :3]
-        return img
-
-    @staticmethod
-    def fade_black(img, amount=0.5):
-        ratio = np.random.random() * amount
-        img[:, :, :3] = (ratio) * 0 + (1 - ratio) * img[:, :, :3]
-        return img
-
 
 # ========================================================================= #
 # Vars                                                                      #
@@ -141,19 +49,59 @@ DATASETS_ROOT = Path(__file__).parent.parent.parent / "mtg-dataset/mtgdata/data"
 print(f"DATASETS_ROOT={DATASETS_ROOT}")
 
 
+
+# ========================================================================= #
+# Dataset - Random                                                          #
+# ========================================================================= #
+
+
+class _BaseImgDataset(abc.ABC):
+    """
+    Base class for random datasets. This class provides a simple interface
+    for generating random images.
+    """
+
+    @classmethod
+    def _load_image(cls, path_or_img):
+        if isinstance(path_or_img, (str, Path)):
+            return uimg.imread_float32(path_or_img)
+        else:
+            return uimg.img_float32(path_or_img)
+
+    @abc.abstractmethod
+    def __getitem__(self, item) -> np.ndarray:
+        ...
+
+    @abc.abstractmethod
+    def __iter__(self):
+        ...
+
+    @abc.abstractmethod
+    def __len__(self) -> int:
+        ...
+
+    def ran(self) -> np.ndarray:
+        return self._load_image(self.ran_path())
+
+    @abc.abstractmethod
+    def ran_path(self):
+        ...
+
+    def get(self, idx) -> np.ndarray:
+        return self.__getitem__(idx)
+
+
 # ========================================================================= #
 # Dataset - IlsvrcImages                                                    #
 # ========================================================================= #
 
 
-class IlsvrcImages:
+class IlsvrcImages(_BaseImgDataset):
     """
     Dataset of ILSVRC 2010 Images. This is a small dataset of random images from
     different categories. This is intended to be used as background images for
     the MTG Dataset.
     """
-
-    ILSVRC_SET_TYPES = ["val", "test", "train"]
 
     def __init__(self):
         root = DATASETS_ROOT / "ilsvrc" / "2010"
@@ -169,9 +117,6 @@ class IlsvrcImages:
             )
         self._paths: "list[str]" = sorted(ufls.get_image_paths(root, prefixed=True))
 
-    def _load_image(self, path):
-        return uimg.imread_float(path)
-
     def __len__(self):
         return len(self._paths)
 
@@ -179,28 +124,18 @@ class IlsvrcImages:
         return self._load_image(self._paths[item])
 
     def __iter__(self):
-        for card in self._paths:
-            yield self._load_image(card)
+        yield from (self._load_image(path) for path in self._paths)
 
     def ran_path(self) -> str:
         return random.choice(self._paths)
-
-    def ran(self) -> np.ndarray:
-        return self._load_image(self.ran_path())
-
-    def get(self, idx) -> np.ndarray:
-        return self[idx]
 
 
 # ========================================================================= #
 # Dataset - MTG Images                                                      #
 # ========================================================================= #
 
-SizeHW = tuple[int, int]
-PathOrImg = str | np.ndarray
 
-
-class SyntheticBgFgMtgImages:
+class MtgImages(_BaseImgDataset):
     """
     Dataset of Magic The Gathering Card Images. This generates Synthetic data of
     slightly distorted images of cards with random backgrounds.
@@ -217,36 +152,65 @@ class SyntheticBgFgMtgImages:
             download_mode="now" if predownload else "none",
         )
 
-    def get_card_by_id(self, id_: uuid.UUID | str) -> ScryfallCardFace:
-        return self._ds.get_card_by_id(id_)
-
-    def get_image_by_id(self, id_: uuid.UUID | str):
-        return self._load_card_image(self.get_card_by_id(id_))
-
-    @classmethod
-    def _load_card_image(cls, card: ScryfallCardFace):
-        return uimg.img_float32(card.dl_and_open_im_resized())
-
     def __len__(self):
         return len(self._ds)
 
     def __getitem__(self, item):
-        return self._load_card_image(self._ds[item])
+        return self._load_image(self._ds[item])
 
     def __iter__(self):
-        for card in self._ds:
-            yield self._load_card_image(card)
+        yield from (self._load_image(c.dl_and_open_im_resized()) for c in self._ds)
+
+    def ran_path(self) -> str:
+        return random.choice(self._ds).download()
+
+    # CUSTOM
+
+    def get_card_by_id(self, id_: uuid.UUID | str) -> ScryfallCardFace:
+        return self._ds.get_card_by_id(id_)
+
+    def get_image_by_id(self, id_: uuid.UUID | str):
+        return self._load_image(self.get_card_by_id(id_).dl_and_open_im_resized())
 
     def card_iter(self) -> Iterator[ScryfallCardFace]:
-        for card in self._ds:
-            yield card
+        yield from self._ds
 
-    def ran(self) -> np.ndarray:
-        return self._load_card_image(random.choice(self._ds))
 
-    def get(self, idx) -> np.ndarray:
-        return self[idx]
+# ========================================================================= #
+# Dataset - Synthetic Background & Foreground MTG Images                    #
+# ========================================================================= #
 
+
+
+SizeHW = tuple[int, int]
+PathOrImg = str | np.ndarray
+
+
+class SyntheticBgFgMtgImages:
+
+    def __init__(
+        self,
+        ds_mtg: MtgImages | None = None,
+        ds_bg: IlsvrcImages | None = None,
+    ):
+        self.ds_mtg = ds_mtg if (ds_mtg is not None) else MtgImages()
+        self.ds_bg = ds_bg if (ds_bg is not None) else IlsvrcImages()
+        # Make augments
+        self._aug_bg = A.Compose([
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.Rotate(limit=(0, 360), p=1.0),
+            A.Perspective(scale=(0.05, 0.15), p=1.0),
+            A.OneOf([
+                A.RandomBrightnessContrast(brightness_limit=0.5, contrast_limit=0.5),
+                A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20),
+            ], p=0.5),
+
+        ])
+
+
+
+    # OLD
     _RAN_BG = uran.ApplyShuffled(
         uran.ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
         uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
@@ -364,21 +328,27 @@ class SyntheticBgFgMtgImages:
 
 
 # ========================================================================= #
-# MAIN - TEST                                                               #
+# END                                                                       #
 # ========================================================================= #
 
 
 if __name__ == "__main__":
-    mtg = SyntheticBgFgMtgImages(img_type="small")
-    ilsvrc = IlsvrcImages()
+
+    virtual = SyntheticBgFgMtgImages(
+        ds_mtg=MtgImages(),
+        ds_bg=IlsvrcImages(),
+        default_x_size_hw=(192, 128),
+        default_y_size_hw=(192, 128),
+        half_upsidedown=True,
+    )
 
     while True:
-        _o = mtg.ran()
-        _l = ilsvrc.ran()
+        x, y = virtual.make_virtual_pair()
+        uimg.imshow_loop(x, "x")
+        uimg.imshow_loop(y, "y"
 
-        x, y = SyntheticBgFgMtgImages.make_virtual_pair(
-            _o, _l, (192, 128), (192, 128), True
-        )
 
-        uimg.imshow_loop(x, "asdf")
-        uimg.imshow_loop(y, "asdf")
+# ========================================================================= #
+# Dataset - Multi-Card YOLO Dataset                                        #
+# ========================================================================= #
+

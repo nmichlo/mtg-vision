@@ -23,9 +23,7 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
-import abc
 import warnings
-from abc import ABC
 import random
 
 
@@ -49,54 +47,5 @@ def seed_all(seed: int):
 
 
 # ============================================================================ #
-# Random Application of Functions                                              #
+# END                                                                          #
 # ============================================================================ #
-
-
-class Applicator(ABC):
-    def __init__(self, *callables):
-        self.callables = callables
-        if len(self.callables) == 1 and type(self.callables[0]) in [list, set, tuple]:
-            self.callables = self.callables[0]
-        if len(self.callables) < 1:
-            raise RuntimeError("There must be a callable")
-
-    def __call__(self, x):
-        return self._apply(x)
-
-    @staticmethod
-    def _call(c, x):
-        if c is None:
-            return x
-        elif callable(c):
-            return c(x)
-        else:
-            raise RuntimeError("Unsupported Callable Type: {}".format(type(c)))
-
-    @abc.abstractmethod
-    def _apply(self, x):
-        pass
-
-
-class ApplyOrdered(Applicator):
-    def _apply(self, x):
-        for c in self.callables:
-            x = Applicator._call(c, x)
-        return x
-
-
-class ApplyShuffled(Applicator):
-    def __init__(self, *callables):
-        super().__init__(callables)
-        self.indices = list(range(len(self.callables)))
-
-    def _apply(self, x):
-        random.shuffle(self.indices)
-        for i in self.indices:
-            x = Applicator._call(self.callables[i], x)
-        return x
-
-
-class ApplyChoice(Applicator):
-    def _apply(self, x):
-        return Applicator._call(random.choice(self.callables), x)
