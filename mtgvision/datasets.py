@@ -216,24 +216,9 @@ class SyntheticBgFgMtgImages:
             force_update=False,
             download_mode="now" if predownload else "none",
         )
-        self._cards: list[ScryfallCardFace] = sorted(self._ds, key=lambda x: x.id)
 
     def get_card_by_id(self, id_: uuid.UUID | str) -> ScryfallCardFace:
-        if isinstance(id_, str):
-            id_ = uuid.UUID(id_)
-        # list is sorted, so binary search for ID, checking: `lazy.resource.id` for each lazy in `self._lazies`
-        low = 0
-        high = len(self._cards) - 1
-        while low <= high:
-            mid = (low + high) // 2
-            mid_val = self._cards[mid].id
-            if mid_val < id_:
-                low = mid + 1
-            elif mid_val > id_:
-                high = mid - 1
-            else:
-                return self._cards[mid]
-        raise KeyError(f"Card with ID: {id_} not found!")
+        return self._ds.get_card_by_id(id_)
 
     def get_image_by_id(self, id_: uuid.UUID | str):
         return self._load_card_image(self.get_card_by_id(id_))
@@ -243,21 +228,21 @@ class SyntheticBgFgMtgImages:
         return uimg.img_float32(card.dl_and_open_im_resized())
 
     def __len__(self):
-        return len(self._cards)
+        return len(self._ds)
 
     def __getitem__(self, item):
-        return self._load_card_image(self._cards[item])
+        return self._load_card_image(self._ds[item])
 
     def __iter__(self):
-        for card in self._cards:
+        for card in self._ds:
             yield self._load_card_image(card)
 
     def card_iter(self) -> Iterator[ScryfallCardFace]:
-        for card in self._cards:
+        for card in self._ds:
             yield card
 
     def ran(self) -> np.ndarray:
-        return self._load_card_image(random.choice(self._cards))
+        return self._load_card_image(random.choice(self._ds))
 
     def get(self, idx) -> np.ndarray:
         return self[idx]
@@ -384,11 +369,11 @@ class SyntheticBgFgMtgImages:
 
 
 if __name__ == "__main__":
-    orig = SyntheticBgFgMtgImages(img_type="small")
+    mtg = SyntheticBgFgMtgImages(img_type="small")
     ilsvrc = IlsvrcImages()
 
     while True:
-        _o = orig.ran()
+        _o = mtg.ran()
         _l = ilsvrc.ran()
 
         x, y = SyntheticBgFgMtgImages.make_virtual_pair(

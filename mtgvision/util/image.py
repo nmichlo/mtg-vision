@@ -105,6 +105,7 @@ def imshow(image, window_name="image", scale=1):
     if scale != 1 and scale is not None:
         image = cv2.resize(image, (0, 0), fx=scale, fy=scale)
     cv2.imshow(window_name, image)
+    cv2.moveWindow(window_name, 100, 100)
 
 
 def imshow_loop(image, window_name="image", scale=1):
