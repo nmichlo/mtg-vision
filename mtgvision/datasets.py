@@ -34,6 +34,7 @@ from math import ceil
 import random
 import albumentations as A
 from albumentations.core.composition import TransformsSeqType
+from tqdm import tqdm
 
 from mtgdata import ScryfallDataset, ScryfallImageType
 import mtgvision.util.image as uimg
@@ -419,7 +420,12 @@ if __name__ == "__main__":
         half_upsidedown=True,
     )
 
-    while True:
+    for i in tqdm(range(10)):
         x, y = ds.make_synthetic_input_and_target_card_pair()
-        uimg.imshow_loop(x, "x")
+
+    # 100%|██████████| 1000/1000 [00:22<00:00, 45.29it/s]
+    for i in tqdm(range(1000)):
+        x, y = ds.make_synthetic_input_and_target_card_pair()
+
+        # uimg.imshow_loop(x, "x")
         # uimg.imshow_loop(y, "y")
