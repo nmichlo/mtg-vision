@@ -39,6 +39,7 @@ dependencies = [
     "kornia",
     "pytorch_lightning",
     "pytorch-metric-learning",
+    "albumentations>=2.0.0"
 ]
 
 

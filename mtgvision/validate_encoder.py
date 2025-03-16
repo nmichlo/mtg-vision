@@ -5,11 +5,10 @@ from typing import Any, Iterable
 from tqdm import tqdm
 
 from doorway.x import ProxyDownloader
-from mtgvision.datasets import SyntheticBgFgMtgImages
 from mtgvision.export_encoder import CoreMlEncoder, MODEL_PATH
 
 from mtgvision.train_encoder import RanMtgEncDecDataset
-from mtgvision.util.image import imread_float
+from mtgvision.util.image import imread_float32
 
 
 def _dump_card(card):
@@ -105,10 +104,12 @@ def _cli():
 
     # 1. create dataset of embeddings
     def _yield_gt_points():
-        for card in tqdm(dataset.mtg.card_iter(), total=len(dataset.mtg)):
+        for card in tqdm(
+            dataset.synth.ds_mtg.card_iter(), total=len(dataset.synth.ds_mtg)
+        ):
             card.download(proxy=proxy)
-            x = SyntheticBgFgMtgImages.make_cropped(
-                imread_float(card.img_path),
+            x = dataset.synth.make_target_card(
+                imread_float32(card.img_path),
                 size_hw=dataset.x_size_hw,
             )
             z = encoder.predict(x).tolist()
@@ -116,11 +117,13 @@ def _cli():
 
     # 2. check accuracy
     def _yield_virtual_points():
-        for card in tqdm(dataset.mtg.card_iter(), total=len(dataset.mtg)):
+        for card in tqdm(
+            dataset.synth.ds_mtg.card_iter(), total=len(dataset.synth.ds_mtg)
+        ):
             card.download(proxy=proxy)
-            x = SyntheticBgFgMtgImages.make_virtual(
-                imread_float(card.img_path),
-                imread_float(dataset.ilsvrc.ran_path()),
+            x = dataset.synth.make_synthetic_input_card(
+                imread_float32(card.img_path),
+                imread_float32(dataset.synth.ds_bg.ran_path()),
                 size_hw=dataset.x_size_hw,
             )
             z = encoder.predict(x).tolist()

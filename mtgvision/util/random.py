@@ -37,14 +37,15 @@ def seed_all(seed: int):
         import np
 
         np.random.seed(seed)
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
         warnings.warn("numpy not found, skipping seed")
+
     # torch
     try:
         import torch
 
         torch.manual_seed(seed)
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
         warnings.warn("torch not found, skipping seed")
 
 

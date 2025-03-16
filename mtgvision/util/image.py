@@ -23,11 +23,10 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
-import base64
 import functools
 from math import ceil
 from os import PathLike
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 import cv2
 import numpy as np
@@ -87,7 +86,7 @@ def imwrite(path: str | PathLike, img: np.ndarray):
     cv2.imwrite(str(path), img)
 
 
-def imread_float(path: str | PathLike) -> np.ndarray[np.float32]:
+def imread_float32(path: str | PathLike) -> np.ndarray[np.float32]:
     """
     Read an image from disk, and convert it to a float32 image in range [0, 1].
     """
@@ -97,7 +96,7 @@ def imread_float(path: str | PathLike) -> np.ndarray[np.float32]:
     return img_float32(img)
 
 
-def imshow(image, window_name="image", scale=1):
+def _imshow(image, window_name="image", scale=1):
     """
     Display an image in a window temporarily, this should be used
     with additional wait logic to keep the window open.
@@ -113,40 +112,12 @@ def imshow_loop(image, window_name="image", scale=1):
     Display an image in a window, the window will stay open until the user
     presses the escape key or closes the window.
     """
-    imshow(image, window_name, scale)
+    _imshow(image, window_name, scale)
     while True:
         k = cv2.waitKey(100)
         if (k == 27) or (cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1):
             cv2.destroyAllWindows()
             break
-
-
-@ensure_float32
-def safe_imread(path):
-    """
-    Read an image from disk, if the image is not found, return a blank image.
-    """
-    try:
-        return imread_float(path)
-    except Exception:
-        return np.zeros((1, 1, 3), np.float32)
-
-
-# ============================================================================ #
-# Types                                                                        #
-# ============================================================================ #
-
-
-def image2base64(
-    img: np.ndarray | Image.Image,
-    encode: Literal["jpg", "png"] = "png",
-) -> bytes:
-    """
-    Convert an image to a base64 encoded string, supports any kind of input image.
-    """
-    img = img_uint8(img)
-    _, encoding = cv2.imencode(".{}".format(encode), img)
-    return base64.b64encode(encoding)
 
 
 # ============================================================================ #
@@ -224,16 +195,29 @@ def rgba_over_rgb(
     images in range [0, 1] and int or uint images in range [0, 255]. Both must
     be the same type and size.
     """
-    alpha = fg_rgba[:, :, 3]
-    fg = cv2.merge(
-        (fg_rgba[:, :, 0] * alpha, fg_rgba[:, :, 1] * alpha, fg_rgba[:, :, 2] * alpha)
+    assert fg_rgba.ndim == 3 and fg_rgba.shape[2] == 4
+    assert bg_rgb.ndim == 3 and bg_rgb.shape[2] == 3
+    return rgb_mask_over_rgb(
+        fg_rgb=fg_rgba[:, :, :3], fg_mask=fg_rgba[:, :, 3], bg_rgb=bg_rgb
     )
-    alpha = 1 - alpha
-    bg = cv2.merge(
-        (bg_rgb[:, :, 0] * alpha, bg_rgb[:, :, 1] * alpha, bg_rgb[:, :, 2] * alpha)
-    )
-    ret = img_clip(bg + fg)
-    return ret
+
+
+def rgb_mask_over_rgb(
+    fg_rgb: np.ndarray[np.float32 | np.uint8],
+    fg_mask: np.ndarray[np.float32 | np.uint8],
+    bg_rgb: np.ndarray[np.float32 | np.uint8],
+):
+    """
+    Merge a foreground RGB image with a mask image over a background RGB image,
+    supports float images in range [0, 1] and int or uint images in range [0, 255].
+    All images must be the same type and size.
+    """
+    assert fg_rgb.ndim == 3 and fg_rgb.shape[2] == 3
+    assert fg_mask.ndim == 2
+    assert bg_rgb.ndim == 3 and bg_rgb.shape[2] == 3
+    fg = fg_rgb * fg_mask[..., None]
+    bg = bg_rgb * (1 - fg_mask[..., None])
+    return img_clip(bg + fg)
 
 
 # ============================================================================ #
