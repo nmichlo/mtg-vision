@@ -32,8 +32,6 @@ from typing import Iterator
 import numpy as np
 from math import ceil
 import random
-import albumentations as A
-from albumentations.core.composition import TransformsSeqType
 from tqdm import tqdm
 
 
@@ -58,50 +56,6 @@ import mtgvision.util.random as uran
 DATASETS_ROOT = Path(__file__).parent.parent.parent / "mtg-dataset/mtgdata/data"
 
 print(f"DATASETS_ROOT={DATASETS_ROOT}")
-
-
-class _SomeOf(A.SomeOf):
-    # https://github.com/albumentations-team/albumentations/issues/2474
-    def __init__(
-        self,
-        transforms: TransformsSeqType,
-        n: int = 1,
-        replace: bool = False,
-        p: float = 1,
-    ):
-        # wrap each transform in with a wrapper that removes the kwargs "force_apply" from __call__
-        transforms = [A.Compose([t], p=1.0) for t in transforms]
-        super().__init__(transforms=transforms, n=n, replace=replace, p=p)
-
-
-class _RandomOrder(A.RandomOrder):
-    # https://github.com/albumentations-team/albumentations/issues/2474
-    def __init__(
-        self,
-        transforms: TransformsSeqType,
-        n: int = 1,
-        replace: bool = False,
-        p: float = 1,
-    ):
-        # wrap each transform in with a wrapper that removes the kwargs "force_apply" from __call__
-        transforms = [A.Compose([t], p=1.0) for t in transforms]
-        super().__init__(transforms=transforms, n=n, replace=replace, p=p)
-
-
-def compose(*args, p=1.0):
-    return A.Compose(list(args), p=p)
-
-
-def some_of(*args, n=None, p=1.0):
-    return _SomeOf(list(args), n=n or len(args), p=p)
-
-
-def random_order(*args, n=None, p=1.0):
-    return _RandomOrder(list(args), n=n or len(args), p=p)
-
-
-def one_of(*args, p=1.0):
-    return A.OneOf(list(args), p=p)
 
 
 # ========================================================================= #
@@ -433,7 +387,12 @@ if __name__ == "__main__":
 
     # 100%|██████████| 1000/1000 [00:16<00:00, 60.01it/s]
     for i in tqdm(range(1000)):
+        # 270 it/s
+        # x = ds._get_card(None)  # 1050 it/s
+        # y = ds._get_bg(None)  # 320 it/s
+
+        # 70 it/s
         x, y = ds.make_synthetic_input_and_target_card_pair()
 
-        uimg.imshow_loop(x, "x")
-        uimg.imshow_loop(y, "y")
+        # uimg.imshow_loop(x, "x")
+        # uimg.imshow_loop(y, "y")
