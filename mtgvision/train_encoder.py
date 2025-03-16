@@ -40,6 +40,8 @@ _MODELS = {
     "cnvnxt2ae_pico": _cnv2ae_fn(cnv2ae.convnextv2ae_pico),
     "cnvnxt2ae_nano": _cnv2ae_fn(cnv2ae.convnextv2ae_nano),
     "cnvnxt2ae_tiny": _cnv2ae_fn(cnv2ae.convnextv2ae_tiny),
+    "cnvnxt2ae_tiny_12": _cnv2ae_fn(cnv2ae.convnextv2ae_tiny_12),
+    "cnvnxt2ae_tiny_18": _cnv2ae_fn(cnv2ae.convnextv2ae_tiny_18),
     # same number of layers as tiny. but more capacity
     "cnvnxt2ae_tiny_9_128": _cnv2ae_fn(cnv2ae.convnextv2ae_tiny_9_128),
     "cnvnxt2ae_tiny_12_128": _cnv2ae_fn(cnv2ae.convnextv2ae_tiny_12_128),
@@ -277,7 +279,7 @@ class MtgVisionEncoder(pl.LightningModule):
             loss_recon = recon_loss_fn(y_recon, batch["y"])
             loss_recon *= self.hparams.scale_loss_recon
             loss += loss_recon
-            logs["loss_recon"] = loss_recon
+            logs["loss_recon"] = torch.nan_to_num(loss_recon, nan=0.0)
 
         # contrastive loss
         if self.hparams.loss_contrastive is not None:
@@ -298,7 +300,7 @@ class MtgVisionEncoder(pl.LightningModule):
             loss_cont = loss_func(z_flat, z2_flat) * self.hparams.scale_loss_contrastive
             # scale
             loss += loss_cont
-            logs["loss_contrastive"] = loss_cont
+            logs["loss_contrastive"] = torch.nan_to_num(loss_cont, nan=0.0)
 
         # loss is required key
         logs["loss"] = loss
@@ -365,19 +367,25 @@ class MtgDataModule(pl.LightningDataModule):
         train_dataset: RanMtgEncDecDataset,
         num_workers: int = 3,
         batch_size: Optional[int] = None,
+        seed: int = 42,
     ):
         super().__init__()
         self.num_workers = num_workers
         self.train_dataset = train_dataset
+        self.seed = seed
         if batch_size is not None:
             self.train_dataset.set_batch_size(batch_size)
 
     def train_dataloader(self):
+        def worker_init_fn(worker_id):
+            seed_all(self.seed + (worker_id + 1) * 100)
+
         return DataLoader(
             self.train_dataset,
             batch_size=None,  # no auto collation
             shuffle=False,
             num_workers=self.num_workers,
+            worker_init_fn=worker_init_fn,
         )
 
 
@@ -481,7 +489,7 @@ def get_test_images(
 
 
 def train(config: "Config"):
-    seed_all(config.seed)
+    seed_all(config.seed or 42)
 
     # Initialize model
     data_module = MtgDataModule(
@@ -491,7 +499,10 @@ def train(config: "Config"):
     )
 
     # Initial batch for visualization
-    vis_batch = get_test_images(data_module.train_dataset, seed=config.seed)
+    vis_batch = get_test_images(
+        data_module.train_dataset,
+        seed=config.seed or 42,
+    )
 
     # Initialize wandb
     parts = [
@@ -512,7 +523,7 @@ def train(config: "Config"):
         device = "cpu"
 
     # set seed again
-    seed_all(config.seed)
+    seed_all(config.seed or 42)
 
     # Initialize model and compile
     model = MtgVisionEncoder(config.model_dump())

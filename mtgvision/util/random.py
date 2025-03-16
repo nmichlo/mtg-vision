@@ -30,19 +30,37 @@ import random
 def seed_all(seed: int):
     # random
     random.seed(seed)
+
+    # tensorflow
+    # try:
+    #     import tensorflow as tf
+    #
+    #     tf.random.set_seed(seed)
+    # except (ImportError, ModuleNotFoundError):
+    #     warnings.warn("tensorflow not found, skipping seed")
+
+    # imgaug
+    # try:
+    #     import imgaug
+    #
+    #     imgaug.random.seed(123)
+    # except (ImportError, ModuleNotFoundError):
+    #     warnings.warn("imgaug not found, skipping seed")
+
     # numpy
     try:
         import np
 
         np.random.seed(seed)
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
         warnings.warn("numpy not found, skipping seed")
+
     # torch
     try:
         import torch
 
         torch.manual_seed(seed)
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
         warnings.warn("torch not found, skipping seed")
 
 
