@@ -27,6 +27,7 @@ import abc
 import warnings
 from abc import ABC
 import random
+from functools import partial
 
 
 def seed_all(seed: int):
@@ -55,7 +56,8 @@ def seed_all(seed: int):
 
 
 class Applicator(ABC):
-    def __init__(self, *callables):
+    def __init__(self, *callables, p: float = 1.0):
+        self.p = p
         self.callables = callables
         if len(self.callables) == 1 and type(self.callables[0]) in [list, set, tuple]:
             self.callables = self.callables[0]
@@ -63,7 +65,10 @@ class Applicator(ABC):
             raise RuntimeError("There must be a callable")
 
     def __call__(self, x):
-        return self._apply(x)
+        if random.random() < self.p:
+            return self._apply(x)
+        else:
+            return x
 
     @staticmethod
     def _call(c, x):
@@ -76,10 +81,38 @@ class Applicator(ABC):
 
     @abc.abstractmethod
     def _apply(self, x):
-        pass
+        raise NotImplementedError
 
 
-class ApplyOrdered(Applicator):
+class NoOp(Applicator):
+    def __init__(self, p: float = 1.0):
+        super().__init__(p=p)
+
+    def _apply(self, x):
+        return x
+
+
+class ApplyFn(Applicator):
+    def __init__(self, callable, *args, p: float = 1.0, **kwargs):
+        callable = partial(callable, *args, **kwargs)
+        super().__init__(callable, p=p)
+
+    def _apply(self, x):
+        return Applicator._call(self.callables[0], x)
+
+
+class ApplyChance(Applicator):
+    def __init__(self, *callables, p: float = 0.5):
+        super().__init__(callables, p=p)
+        self.p = p
+
+    def _apply(self, x):
+        for c in self.callables:
+            x = Applicator._call(c, x)
+        return x
+
+
+class ApplySequence(Applicator):
     def _apply(self, x):
         for c in self.callables:
             x = Applicator._call(c, x)
@@ -87,17 +120,18 @@ class ApplyOrdered(Applicator):
 
 
 class ApplyShuffled(Applicator):
-    def __init__(self, *callables):
-        super().__init__(callables)
+    def __init__(self, *callables, p: float = 1.0):
+        super().__init__(callables, p=p)
         self.indices = list(range(len(self.callables)))
 
     def _apply(self, x):
-        random.shuffle(self.indices)
-        for i in self.indices:
+        indices = list(self.indices)
+        random.shuffle(indices)
+        for i in indices:
             x = Applicator._call(self.callables[i], x)
         return x
 
 
-class ApplyChoice(Applicator):
+class ApplyOne(Applicator):
     def _apply(self, x):
         return Applicator._call(random.choice(self.callables), x)
