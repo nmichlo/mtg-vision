@@ -22,7 +22,7 @@ from pytorch_lightning.callbacks import (
 
 from mtgdata import ScryfallBulkType, ScryfallImageType
 import mtgvision.models.convnextv2ae as cnv2ae
-from mtgvision.datasets import IlsvrcImages, SyntheticBgFgMtgImages
+from mtgvision.datasets import SyntheticBgFgMtgImages
 from mtgvision.util.random import seed_all
 
 
@@ -85,9 +85,11 @@ class RanMtgEncDecDataset(IterableDataset):
         self.targets = targets
         self.x_size_hw = x_size_hw
         self.y_size_hw = y_size_hw
-        self.mtg = SyntheticBgFgMtgImages(img_type="small", predownload=predownload)
-        self.ilsvrc = IlsvrcImages()
-        self.half_upsidedown = half_upsidedown
+        self.synth = SyntheticBgFgMtgImages(
+            half_upsidedown=half_upsidedown,
+            default_x_size_hw=x_size_hw,
+            default_y_size_hw=y_size_hw,
+        )
 
     def __iter__(self):
         while True:
@@ -97,8 +99,8 @@ class RanMtgEncDecDataset(IterableDataset):
                 yield self.random_tensor_batch()
 
     def get_img_by_id(self, id_: str) -> BatchHintNumpy:
-        x = self.mtg.get_image_by_id(id_)
-        y = self.ilsvrc.ran()
+        x = self.synth.ds_mtg.get_image_by_id(id_)
+        y = self.synth.ds_bg.ran()
         batch = self.make_image_batch([(x, y)])
         return {k: v[0] for k, v in batch.items()}
 
@@ -114,7 +116,9 @@ class RanMtgEncDecDataset(IterableDataset):
         if n is None:
             n = self.default_batch_size
         # get random images
-        img_pairs = [(self.mtg.ran(), self.ilsvrc.ran()) for _ in range(n)]
+        img_pairs = [
+            (self.synth.ds_mtg.ran(), self.synth.ds_bg.ran()) for _ in range(n)
+        ]
         return self.make_image_batch(img_pairs)
 
     def random_tensor_batch(self, n: Optional[int] = None) -> BatchHintTensor:
@@ -129,26 +133,10 @@ class RanMtgEncDecDataset(IterableDataset):
         for card, bg0 in img_pairs:
             _, bg1 = random.choice(img_pairs)
             if self.targets:
-                ys.append(
-                    SyntheticBgFgMtgImages.make_cropped(card, size_hw=self.y_size_hw)
-                )
-            xs0.append(
-                SyntheticBgFgMtgImages.make_virtual(
-                    card,
-                    bg0,
-                    size_hw=self.x_size_hw,
-                    half_upsidedown=self.half_upsidedown,
-                )
-            )
+                ys.append(self.synth.make_target_card(card))
+            xs0.append(self.synth.make_synthetic_input_card(card, bg0))
             if self.paired:
-                xs1.append(
-                    SyntheticBgFgMtgImages.make_virtual(
-                        card,
-                        bg1,
-                        size_hw=self.x_size_hw,
-                        half_upsidedown=self.half_upsidedown,
-                    )
-                )
+                xs1.append(self.synth.make_synthetic_input_card(card, bg1))
         # stack
         return {
             "x": np.stack(xs0, axis=0),
@@ -667,21 +655,21 @@ class Config(pydantic.BaseModel):
     img_type: ScryfallImageType = ScryfallImageType.small
     bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
     force_download: bool = False
-    half_upsidedown: bool = False
+    half_upsidedown: bool = True
     # model
     model_name: str = "cnvnxt2ae_base_12"
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
     optimizer: Literal["adam", "radam"] = "adam"
-    learning_rate: float = 5e-5
-    weight_decay: float = 1e-9  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-8  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
     batch_size: int = 16
     gradient_clip_val: float = 0.5
-    accumulate_grad_batches: int = 4
+    accumulate_grad_batches: int = 2
     # loss
     loss_recon: Optional[str] = "ssim5+l1"  # 'ssim5+l1'
-    loss_contrastive: Optional[str] = "none"  # ntxent
+    loss_contrastive: Optional[str] = "ntxent"  # ntxent
     loss_contrastive_batched: bool = False
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
@@ -706,7 +694,7 @@ class Config(pydantic.BaseModel):
 if __name__ == "__main__":
     sys.argv.extend(
         [
-            "--prefix=cnxt2",
+            "--prefix=cnxt2_ntxent",
             # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6__dvea3b14/checkpoints/epoch=0-step=67500.ckpt",
             # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.2__o0yxl20m/checkpoints/epoch=0-step=125000.ckpt",
             # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.2__5u5qqmvz/checkpoints/epoch=0-step=217500.ckpt",
