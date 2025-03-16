@@ -28,10 +28,12 @@ import uuid
 from pathlib import Path
 from typing import Iterator
 
+import cv2
 import numpy as np
 from math import ceil
 import random
 import albumentations as A
+from albumentations.core.composition import TransformsSeqType
 
 from mtgdata import ScryfallDataset, ScryfallImageType
 import mtgvision.util.image as uimg
@@ -46,6 +48,50 @@ from mtgdata.scryfall import ScryfallCardFace
 DATASETS_ROOT = Path(__file__).parent.parent.parent / "mtg-dataset/mtgdata/data"
 
 print(f"DATASETS_ROOT={DATASETS_ROOT}")
+
+
+class _SomeOf(A.SomeOf):
+    # https://github.com/albumentations-team/albumentations/issues/2474
+    def __init__(
+        self,
+        transforms: TransformsSeqType,
+        n: int = 1,
+        replace: bool = False,
+        p: float = 1,
+    ):
+        # wrap each transform in with a wrapper that removes the kwargs "force_apply" from __call__
+        transforms = [A.Compose([t], p=1.0) for t in transforms]
+        super().__init__(transforms=transforms, n=n, replace=replace, p=p)
+
+
+class _RandomOrder(A.RandomOrder):
+    # https://github.com/albumentations-team/albumentations/issues/2474
+    def __init__(
+        self,
+        transforms: TransformsSeqType,
+        n: int = 1,
+        replace: bool = False,
+        p: float = 1,
+    ):
+        # wrap each transform in with a wrapper that removes the kwargs "force_apply" from __call__
+        transforms = [A.Compose([t], p=1.0) for t in transforms]
+        super().__init__(transforms=transforms, n=n, replace=replace, p=p)
+
+
+def compose(*args, p=1.0):
+    return A.Compose(list(args), p=p)
+
+
+def some_of(*args, n=None, p=1.0):
+    return _SomeOf(list(args), n=n or len(args), p=p)
+
+
+def random_order(*args, n=None, p=1.0):
+    return _RandomOrder(list(args), n=n or len(args), p=p)
+
+
+def one_of(*args, p=1.0):
+    return A.OneOf(list(args), p=p)
 
 
 # ========================================================================= #
@@ -197,72 +243,75 @@ class SyntheticBgFgMtgImages:
 
         # Upside down augment
         if half_upsidedown:
-            self._aug_upsidedown = A.Compose(
-                [A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0)], p=0.5
+            self._aug_upsidedown = compose(
+                A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0), p=0.5
             )
         else:
             self._aug_upsidedown = A.NoOp()
 
         # Make augments
-        self._aug_bg = A.RandomOrder(
-            [
-                A.HorizontalFlip(p=0.5),
-                A.VerticalFlip(p=0.5),
-                A.Rotate(p=1.0, limit=(0, 360)),
-                A.ColorJitter(
-                    p=0.9, brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5
-                ),
-            ],
-            n=100,
+        self._aug_bg = compose(
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.Rotate(p=1.0, limit=(0, 360)),
+            A.ColorJitter(p=0.9, brightness=0.5, contrast=0.5, saturation=0.5, hue=0.2),
         )
 
-        self._aug_fg = A.RandomOrder(
-            [
+        self._aug_fg = random_order(
+            compose(
                 A.ShiftScaleRotate(
                     p=1.0,
                     shift_limit=(-0.0625, 0.0625),
-                    scale_limit=(0, 0),
+                    scale_limit=(-0.2, 0.0),
                     rotate_limit=(-5, 5),
+                    interpolation=cv2.INTER_CUBIC,
+                    mask_interpolation=cv2.INTER_CUBIC,
                 ),
-                A.Perspective(p=1.0, scale=(0, 0.1)),
-                A.ColorJitter(
-                    p=0.9, brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5
+                A.Perspective(
+                    p=1.0,
+                    scale=(0, 0.075),
+                    interpolation=cv2.INTER_CUBIC,
+                    mask_interpolation=cv2.INTER_CUBIC,
                 ),
-            ],
-            n=100,
+                p=0.8,
+            ),
+            A.Erasing(
+                p=0.2,
+                scale=(0.2, 0.7),
+                fill="random_uniform",
+            ),
+            A.ColorJitter(p=0.5, brightness=0.3, contrast=0.3, saturation=0.0, hue=0.0),
         )
 
-        self._aug_vrtl = A.RandomOrder(
-            [
-                A.OneOf(
-                    [
-                        A.GaussianBlur(p=0.5, blur_limit=7),
-                        A.MotionBlur(p=0.5, blur_limit=7),
-                        A.MedianBlur(p=0.5, blur_limit=7),
-                    ],
-                    p=1.0,
+        self._aug_vrtl = random_order(
+            random_order(
+                one_of(
+                    A.GaussianBlur(p=1.0, blur_limit=7),
+                    A.MotionBlur(p=1.0, blur_limit=7),
+                    A.MedianBlur(p=1.0, blur_limit=7),
+                    p=0.5,
                 ),
-                A.OneOf(
-                    [
-                        A.ISONoise(p=0.5, intensity=(0.1, 0.5)),
-                        A.RandomFog(p=0.5),
-                        A.ShotNoise(p=0.5),
-                        A.AdditiveNoise(p=0.5),
-                        A.MultiplicativeNoise(p=0.5),
-                        A.GaussNoise(),
-                    ],
-                    p=1.0,
+                A.ImageCompression(p=0.25, quality_range=(98, 100)),
+                A.Downscale(p=0.25, scale_range=(0.2, 0.9)),
+                p=0.5,
+            ),
+            one_of(
+                A.ISONoise(p=1.0, intensity=(0.1, 0.5)),
+                A.RandomFog(p=1.0),
+                A.ShotNoise(p=1.0),
+                A.AdditiveNoise(p=1.0),
+                # A.MultiplicativeNoise(p=0.5),
+                A.GaussNoise(p=1.0),
+                A.SaltAndPepper(p=1.0),
+                p=0.5,
+            ),
+            one_of(
+                A.ColorJitter(
+                    p=1.0, brightness=0.8, contrast=0.5, saturation=0.3, hue=0.1
                 ),
-                A.OneOf(
-                    [
-                        A.ColorJitter(
-                            p=0.9, brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5
-                        ),
-                    ],
-                    p=1.0,
-                ),
-            ],
-            n=100,
+                A.RandomGamma(p=1.0, gamma_limit=(80, 120)),
+                p=1.0,
+            ),
         )
 
     # GET IMAGES - NO AUGMENTS
