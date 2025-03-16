@@ -41,7 +41,7 @@ from PIL import Image
 T = TypeVar("T")
 
 
-def ensure_float32(fn: T) -> T:
+def ensure_uint8(fn: T) -> T:
     """
     Decorator to ensure that a function returns a numpy array of type np.float32.
     """
@@ -53,9 +53,9 @@ def ensure_float32(fn: T) -> T:
             raise Exception(
                 f"Function {fn.__name__} did not return a numpy array, got: {type(result)}"
             )
-        if result.dtype != np.float32:
+        if result.dtype != np.uint8:
             raise Exception(
-                f"Function {fn.__name__} did not return a numpy array of type {np.float32}, got: {result.dtype}"
+                f"Function {fn.__name__} did not return a numpy array of type {np.uint8}, got: {result.dtype}"
             )
         return result
 
@@ -85,6 +85,16 @@ def imread_float32(path: str | PathLike) -> np.ndarray[np.float32]:
     if img is None:
         raise Exception("Image not found: {}".format(str(path)))
     return img_float32(img)
+
+
+def imread_uint8(path: str | PathLike) -> np.ndarray[np.uint8]:
+    """
+    Read an image from disk, and convert it to a uint8 image in range [0, 255].
+    """
+    img = cv2.imread(str(path))
+    if img is None:
+        raise Exception("Image not found: {}".format(str(path)))
+    return img_uint8(img)
 
 
 def _imshow(image, window_name="image", scale=1):
@@ -142,9 +152,9 @@ def img_uint8(img: np.ndarray | Image.Image) -> np.ndarray[np.uint8]:
         if img.dtype in [np.uint8]:
             return img
         elif img.dtype in [np.float16, np.float32, np.float64]:
-            return np.multiply(img_clip(img), 255.0, dtype=np.uint8)
+            return (img_clip(img) * 255.0).astype(np.uint8)
         elif img.dtype in [np.int32]:
-            return img_clip(img)
+            return img_clip(img).astype(np.uint8)
         else:
             raise Exception(f"Unsupported Numpy Type: {img.dtype}")
     else:
@@ -176,7 +186,7 @@ def img_float32(img: np.ndarray | Image.Image) -> np.ndarray[np.float32]:
 # ============================================================================ #
 
 
-@ensure_float32
+@ensure_uint8
 def rgba_over_rgb(
     fg_rgba: np.ndarray[np.float32 | np.uint8],
     bg_rgb: np.ndarray[np.float32 | np.uint8],
@@ -217,7 +227,7 @@ def rgb_mask_over_rgb(
 # ============================================================================ #
 
 
-@ensure_float32
+@ensure_uint8
 def resize(
     img: np.ndarray, size_hw: tuple[int, int], shrink: bool = True
 ) -> np.ndarray:
@@ -231,7 +241,7 @@ def resize(
     )
 
 
-@ensure_float32
+@ensure_uint8
 def remove_border_resized(
     img: np.ndarray, border_width: int, size_hw: tuple[int, int] = None
 ) -> np.ndarray:
@@ -243,7 +253,7 @@ def remove_border_resized(
     return crop
 
 
-@ensure_float32
+@ensure_uint8
 def crop_to_size(
     img: np.ndarray, size_hw: tuple[int, int], pad: bool = False
 ) -> np.ndarray:
@@ -274,7 +284,7 @@ def crop_to_size(
     return ret
 
 
-@ensure_float32
+@ensure_uint8
 def rotate_bounded(img: np.ndarray, deg: float) -> np.ndarray:
     """
     Rotate an image by a specified number of degrees, the image is bounded
@@ -300,7 +310,7 @@ def rotate_bounded(img: np.ndarray, deg: float) -> np.ndarray:
 # ========================================================================= #
 
 
-@ensure_float32
+@ensure_uint8
 def round_rect_mask(
     size_hw: tuple[int, int], radius: int | None = None, radius_ratio: float = 0.045
 ) -> np.ndarray:
@@ -319,4 +329,4 @@ def round_rect_mask(
     img[:radius, x1 - radius :] = np.rot90(corner, 1)  # tr
     img[:radius, :radius] = np.rot90(corner, 2)  # tl
     img[y1 - radius :, :radius] = np.rot90(corner, 3)  # bl
-    return img
+    return img_uint8(img)
