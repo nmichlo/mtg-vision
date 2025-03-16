@@ -454,16 +454,6 @@ def convnextv2ae_tiny(**kwargs):
     return model
 
 
-def convnextv2ae_tiny_12(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 12, 3), dims=(96, 192, 384, 768), **kwargs)
-    return model
-
-
-def convnextv2ae_tiny_18(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 18, 3), dims=(96, 192, 384, 768), **kwargs)
-    return model
-
-
 def convnextv2ae_tiny_9_128(**kwargs):
     model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(128, 256, 384, 768), **kwargs)
     return model
