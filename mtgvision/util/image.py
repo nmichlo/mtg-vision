@@ -23,11 +23,10 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
-import base64
 import functools
 from math import ceil
 from os import PathLike
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 import cv2
 import numpy as np
@@ -187,16 +186,29 @@ def rgba_over_rgb(
     images in range [0, 1] and int or uint images in range [0, 255]. Both must
     be the same type and size.
     """
-    alpha = fg_rgba[:, :, 3]
-    fg = cv2.merge(
-        (fg_rgba[:, :, 0] * alpha, fg_rgba[:, :, 1] * alpha, fg_rgba[:, :, 2] * alpha)
+    assert fg_rgba.ndim == 3 and fg_rgba.shape[2] == 4
+    assert bg_rgb.ndim == 3 and bg_rgb.shape[2] == 3
+    return rgb_mask_over_rgb(
+        fg_rgb=fg_rgba[:, :, :3], fg_mask=fg_rgba[:, :, 3], bg_rgb=bg_rgb
     )
-    alpha = 1 - alpha
-    bg = cv2.merge(
-        (bg_rgb[:, :, 0] * alpha, bg_rgb[:, :, 1] * alpha, bg_rgb[:, :, 2] * alpha)
-    )
-    ret = img_clip(bg + fg)
-    return ret
+
+
+def rgb_mask_over_rgb(
+    fg_rgb: np.ndarray[np.float32 | np.uint8],
+    fg_mask: np.ndarray[np.float32 | np.uint8],
+    bg_rgb: np.ndarray[np.float32 | np.uint8],
+):
+    """
+    Merge a foreground RGB image with a mask image over a background RGB image,
+    supports float images in range [0, 1] and int or uint images in range [0, 255].
+    All images must be the same type and size.
+    """
+    assert fg_rgb.ndim == 3 and fg_rgb.shape[2] == 3
+    assert fg_mask.ndim == 2
+    assert bg_rgb.ndim == 3 and bg_rgb.shape[2] == 3
+    fg = fg_rgb * fg_mask[..., None]
+    bg = bg_rgb * (1 - fg_mask[..., None])
+    return img_clip(bg + fg)
 
 
 # ============================================================================ #

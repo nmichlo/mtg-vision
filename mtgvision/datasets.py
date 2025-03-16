@@ -28,7 +28,6 @@ import uuid
 from pathlib import Path
 from typing import Iterator
 
-import cv2
 import numpy as np
 from math import ceil
 import random
@@ -47,7 +46,6 @@ from mtgdata.scryfall import ScryfallCardFace
 DATASETS_ROOT = Path(__file__).parent.parent.parent / "mtg-dataset/mtgdata/data"
 
 print(f"DATASETS_ROOT={DATASETS_ROOT}")
-
 
 
 # ========================================================================= #
@@ -69,23 +67,19 @@ class _BaseImgDataset(abc.ABC):
             return uimg.img_float32(path_or_img)
 
     @abc.abstractmethod
-    def __getitem__(self, item) -> np.ndarray:
-        ...
+    def __getitem__(self, item) -> np.ndarray: ...
 
     @abc.abstractmethod
-    def __iter__(self):
-        ...
+    def __iter__(self): ...
 
     @abc.abstractmethod
-    def __len__(self) -> int:
-        ...
+    def __len__(self) -> int: ...
 
     def ran(self) -> np.ndarray:
         return self._load_image(self.ran_path())
 
     @abc.abstractmethod
-    def ran_path(self):
-        ...
+    def ran_path(self): ...
 
     def get(self, idx) -> np.ndarray:
         return self.__getitem__(idx)
@@ -181,149 +175,184 @@ class MtgImages(_BaseImgDataset):
 # ========================================================================= #
 
 
-
 SizeHW = tuple[int, int]
 PathOrImg = str | np.ndarray
 
 
 class SyntheticBgFgMtgImages:
-
     def __init__(
         self,
         ds_mtg: MtgImages | None = None,
         ds_bg: IlsvrcImages | None = None,
+        *,
+        half_upsidedown: bool = False,
+        default_x_size_hw: SizeHW = (192, 128),
+        default_y_size_hw: SizeHW = (192, 128),
     ):
         self.ds_mtg = ds_mtg if (ds_mtg is not None) else MtgImages()
         self.ds_bg = ds_bg if (ds_bg is not None) else IlsvrcImages()
+
+        self._default_x_size_hw = default_x_size_hw
+        self._default_y_size_hw = default_y_size_hw
+
+        # Upside down augment
+        if half_upsidedown:
+            self._aug_upsidedown = A.Compose(
+                [A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0)], p=0.5
+            )
+        else:
+            self._aug_upsidedown = A.NoOp()
+
         # Make augments
-        self._aug_bg = A.Compose([
-            A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.5),
-            A.Rotate(limit=(0, 360), p=1.0),
-            A.Perspective(scale=(0.05, 0.15), p=1.0),
-            A.OneOf([
-                A.RandomBrightnessContrast(brightness_limit=0.5, contrast_limit=0.5),
-                A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20),
-            ], p=0.5),
-
-        ])
-
-
-
-    # OLD
-    _RAN_BG = uran.ApplyShuffled(
-        uran.ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
-        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
-    )
-    _RAN_FG = uran.ApplyOrdered(
-        uran.ApplyShuffled(
-            Mutate.warp,
-            uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
+        self._aug_bg = A.RandomOrder(
+            [
+                A.HorizontalFlip(p=0.5),
+                A.VerticalFlip(p=0.5),
+                A.Rotate(p=1.0, limit=(0, 360)),
+                A.ColorJitter(
+                    p=0.9, brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5
+                ),
+            ],
+            n=100,
         )
-    )
-    _RAN_VRTL = uran.ApplyShuffled(
-        uran.ApplyChoice(Mutate.blur, None),
-        uran.ApplyChoice(Mutate.noise, None),
-        uran.ApplyChoice(Mutate.tint, None),
-        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
-    )
 
-    @staticmethod
-    def make_cropped(
-        path_or_img: PathOrImg,
-        size_hw: SizeHW | None = None,
-        half_upsidedown: bool = False,
-    ):
-        card = (
-            uimg.imread_float(path_or_img)
+        self._aug_fg = A.RandomOrder(
+            [
+                A.ShiftScaleRotate(
+                    p=1.0,
+                    shift_limit=(-0.0625, 0.0625),
+                    scale_limit=(0, 0),
+                    rotate_limit=(-5, 5),
+                ),
+                A.Perspective(p=1.0, scale=(0, 0.1)),
+                A.ColorJitter(
+                    p=0.9, brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5
+                ),
+            ],
+            n=100,
+        )
+
+        self._aug_vrtl = A.RandomOrder(
+            [
+                A.OneOf(
+                    [
+                        A.GaussianBlur(p=0.5, blur_limit=7),
+                        A.MotionBlur(p=0.5, blur_limit=7),
+                        A.MedianBlur(p=0.5, blur_limit=7),
+                    ],
+                    p=1.0,
+                ),
+                A.OneOf(
+                    [
+                        A.ISONoise(p=0.5, intensity=(0.1, 0.5)),
+                        A.RandomFog(p=0.5),
+                        A.ShotNoise(p=0.5),
+                        A.AdditiveNoise(p=0.5),
+                        A.MultiplicativeNoise(p=0.5),
+                        A.GaussNoise(),
+                    ],
+                    p=1.0,
+                ),
+                A.OneOf(
+                    [
+                        A.ColorJitter(
+                            p=0.9, brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5
+                        ),
+                    ],
+                    p=1.0,
+                ),
+            ],
+            n=100,
+        )
+
+    # GET IMAGES - NO AUGMENTS
+
+    @classmethod
+    def _get_img(cls, path_or_img):
+        return (
+            uimg.imread_float32(path_or_img)
             if isinstance(path_or_img, str)
-            else path_or_img
+            else uimg.img_float32(path_or_img)
         )
+
+    def _get_card(self, card_path_or_img: PathOrImg | None) -> np.ndarray:
+        if card_path_or_img is None:
+            return self.ds_mtg.ran()
+        return self._get_img(card_path_or_img)
+
+    def _get_bg(self, bg_path_or_img: PathOrImg | None) -> np.ndarray:
+        if bg_path_or_img is None:
+            return self.ds_bg.ran()
+        return self._get_img(bg_path_or_img)
+
+    # AUGMENTED
+
+    def make_target_card(
+        self, card_path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
+    ) -> np.ndarray:
+        card = self._get_card(card_path_or_img)
         ret = uimg.remove_border_resized(
             img=card,
             border_width=ceil(max(0.02 * card.shape[0], 0.02 * card.shape[1])),
-            size_hw=size_hw,
-        )
-        return (
-            uran.ApplyChoice(Mutate.upsidedown, None)(ret) if half_upsidedown else ret
-        )
-
-    @classmethod
-    def make_masked(cls, path_or_img: PathOrImg) -> np.ndarray:
-        card = (
-            uimg.imread_float(path_or_img)
-            if isinstance(path_or_img, str)
-            else path_or_img
-        )
-        mask = uimg.round_rect_mask(card.shape[:2], radius_ratio=0.05)
-        ret = cv2.merge(
-            (
-                card[:, :, 0],
-                card[:, :, 1],
-                card[:, :, 2],
-                mask,
-            )
+            size_hw=size_hw or self._default_y_size_hw,
         )
         return ret
 
-    @classmethod
-    def make_bg(cls, bg_path_or_img: PathOrImg, size_hw: SizeHW) -> np.ndarray:
-        bg = (
-            uimg.imread_float(bg_path_or_img)
-            if isinstance(bg_path_or_img, str)
-            else bg_path_or_img
-        )
-        bg = cls._RAN_BG(bg)
-        bg = uimg.crop_to_size(bg, size_hw)
+    def _make_aug_card_and_mask(
+        self, path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        # create card and resize
+        card = self._get_card(path_or_img)
+        card = self._aug_upsidedown(image=card)["image"]
+        card = uimg.resize(card, size_hw=size_hw or self._default_x_size_hw)
+        # crop card and mask
+        mask = uimg.round_rect_mask(card.shape[:2], radius_ratio=0.05)
+        # augment
+        transformed = self._aug_fg(image=card, mask=mask)
+        return transformed["image"], transformed["mask"]
+
+    def _make_aug_bg(
+        self, bg_path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
+    ) -> np.ndarray:
+        bg = self._get_bg(bg_path_or_img)
+        # augment
+        bg = self._aug_bg(image=bg)["image"]
+        # resize
+        bg = uimg.crop_to_size(bg, size_hw or self._default_x_size_hw)
         return bg
 
-    @classmethod
-    def make_virtual(
-        cls,
-        card_path_or_img: PathOrImg,
-        bg_path_or_img: PathOrImg,
-        size_hw: SizeHW,
-        half_upsidedown: bool = False,
+    def make_synthetic_input_card(
+        self,
+        card_path_or_img: PathOrImg | None = None,
+        bg_path_or_img: PathOrImg | None = None,
+        size_hw: SizeHW | None = None,
     ) -> np.ndarray:
-        card = (
-            uimg.imread_float(card_path_or_img)
-            if isinstance(card_path_or_img, str)
-            else card_path_or_img
-        )
-        card = (
-            uran.ApplyChoice(Mutate.upsidedown, None)(card) if half_upsidedown else card
-        )
+        size_hw = size_hw or self._default_x_size_hw
         # fg - card
-        fg = cls.make_masked(card)
-        fg = uimg.crop_to_size(fg, size_hw, pad=True)
-        fg = cls._RAN_FG(fg)
+        fg, fg_mask = self._make_aug_card_and_mask(card_path_or_img, size_hw=size_hw)
         # bg
-        bg = cls.make_bg(bg_path_or_img, size_hw)
+        bg = self._make_aug_bg(bg_path_or_img, size_hw=size_hw)
         # merge
-        virtual = uimg.rgba_over_rgb(fg, bg)
-        virtual = cls._RAN_VRTL(virtual)
-        assert virtual.shape[:2] == size_hw
-        return virtual
+        synthetic_card = uimg.rgb_mask_over_rgb(fg, fg_mask, bg)
+        synthetic_card = self._aug_vrtl(image=synthetic_card)["image"]
+        # checks
+        assert synthetic_card.shape[:2] == size_hw, (
+            f"Expected size_hw={size_hw}, got={synthetic_card.shape[:2]}"
+        )
+        return synthetic_card
 
-    @classmethod
-    def make_virtual_pair(
-        cls,
-        card_path_or_img: PathOrImg,
-        bg_path_or_img: PathOrImg,
-        x_size_hw: SizeHW,
-        y_size_hw: SizeHW,
-        half_upsidedown: bool = False,
+    def make_synthetic_input_and_target_card_pair(
+        self,
+        card_path_or_img: PathOrImg | None = None,
+        bg_path_or_img: PathOrImg | None = None,
+        x_size_hw: SizeHW | None = None,
+        y_size_hw: SizeHW | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        card = (
-            uimg.imread_float(card_path_or_img)
-            if isinstance(card_path_or_img, str)
-            else card_path_or_img
-        )
+        # ensure the same card is used for both x and y
+        card = self._get_card(card_path_or_img)
         # only inputs are flipped
-        x = cls.make_virtual(
-            card, bg_path_or_img, size_hw=x_size_hw, half_upsidedown=half_upsidedown
-        )
-        y = cls.make_cropped(card, size_hw=y_size_hw)
+        x = self.make_synthetic_input_card(card, bg_path_or_img, size_hw=x_size_hw)
+        y = self.make_target_card(card, size_hw=y_size_hw)
         return x, y
 
 
@@ -333,8 +362,7 @@ class SyntheticBgFgMtgImages:
 
 
 if __name__ == "__main__":
-
-    virtual = SyntheticBgFgMtgImages(
+    ds = SyntheticBgFgMtgImages(
         ds_mtg=MtgImages(),
         ds_bg=IlsvrcImages(),
         default_x_size_hw=(192, 128),
@@ -343,12 +371,6 @@ if __name__ == "__main__":
     )
 
     while True:
-        x, y = virtual.make_virtual_pair()
+        x, y = ds.make_synthetic_input_and_target_card_pair()
         uimg.imshow_loop(x, "x")
-        uimg.imshow_loop(y, "y"
-
-
-# ========================================================================= #
-# Dataset - Multi-Card YOLO Dataset                                        #
-# ========================================================================= #
-
+        # uimg.imshow_loop(y, "y")
