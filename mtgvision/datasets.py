@@ -29,7 +29,6 @@ from os import PathLike
 from pathlib import Path
 from typing import Iterator
 
-import cv2
 import numpy as np
 from math import ceil
 import random
@@ -44,105 +43,11 @@ import mtgvision.util.files as ufls
 from mtgdata.scryfall import ScryfallCardFace
 
 
-import functools
-from typing import TypeVar, Tuple
+from typing import Tuple
 
 
 # Assuming these are custom utility modules; replace with actual imports if different
 import mtgvision.util.random as uran
-
-
-# ========================================================================= #
-# RANDOM TRANSFORMS                                                         #
-# ========================================================================= #
-
-
-class Mutate:
-    """
-    A collection of image random image transformations.
-    # TODO: replace with random transforms from e.g. albumentations
-    """
-
-    @staticmethod
-    def flip(img, horr=True, vert=True):
-        return uimg.flip(
-            img,
-            horr=horr and (random.random() >= 0.5),
-            vert=vert and (random.random() >= 0.5),
-        )
-
-    @staticmethod
-    def rotate_bounded(img, deg_min=0, deg_max=360):
-        return uimg.rotate_bounded(
-            img, deg_min + np.random.random() * (deg_max - deg_min)
-        )
-
-    @staticmethod
-    def upsidedown(img):
-        return np.rot90(img, k=2)
-
-    @staticmethod
-    def warp(img, warp_ratio=0.15, warp_ratio_min=-0.05):
-        # [top left, top right, bottom left, bottom right]
-        (h, w) = (img.shape[0] - 1, img.shape[1] - 1)
-        src_pts = np.asarray([(0, 0), (0, w), (h, 0), (h, w)], dtype=np.float32)
-        ran = warp_ratio_min + np.random.rand(4, 2) * (
-            abs(warp_ratio - warp_ratio_min) * 0.5
-        )
-        dst_pts = (
-            ran * np.asarray([(h, w), (h, -w), (-h, w), (-h, -w)], dtype=np.float32)
-            + src_pts
-        )
-        dst_pts = np.asarray(dst_pts, dtype=np.float32)
-        # transform matrix
-        transform = cv2.getPerspectiveTransform(src_pts, dst_pts)
-        # warp
-        return cv2.warpPerspective(img, transform, (img.shape[1], img.shape[0]))
-
-    @staticmethod
-    def warp_inv(img, warp_ratio=0.5, warp_ratio_min=0.25):
-        return Mutate.warp(img, warp_ratio=-warp_ratio, warp_ratio_min=-warp_ratio_min)
-
-    @staticmethod
-    def noise(img, amount=0.75):
-        noise_type = random.choice(["speckle", "gaussian", "pepper", "poisson"])
-        if noise_type == "speckle":
-            noisy = uimg.noise_speckle(img, strength=0.3)
-        elif noise_type == "gaussian":
-            noisy = uimg.noise_gaussian(img, mean=0, var=0.05)
-        elif noise_type == "pepper":
-            noisy = uimg.noise_salt_pepper(img, strength=0.1, svp=0.5)
-        elif noise_type == "poisson":
-            noisy = uimg.noise_poisson(img, peak=0.8, amount=0.5)
-        else:
-            raise Exception("Invalid Choice")
-        ratio = np.random.random() * amount
-        img[:, :, :3] = (ratio) * noisy[:, :, :3] + (1 - ratio) * img[:, :, :3]
-        return img
-
-    @staticmethod
-    def blur(img, n_max=3):
-        n = np.random.randint(0, (n_max - 1) // 2 + 1) * 2 + 1
-        return cv2.GaussianBlur(img, (n, n), 0)
-
-    @staticmethod
-    def tint(img, amount=0.15):
-        for i in range(3):
-            r = 1 + amount * (2 * np.random.random() - 1)
-            img[:, :, i] = uimg.img_clip(r * img[:, :, i])
-        return img
-
-    @staticmethod
-    def fade_white(img, amount=0.33):
-        ratio = np.random.random() * amount
-        img[:, :, :3] = (ratio) * 1 + (1 - ratio) * img[:, :, :3]
-        return img
-
-    @staticmethod
-    def fade_black(img, amount=0.5):
-        ratio = np.random.random() * amount
-        img[:, :, :3] = (ratio) * 0 + (1 - ratio) * img[:, :, :3]
-        return img
 
 
 # ========================================================================= #
@@ -328,205 +233,6 @@ class MtgImages(_BaseImgDataset):
 SizeHW = tuple[int, int]
 PathOrImg = str | np.ndarray | PathLike
 
-# ========================================================================= #
-# VARS & UTILITIES                                                          #
-# ========================================================================= #
-
-T = TypeVar("T")
-
-
-def ensure_float32(fn: T) -> T:
-    """Decorator to ensure transform functions return dicts with float32 images and masks."""
-
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        result = fn(*args, **kwargs)
-        if not isinstance(result, dict):
-            raise Exception(
-                f"Function {fn.__name__} did not return a dict, got: {type(result)}"
-            )
-        if "image" not in result or "mask" not in result:
-            raise Exception(
-                f"Function {fn.__name__} did not return a dict with 'image' and 'mask'"
-            )
-        if (
-            not isinstance(result["image"], np.ndarray)
-            or result["image"].dtype != np.float32
-        ):
-            raise Exception(
-                f"Function {fn.__name__} did not return 'image' as np.float32"
-            )
-        if (
-            not isinstance(result["mask"], np.ndarray)
-            or result["mask"].dtype != np.float32
-        ):
-            raise Exception(
-                f"Function {fn.__name__} did not return 'mask' as np.float32"
-            )
-        return result
-
-    return wrapper
-
-
-# ========================================================================= #
-# TRANSFORM FUNCTIONS                                                       #
-# ========================================================================= #
-
-
-@ensure_float32
-def my_flip_horr(data: dict) -> dict:
-    """Flip image and mask horizontally."""
-    img = uimg.flip_horr(data["image"])
-    mask = uimg.flip_horr(data["mask"])
-    return {"image": img, "mask": mask}
-
-
-@ensure_float32
-def my_flip_vert(data: dict) -> dict:
-    """Flip image and mask vertically."""
-    img = uimg.flip_vert(data["image"])
-    mask = uimg.flip_vert(data["mask"])
-    return {"image": img, "mask": mask}
-
-
-@ensure_float32
-def my_rotate_bounded(data: dict, deg: float) -> dict:
-    """Rotate image and mask by a specified degree with bounding."""
-    img = uimg.rotate_bounded(data["image"], deg)
-    mask = uimg.rotate_bounded(data["mask"], deg)
-    return {"image": img, "mask": mask}
-
-
-@ensure_float32
-def my_upsidedown(data: dict) -> dict:
-    """Rotate image and mask 180 degrees."""
-    img = np.rot90(data["image"], k=2)
-    mask = np.rot90(data["mask"], k=2)
-    return {"image": img, "mask": mask}
-
-
-@ensure_float32
-def my_shift_scale_rotate(
-    data: dict,
-    shift_limit=(-0.0625, 0.0625),
-    scale_limit=(-0.2, 0.0),
-    rotate_limit=(-5, 5),
-) -> dict:
-    """Apply shift, scale, and rotation to image and mask."""
-    img = data["image"].copy()
-    mask = data["mask"].copy()
-    h, w = img.shape[:2]
-    shift_x = np.random.uniform(*shift_limit) * w
-    shift_y = np.random.uniform(*shift_limit) * h
-    scale = 1 + np.random.uniform(*scale_limit)
-    angle = np.random.uniform(*rotate_limit)
-    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, scale)
-    M[:, 2] += [shift_x, shift_y]
-    img_transformed = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_CUBIC)
-    mask_transformed = cv2.warpAffine(mask, M, (w, h), flags=cv2.INTER_CUBIC)
-    return {"image": img_transformed, "mask": mask_transformed}
-
-
-@ensure_float32
-def my_perspective(data: dict, scale=(0, 0.075)) -> dict:
-    """Apply perspective transform to image and mask."""
-    img = data["image"].copy()
-    mask = data["mask"].copy()
-    h, w = img.shape[:2]
-    src_pts = np.array(
-        [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)], dtype=np.float32
-    )
-    distortion = np.random.uniform(*scale)
-    offsets = distortion * np.array(
-        [[h, w], [-h, w], [h, -w], [-h, -w]], dtype=np.float32
-    )
-    dst_pts = src_pts + offsets
-    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-    img_transformed = cv2.warpPerspective(img, M, (w, h), flags=cv2.INTER_CUBIC)
-    mask_transformed = cv2.warpPerspective(mask, M, (w, h), flags=cv2.INTER_CUBIC)
-    return {"image": img_transformed, "mask": mask_transformed}
-
-
-@ensure_float32
-def my_erasing(data: dict, scale=(0.2, 0.7)) -> dict:
-    """Randomly erase a rectangular region in the image; mask unchanged."""
-    img = data["image"].copy()
-    mask = data["mask"]
-    h, w = img.shape[:2]
-    area = h * w
-    target_area = random.uniform(*scale) * area
-    aspect_ratio = random.uniform(0.3, 1 / 0.3)
-    rh = int((target_area * aspect_ratio) ** 0.5)
-    rw = int((target_area / aspect_ratio) ** 0.5)
-    if rh < h and rw < w:
-        x = random.randint(0, w - rw)
-        y = random.randint(0, h - rh)
-        fill_value = np.random.uniform(0, 1, size=(rh, rw, img.shape[2]))
-        img[y : y + rh, x : x + rw] = fill_value
-    return {"image": img, "mask": mask}
-
-
-@ensure_float32
-def my_tint(data: dict, amount=0.15) -> dict:
-    """Apply random tint to image; mask unchanged."""
-    img = data["image"].copy()
-    mask = data["mask"]
-    for i in range(3):
-        r = 1 + amount * (2 * np.random.random() - 1)
-        img[:, :, i] = uimg.img_clip(r * img[:, :, i])
-    return {"image": img, "mask": mask}
-
-
-@ensure_float32
-def my_blur(data: dict, n_max=7) -> dict:
-    """Apply blur to image; mask unchanged."""
-    img = Mutate.blur(data["image"], n_max=n_max)  # Assuming uimg.blur exists
-    mask = data["mask"]
-    return {"image": img, "mask": mask}
-
-
-@ensure_float32
-def my_image_compression(data: dict, quality_range=(98, 100)) -> dict:
-    """Apply JPEG compression to image; mask unchanged."""
-    img = data["image"].copy()
-    mask = data["mask"]
-    quality = random.randint(*quality_range)
-    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-    _, encimg = cv2.imencode(".jpg", (img * 255).astype(np.uint8), encode_param)
-    img_transformed = cv2.imdecode(encimg, cv2.IMREAD_COLOR).astype(np.float32) / 255
-    return {"image": img_transformed, "mask": mask}
-
-
-@ensure_float32
-def my_downscale(data: dict, scale_range=(0.2, 0.9)) -> dict:
-    """Downscale and upscale image; mask unchanged."""
-    img = data["image"].copy()
-    mask = data["mask"]
-    scale = random.uniform(*scale_range)
-    h, w = img.shape[:2]
-    small_h, small_w = int(h * scale), int(w * scale)
-    small = cv2.resize(img, (small_w, small_h), interpolation=cv2.INTER_AREA)
-    img_transformed = cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC)
-    return {"image": img_transformed, "mask": mask}
-
-
-@ensure_float32
-def my_noise(data: dict, var=0.05) -> dict:
-    """Add Gaussian noise to image; mask unchanged."""
-    img = uimg.noise_gaussian(data["image"], mean=0, var=var)
-    mask = data["mask"]
-    return {"image": img, "mask": mask}
-
-
-@ensure_float32
-def my_gamma(data: dict, gamma_limit=(80, 120)) -> dict:
-    """Adjust gamma of image; mask unchanged."""
-    img = data["image"].copy()
-    mask = data["mask"]
-    gamma = random.uniform(gamma_limit[0], gamma_limit[1]) / 100
-    img_transformed = np.clip(img**gamma, 0, 1).astype(np.float32)
-    return {"image": img_transformed, "mask": mask}
-
 
 # ========================================================================= #
 # AUGMENTATION PIPELINES & MAIN CLASS                                       #
@@ -554,50 +260,52 @@ class SyntheticBgFgMtgImages:
 
         # Upside-down augmentation
         if half_upsidedown:
-            self._aug_upsidedown = uran.ApplyFn(my_upsidedown, p=0.5)
+            self._aug_upsidedown = uran.ApplyFn(uimg.my_upsidedown, p=0.5)
         else:
             self._aug_upsidedown = uran.NoOp()
 
         # Background augmentations (image only)
         self._aug_bg = uran.ApplySequence(
-            uran.ApplyFn(my_flip_horr, p=0.5),
-            uran.ApplyFn(my_flip_vert, p=0.5),
+            uran.ApplyFn(uimg.my_flip_horr, p=0.5),
+            uran.ApplyFn(uimg.my_flip_vert, p=0.5),
             uran.ApplyFn(
-                lambda data: my_rotate_bounded(data, deg=random.uniform(0, 360))
+                lambda data: uimg.my_rotate_bounded(data, deg=random.uniform(0, 360))
             ),
-            uran.ApplyFn(my_tint, amount=0.15, p=0.9),
+            uran.ApplyFn(uimg.my_tint, amount=0.15, p=0.9),
         )
 
         # Foreground augmentations (image and mask)
         self._aug_fg = uran.ApplyShuffled(
             uran.ApplySequence(
                 uran.ApplyFn(
-                    my_shift_scale_rotate,
+                    uimg.my_shift_scale_rotate,
                     shift_limit=(-0.0625, 0.0625),
                     scale_limit=(-0.2, 0.0),
                     rotate_limit=(-5, 5),
                 ),
-                uran.ApplyFn(my_perspective, scale=(0, 0.075)),
+                uran.ApplyFn(uimg.my_perspective, scale=(0, 0.075)),
                 p=0.8,
             ),
-            uran.ApplyFn(my_erasing, scale=(0.2, 0.7), p=0.2),
-            uran.ApplyFn(my_tint, amount=0.15, p=0.5),
+            uran.ApplyFn(uimg.my_erasing, scale=(0.2, 0.7), p=0.2),
+            uran.ApplyFn(uimg.my_tint, amount=0.15, p=0.5),
         )
 
         # Virtual augmentations (image only)
         self._aug_vrtl = uran.ApplyShuffled(
             uran.ApplyFn(
                 uran.ApplyShuffled(
-                    uran.ApplyFn(my_blur, n_max=7, p=0.5),
-                    uran.ApplyFn(my_image_compression, quality_range=(98, 100), p=0.25),
-                    uran.ApplyFn(my_downscale, scale_range=(0.2, 0.9), p=0.25),
+                    uran.ApplyFn(uimg.my_blur, n_max=7, p=0.5),
+                    uran.ApplyFn(
+                        uimg.my_image_compression, quality_range=(98, 100), p=0.25
+                    ),
+                    uran.ApplyFn(uimg.my_downscale, scale_range=(0.2, 0.9), p=0.25),
                 ),
                 p=0.5,
             ),
-            uran.ApplyFn(my_noise, var=0.05, p=0.5),
+            uran.ApplyFn(uimg.my_noise, var=0.05, p=0.5),
             uran.ApplyOne(
-                uran.ApplyFn(my_tint, amount=0.15),
-                uran.ApplyFn(my_gamma, gamma_limit=(80, 120)),
+                uran.ApplyFn(uimg.my_tint, amount=0.15),
+                uran.ApplyFn(uimg.my_gamma, gamma_limit=(80, 120)),
                 p=1.0,
             ),
         )
@@ -727,5 +435,5 @@ if __name__ == "__main__":
     for i in tqdm(range(1000)):
         x, y = ds.make_synthetic_input_and_target_card_pair()
 
-        # uimg.imshow_loop(x, "x")
-        # uimg.imshow_loop(y, "y")
+        uimg.imshow_loop(x, "x")
+        uimg.imshow_loop(y, "y")
