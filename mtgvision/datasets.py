@@ -31,6 +31,8 @@ import numpy as np
 from math import ceil
 import random
 
+from tqdm import tqdm
+
 from mtgdata import ScryfallDataset, ScryfallImageType
 import mtgvision.util.image as uimg
 import mtgvision.util.random as uran
@@ -372,13 +374,18 @@ if __name__ == "__main__":
     mtg = SyntheticBgFgMtgImages(img_type="small")
     ilsvrc = IlsvrcImages()
 
-    while True:
+    for i in tqdm(range(10)):
         _o = mtg.ran()
         _l = ilsvrc.ran()
 
-        x, y = SyntheticBgFgMtgImages.make_virtual_pair(
-            _o, _l, (192, 128), (192, 128), True
-        )
+    # 100%|██████████| 1000/1000 [00:03<00:00, 276.55it/s]
+    for i in tqdm(range(1000)):
+        _o = mtg.ran()
+        _l = ilsvrc.ran()
 
-        uimg.imshow_loop(x, "asdf")
-        uimg.imshow_loop(y, "asdf")
+        # x, y = SyntheticBgFgMtgImages.make_virtual_pair(
+        #     _o, _l, (192, 128), (192, 128), True
+        # )
+        #
+        # uimg.imshow_loop(x, "asdf")
+        # uimg.imshow_loop(y, "asdf")
