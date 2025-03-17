@@ -30,8 +30,8 @@ __all__ = [
     "SampleOf",
 ]
 
-import warnings
 from mtgvision.aug._base import AugItems, Augment, AugPrngHint
+from mtgvision.aug._util_args import ArgIntHint, ArgIntRange
 
 
 # ========================================================================= #
@@ -46,9 +46,7 @@ class _Chain(Augment):
         p: float = 1.0,
     ):
         super().__init__(p=p)
-        if not augments:
-            raise ValueError("At least one augment must be provided")
-        self._augments = augments
+        self._augments = augments or ()
 
     def _get_augments(self, prng: AugPrngHint):
         return self._augments
@@ -64,43 +62,24 @@ class _Shuffle(_Chain):
         self,
         *augments: Augment,
         p: float = 1.0,
-        n: int | tuple[int, int] | None = None,
+        n: ArgIntHint | None = None,
         replace: bool = False,
     ):
         super().__init__(*augments, p=p)
-        # CHECK N: int
-        if n is None:
-            n = len(augments)
-        if isinstance(n, int):
-            n = (n, n)
-        if len(n) != 2:
-            raise ValueError("n must be an int or a tuple of two ints")
-        # CHECK N: (LOW,HIGH)
-        low, high = n
-        if low < 1:
-            raise ValueError(f"(low, high) must be greater than 0, got: {n}")
-        if low > high:
-            raise ValueError(f"(low, high) must be in increasing order, got: {n}")
-        if high > len(augments):
-            warnings.warn(
-                "high is greater than the number of augments, reducing to the number of augments"
-            )
-            high = len(augments)
-        if low > len(augments):
-            warnings.warn(
-                "low is greater than the number of augments, reducing to the number of augments"
-            )
-            low = len(augments)
-        # SET N
-        self._n_low = low
-        self._n_high = high
+        self._n = ArgIntRange.from_arg(
+            n,
+            min_val=0,
+            max_val=len(augments),
+            clip_max=True,
+            default_val=len(augments),
+        )
         self._replace = replace
 
     def _get_augments(self, prng: AugPrngHint):
         """
         Sample the augments to apply, with or without replacement.
         """
-        k = prng.integers(self._n_low, self._n_high + 1)
+        k = self._n.sample(prng)
         return prng.choice(self._augments, size=k, replace=self._replace)
 
 

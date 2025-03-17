@@ -31,10 +31,18 @@ __all__ = [
     "RandomErasing",
 ]
 
+import math
+from typing import Literal
 
 import numpy as np
 from mtgvision.aug._base import AugItems, Augment, AugPrngHint, NpFloat32
-from mtgvision.aug._util_args import ArgFloatHint, ArgFloatRange
+from mtgvision.aug._util_args import (
+    ArgFloatHint,
+    ArgFloatRange,
+    ArgIntRange,
+    ArgStrLiterals,
+    ArgStrLiteralsHint,
+)
 
 
 # ========================================================================= #
@@ -71,13 +79,17 @@ def _rgb_img_inplace_noise_additive_gaussian(
 
 
 def _rgb_img_inplace_noise_poison(
-    prng: AugPrngHint, *, src: NpFloat32, strength: float = 0.1, eps: float = 0
+    prng: AugPrngHint,
+    *,
+    src: NpFloat32,
+    peak: float = 1.0,
+    eps: float = 0,
 ) -> NpFloat32:
-    src[...] = prng.poisson(src * strength) / (strength + eps)
+    src[...] = prng.poisson(src * 255 * peak) / (peak * 255 + eps)
     return src
 
 
-def _inplace_noise_salt_pepper(
+def _rgb_inplace_noise_salt_pepper(
     prng: AugPrngHint,
     *,
     src: NpFloat32,
@@ -97,6 +109,57 @@ def _inplace_noise_salt_pepper(
         ix = prng.integers(0, src.shape[0], num_noise)
         iy = prng.integers(0, src.shape[1], num_noise)
         src[ix, iy, :] = salt_or_pepper[:, None]
+    return src
+
+
+def _rgb_inplace_random_erasing(
+    prng: AugPrngHint,
+    *,
+    src: NpFloat32,
+    scale_min_max: tuple[float, float] = (0.2, 0.7),  # [0, 1]
+    aspect_min_max: tuple[float, float] = (1, 3),  # [1, inf]
+    color: Literal[
+        "random", "uniform_random", "zero", "one", "mean"
+    ] = "uniform_random",
+    inside: bool = True,
+) -> NpFloat32:
+    h, w = src.shape[:2]
+    # scale
+    scale = prng.uniform(*scale_min_max)
+    target_area = scale * (h * w)
+    # aspect
+    aspect_ratio = prng.uniform(*aspect_min_max)
+    if prng.random() < 0.5:
+        aspect_ratio = 1 / aspect_ratio
+    block_w = int((target_area / aspect_ratio) ** 0.5)
+    block_h = int((target_area * aspect_ratio) ** 0.5)
+    # get coords
+    if inside:
+        cx = prng.integers(block_w // 2, w - block_w // 2)
+        cy = prng.integers(block_h // 2, h - block_h // 2)
+    else:
+        cx = prng.integers(0 - block_w // 2, w + block_w // 2)
+        cy = prng.integers(0 - block_h // 2, h + block_h // 2)
+    # clamp to valid ranges
+    block_x0 = max(0, cx - block_w // 2)
+    block_y0 = max(0, cy - block_h // 2)
+    block_x1 = min(w, cx + block_w // 2)
+    block_y1 = min(h, cy + block_h // 2)
+    # color
+    if color == "random":
+        c = prng.uniform(0, 1, size=(block_h, block_w, src.shape[2]))
+    elif color == "uniform_random":
+        c = prng.uniform(0, 1, size=(1, 1, src.shape[2]))
+    elif color in ("zero", "black"):
+        c = 0
+    elif color in ("one", "white"):
+        c = 1
+    elif color == "mean":
+        c = src[block_y0:block_y1, block_x0:block_x1].mean()
+    else:
+        raise ValueError(f"invalid color: {color}")
+    # fill
+    src[block_y0:block_y1, block_x0:block_x1, ...] = c
     return src
 
 
@@ -170,27 +233,45 @@ class NoiseAdditiveGaussian(Augment):
 class NoisePoison(Augment):
     """
     Add poisson noise to the image.
+
+    Sample peak values in the log domain.
+    * peak=0 is full noise
+    * peak=0.1 is some noise
+    * peak=inf is no noise
     """
 
     def __init__(
         self,
-        strength: ArgFloatHint = (0, 0.1),
+        peak: ArgFloatHint = (0.01, 0.2),
+        logprob: bool = True,
         p: float = 0.5,
         inplace: bool = False,
     ):
         super().__init__(p=p)
-        self._strength = ArgFloatRange.from_arg(strength, min_val=0)
+        self._peak = ArgFloatRange.from_arg(peak, min_val=0)
         self._inplace = inplace
+        # log prob
+        self._logprob = logprob
+        if logprob:
+            self._peak = ArgFloatRange(
+                low=math.log(self._peak.low),
+                high=math.log(self._peak.high),
+            )
         # checks
-        if self._strength.low == 0:
+        if self._peak.low == 0:
             raise ValueError(f"{self.__class__.__name__} cannot have a strength of 0")
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
+            peak = self._peak.sample(prng)
+            if self._logprob:
+                peak = math.exp(peak)
+            # scale values from [0 (no aug), 1 (full aug)] to [inf (no aug), 0 (full aug)]
+            # peak=max(1e-5, 1 / (self._strength.sample(prng) + 1e-5) - 1),
             im = _rgb_img_inplace_noise_poison(
                 prng,
                 src=x.image if self._inplace else x.image.copy(),
-                strength=self._strength.sample(prng),
+                peak=max(1e-7, peak),
             )
             return x.override(image=im)
         return x
@@ -215,7 +296,7 @@ class NoiseSaltPepper(Augment):
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
-            im = _inplace_noise_salt_pepper(
+            im = _rgb_inplace_noise_salt_pepper(
                 prng,
                 src=x.image if self._inplace else x.image.copy(),
                 strength=self._strength.sample(prng),
@@ -233,26 +314,36 @@ class RandomErasing(Augment):
     def __init__(
         self,
         scale: ArgFloatHint = (0.2, 0.7),
+        aspect: ArgFloatHint = (1, 3),
+        color: ArgStrLiteralsHint = "uniform_random",
+        n: ArgIntRange = 1,
+        inside: bool = False,
         p: float = 0.5,
     ):
         super().__init__(p=p)
+        self._n = ArgIntRange.from_arg(n, min_val=0)
         self._scale = ArgFloatRange.from_arg(scale, min_val=0, max_val=1)
+        self._aspect = ArgFloatRange.from_arg(aspect, min_val=1)
+        self._color = ArgStrLiterals.from_arg(
+            color, allowed_vals=("random", "uniform_random", "black", "white", "mean")
+        )
+        self._inside = inside
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
-            img = x.image.copy()
-            h, w = img.shape[:2]
-            area = h * w
-            target_area = self._scale.sample(prng) * area
-            aspect_ratio = prng.uniform(0.3, 1 / 0.3)
-            rh = int((target_area * aspect_ratio) ** 0.5)
-            rw = int((target_area / aspect_ratio) ** 0.5)
-            if rh < h and rw < w:
-                x0 = prng.integers(0, w - rw)
-                y0 = prng.integers(0, h - rh)
-                fill_value = prng.uniform(0, 1, size=(rh, rw, img.shape[2]))
-                img[y0 : y0 + rh, x0 : x0 + rw, :] = fill_value
-            return x.override(image=img)
+            n = self._n.sample(prng)
+            if n > 0:
+                im = x.image.copy()
+                for _ in range(n):
+                    im = _rgb_inplace_random_erasing(
+                        prng,
+                        src=im,
+                        scale_min_max=(self._scale.low, self._scale.high),
+                        aspect_min_max=(self._aspect.low, self._aspect.high),
+                        color=self._color.sample(prng),
+                        inside=self._inside,
+                    )
+                return x.override(image=im)
         return x
 
 

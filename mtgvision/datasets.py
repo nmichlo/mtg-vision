@@ -214,7 +214,7 @@ class SyntheticBgFgMtgImages:
         )
 
         # Foreground augmentations (image and mask)
-        self._aug_fg = A.SomeOf(
+        self._aug_fg = A.AllOf(
             A.AllOf(
                 A.ShiftScaleRotate(
                     shift_ratio=(-0.0625, 0.0625),
@@ -226,32 +226,30 @@ class SyntheticBgFgMtgImages:
                     corner_jitter_ratio=(-0.075, 0.075),
                     p=1.0,
                 ),
-                p=0.8,
+                p=0.95,
             ),
-            A.RandomErasing(scale=(0.2, 0.7), p=0.2),
             A.ColorTint(tint=(-0.15, 0.15), p=0.5),
-            n=(1, 3),
         )
 
         # Virtual augmentations (image only)
         self._aug_vrtl = A.SomeOf(
-            A.AllOf(
-                A.BlurGaussian(radius=(0, 7), p=0.5),
-                A.BlurJpegCompression(quality=(98, 100), p=0.25),
-                A.BlurDownscale(scale=(0.2, 0.9), p=0.25),
+            A.BlurGaussian(radius=(0, 7), p=0.5),
+            A.BlurJpegCompression(quality=(98, 100), p=0.25),
+            A.BlurDownscale(scale=(0.2, 0.9), p=0.25),
+            # noise
+            A.NoiseAdditiveGaussian(strength=(0, 0.1), p=1.0),
+            A.NoisePoison(peak=(0.01, 1), p=1.0),
+            A.NoiseSaltPepper(strength=(0, 0.1), p=1.0),
+            A.NoiseMultiplicativeGaussian(strength=(0, 0.1), p=1.0),
+            A.RandomErasing(
+                scale=(0.2, 0.7), p=1.0, color=("uniform_random", "random", "mean")
             ),
-            A.OneOf(
-                A.NoiseAdditiveGaussian(strength=(0, 0.1), p=0.5),
-                A.NoisePoison(strength=(1e-3, 0.1), p=0.5),
-                A.NoiseSaltPepper(strength=(0, 0.1), p=0.5),
-                A.NoiseMultiplicativeGaussian(strength=(0, 0.1), p=0.5),
-                A.RandomErasing(scale=(0.2, 0.7), p=0.5),
-            ),
-            A.OneOf(
-                A.ColorTint(tint=(-0.15, 0.15), p=1.0),
-                A.ColorGamma(gamma=(0.8, 1.2), p=1.0),
-            ),
-            n=(2, 4),
+            # color
+            A.ColorTint(tint=(-0.15, 0.15), p=1.0),
+            A.ColorGamma(gamma=(0.8, 1.2), p=1.0),
+            A.ColorBrightness(brightness=(-0.2, 0.2), p=1.0),
+            # A.ColorExposure(exposure=(-0.2, 0.2), p=1.0),
+            n=(3, 6),
         )
 
     # IMAGE LOADING METHODS
@@ -360,8 +358,8 @@ if __name__ == "__main__":
         half_upsidedown=True,
     )
 
-    for i in tqdm(range(10)):
-        x, y = ds.make_synthetic_input_and_target_card_pair()
+    # for i in tqdm(range(10)):
+    #     x, y = ds.make_synthetic_input_and_target_card_pair()
 
     # 100%|██████████| 1000/1000 [00:16<00:00, 60.01it/s]
     for i in tqdm(range(1000)):
@@ -370,7 +368,11 @@ if __name__ == "__main__":
         # y = ds._get_bg(None)  # 320 it/s
 
         # 70 it/s
-        x, y = ds.make_synthetic_input_and_target_card_pair()
+        try:
+            x, y = ds.make_synthetic_input_and_target_card_pair()
+        except Exception as e:
+            print(e)
+            continue
 
         # uimg.imshow_loop(x, "x")
         # uimg.imshow_loop(y, "y")
