@@ -224,6 +224,37 @@ class NoiseSaltPepper(Augment):
         return x
 
 
+class RandomErasing(Augment):
+    """
+    Randomly erase a rectangular region in the image, leaving mask and points unchanged.
+    """
+
+    def __init__(
+        self,
+        scale: ArgFloatHint = (0.2, 0.7),
+        p: float = 0.5,
+    ):
+        super().__init__(p=p)
+        self._scale = ArgFloatRange.from_arg(scale, min_val=0, max_val=1)
+
+    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+        if x.has_image:
+            img = x.image.copy()
+            h, w = img.shape[:2]
+            area = h * w
+            target_area = self._scale.sample(prng) * area
+            aspect_ratio = prng.uniform(0.3, 1 / 0.3)
+            rh = int((target_area * aspect_ratio) ** 0.5)
+            rw = int((target_area / aspect_ratio) ** 0.5)
+            if rh < h and rw < w:
+                x0 = prng.integers(0, w - rw)
+                y0 = prng.integers(0, h - rh)
+                fill_value = prng.uniform(0, 1, size=(rh, rw, img.shape[2]))
+                img[y0 : y0 + rh, x0 : x0 + rw, :] = fill_value
+            return x.override(image=img)
+        return x
+
+
 # ========================================================================= #
 # END                                                                       #
 # ========================================================================= #

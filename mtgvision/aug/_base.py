@@ -38,10 +38,11 @@ __all__ = [
 
 import abc
 
+import cv2
 import numpy as np
 import numpy.random as npr
 
-from typing_extensions import final, NamedTuple
+from typing_extensions import final, Literal, NamedTuple
 
 
 # ========================================================================= #
@@ -61,6 +62,10 @@ _MISSING = object()
 
 
 class AugItems(NamedTuple):
+    """
+    Named tuple for holding augment items that are passed between augments and returned.
+    """
+
     image: AugImgHint | None = None
     mask: AugMaskHint | None = None
     points: AugPointsHint | None = None
@@ -96,6 +101,49 @@ class AugItems(NamedTuple):
             mask=self.mask if (mask is _MISSING) else mask,
             points=self.points if (points is _MISSING) else points,
         )
+
+    def get_bounds_hw(self) -> tuple[int, int]:
+        if self.has_image and self.has_mask:
+            if self.image.shape[:2] != self.mask.shape[:2]:
+                raise ValueError(
+                    f"Image and mask do not have the same dimensions, got: {self.image.shape[:2]} != {self.mask.shape[:2]}"
+                )
+            return self.image.shape[:2]
+        elif self.has_image:
+            return self.image.shape[:2]
+        elif self.has_mask:
+            return self.mask.shape[:2]
+        else:
+            raise ValueError("Cannot get image dimensions without image or mask")
+
+    def applied_rotation_matrix(
+        self,
+        M: np.ndarray,
+        *,
+        mode: Literal["affine", "perspective"],
+        inter: int = cv2.INTER_LINEAR,
+        inter_mask: int = cv2.INTER_NEAREST,
+    ) -> "AugItems":
+        if mode == "affine":
+            warp = cv2.warpAffine
+            invert_transform = cv2.invertAffineTransform
+            transform = cv2.transform
+        else:
+            warp = cv2.warpPerspective
+            invert_transform = np.linalg.inv
+            transform = cv2.perspectiveTransform
+        # Get dimensions
+        h, w = self.get_bounds_hw()
+        # Warp image and mask
+        im = warp(self.image, M, (w, h), flags=inter) if self.has_image else None
+        mask = warp(self.mask, M, (w, h), flags=inter_mask) if self.has_mask else None
+        # Transform points
+        points = self.points.copy() if self.has_points else None
+        if points is not None:
+            M_inv = invert_transform(M)
+            points = transform(points[None, :, :], M_inv)[0]
+        # done
+        return self.override(image=im, mask=mask, points=points)
 
 
 # ========================================================================= #

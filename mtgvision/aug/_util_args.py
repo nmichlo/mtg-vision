@@ -49,6 +49,10 @@ ArgFloatHint = float | tuple[float, float]
 
 
 class ArgIntRange(NamedTuple):
+    """
+    Represents a range of integer values that can be sampled from.
+    """
+
     low: int
     high: int
 
@@ -95,11 +99,15 @@ class ArgIntRange(NamedTuple):
             )
         return cls(low=low, high=high)
 
-    def sample(self, prng: AugPrngHint) -> int:
-        return prng.integers(self.low, self.high + 1)  # excludes high
+    def sample(self, prng: AugPrngHint, size=None):
+        return prng.integers(self.low, self.high + 1, size=size)  # excludes high
 
 
 class ArgFloatRange(NamedTuple):
+    """
+    Represents a range of float values that can be sampled from.
+    """
+
     low: float
     high: float
 
@@ -150,8 +158,8 @@ class ArgFloatRange(NamedTuple):
             )
         return cls(low=low, high=high)
 
-    def sample(self, prng: AugPrngHint) -> float:
-        return prng.uniform(self.low, self.high)
+    def sample(self, prng: AugPrngHint, size=None):
+        return prng.uniform(self.low, self.high, size=size)
 
 
 # ========================================================================= #
