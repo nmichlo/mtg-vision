@@ -113,7 +113,7 @@ class NoiseMultiplicativeGaussian(Augment):
 
     def __init__(
         self,
-        strength: ArgFloatHint = 0.1,
+        strength: ArgFloatHint = (0, 0.1),
         channelwise: bool = True,
         p: float = 0.5,
         inplace: bool = False,
@@ -144,7 +144,7 @@ class NoiseAdditiveGaussian(Augment):
 
     def __init__(
         self,
-        strength: ArgFloatHint = 0.1,
+        strength: ArgFloatHint = (0, 0.1),
         channelwise: bool = True,
         p: float = 0.5,
         inplace: bool = False,
@@ -172,7 +172,10 @@ class NoisePoison(Augment):
     """
 
     def __init__(
-        self, strength: ArgFloatHint = 0.1, p: float = 0.5, inplace: bool = False
+        self,
+        strength: ArgFloatHint = (0, 0.1),
+        p: float = 0.5,
+        inplace: bool = False,
     ):
         super().__init__(p=p)
         self._strength = ArgFloatRange.from_arg(strength, min_val=0)
@@ -199,7 +202,7 @@ class NoiseSaltPepper(Augment):
 
     def __init__(
         self,
-        strength: ArgFloatHint = 0.1,
+        strength: ArgFloatHint = (0, 0.2),
         channelwise: bool = False,
         p: float = 0.5,
         inplace: bool = False,
