@@ -24,7 +24,7 @@
 
 
 __all__ = [
-    "BlurBox",
+    "BlurGaussian",
     "BlurMedian",
     "BlurJpegCompression",
     "BlurDownscale",
@@ -65,7 +65,7 @@ def _rgb_img_jpeg_compression(
 # ========================================================================= #
 
 
-class BlurBox(Augment):
+class BlurGaussian(Augment):
     """
     Apply a box blur to the image.
     """
@@ -91,7 +91,7 @@ class BlurBox(Augment):
                 # mask
                 mask = x.mask
                 if x.has_mask and self._aug_mask:
-                    mask = cv2.blur(x.mask, (r, r))
+                    mask = cv2.GaussianBlur(x.mask, (r, r), 0)
                 # done
                 return x.override(image=im, mask=mask)
         return x

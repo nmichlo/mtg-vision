@@ -34,6 +34,8 @@ __all__ = [
     "ColorInvert",
     "ColorGrayscale",
     "ImgClip",
+    "ColorFadeWhite",
+    "ColorFadeBlack",
 ]
 
 
@@ -100,6 +102,16 @@ def _clip_image(src: NpFloat32) -> NpFloat32:
     return np.clip(src, 0, 1)
 
 
+def _rgb_img_inplace_fade_white(src: NpFloat32, ratio: float = 0.33) -> NpFloat32:
+    src[...] = (1 - ratio) * src + (ratio * 1)
+    return src
+
+
+def _rgb_img_inplace_fade_black(src: NpFloat32, ratio: float = 0.5) -> NpFloat32:
+    src[...] = (1 - ratio) * src  # + (ratio*0)
+    return src
+
+
 # ========================================================================= #
 # Augments                                                                  #
 # ========================================================================= #
@@ -108,7 +120,7 @@ def _clip_image(src: NpFloat32) -> NpFloat32:
 class ColorGamma(Augment):
     def __init__(self, gamma: ArgFloatHint = (0, 0.5), p: float = 0.5):
         super().__init__(p=p)
-        self._gamma = ArgFloatRange.from_arg(gamma)
+        self._gamma = ArgFloatRange.from_arg(gamma, min_val=0)
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
@@ -127,7 +139,7 @@ class ColorBrightness(Augment):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(self, brightness: ArgFloatHint = (0, 0.5), p: float = 0.5):
+    def __init__(self, brightness: ArgFloatHint = (-0.5, 0.5), p: float = 0.5):
         super().__init__(p=p)
         self._brightness = ArgFloatRange.from_arg(brightness, min_val=-1, max_val=1)
 
@@ -148,7 +160,7 @@ class ColorContrast(Augment):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(self, contrast: ArgFloatHint = (0, 0.5), p: float = 0.5):
+    def __init__(self, contrast: ArgFloatHint = (0.5, 2), p: float = 0.5):
         super().__init__(p=p)
         self._contrast = ArgFloatRange.from_arg(contrast, min_val=0)
 
@@ -169,7 +181,7 @@ class ColorExposure(Augment):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(self, exposure: ArgFloatHint = (0, 0.5), p: float = 0.5):
+    def __init__(self, exposure: ArgFloatHint = (0.5, 2), p: float = 0.5):
         super().__init__(p=p)
         self._exposure = ArgFloatRange.from_arg(exposure, min_val=-1, max_val=1)
 
@@ -187,12 +199,10 @@ class ColorSaturation(Augment):
     """
     Adjust the saturation of an image.
 
-    *NB* Can result in image values outside the range [0, 1], clip images after using this.
-
     TODO: relies on torch and kornia
     """
 
-    def __init__(self, saturation: ArgFloatHint = (0, 0.2), p: float = 0.5):
+    def __init__(self, saturation: ArgFloatHint = (0, 2), p: float = 0.5):
         super().__init__(p=p)
         self._saturation = ArgFloatRange.from_arg(saturation, min_val=0)
 
@@ -213,7 +223,7 @@ class ColorHue(Augment):
     TODO: relies on torch and kornia
     """
 
-    def __init__(self, hue: ArgFloatHint = (0, 0.1), p: float = 0.5):
+    def __init__(self, hue: ArgFloatHint = (-0.1, 0.1), p: float = 0.5):
         super().__init__(p=p)
         self._hue = ArgFloatRange.from_arg(hue, min_val=-1, max_val=1)
 
@@ -234,7 +244,7 @@ class ColorTint(Augment):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(self, tint: ArgFloatHint = (0, 0.2), p: float = 0.5):
+    def __init__(self, tint: ArgFloatHint = (-0.3, 0.3), p: float = 0.5):
         super().__init__(p=p)
         self._tint = ArgFloatRange.from_arg(tint, min_val=-1, max_val=1)
 
@@ -294,6 +304,48 @@ class ImgClip(Augment):
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
             im = _clip_image(x.image.copy())
+            return x.override(image=im)
+        return x
+
+
+class ColorFadeWhite(Augment):
+    """
+    Fade the colors of an image to white.
+
+    0 is no fade, 1 is full fade.
+    """
+
+    def __init__(self, ratio: ArgFloatHint = (0, 0.5), p: float = 0.5):
+        super().__init__(p=p)
+        self._ratio = ArgFloatRange.from_arg(ratio, min_val=0, max_val=1)
+
+    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+        if x.has_image:
+            im = _rgb_img_inplace_fade_white(
+                src=x.image.copy(),
+                ratio=self._ratio.sample(prng),
+            )
+            return x.override(image=im)
+        return x
+
+
+class ColorFadeBlack(Augment):
+    """
+    Fade the colors of an image to black.
+
+    0 is no fade, 1 is full fade.
+    """
+
+    def __init__(self, ratio: ArgFloatHint = (0, 0.5), p: float = 0.5):
+        super().__init__(p=p)
+        self._ratio = ArgFloatRange.from_arg(ratio, min_val=0, max_val=1)
+
+    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+        if x.has_image:
+            im = _rgb_img_inplace_fade_black(
+                src=x.image.copy(),
+                ratio=self._ratio.sample(prng),
+            )
             return x.override(image=im)
         return x
 
