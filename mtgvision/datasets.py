@@ -22,31 +22,23 @@
 #  SOFTWARE.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
-
 import abc
 import uuid
 from os import PathLike
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Tuple
 
 import numpy as np
 from math import ceil
 import random
 from tqdm import tqdm
 
-
 from mtgdata import ScryfallDataset, ScryfallImageType
 import mtgvision.util.image as uimg
 import mtgvision.util.files as ufls
 from mtgdata.scryfall import ScryfallCardFace
 
-
-from typing import Tuple
-
-
-# Assuming these are custom utility modules; replace with actual imports if different
-import mtgvision.util.random as uran
-
+import mtgvision.aug as A
 
 # ========================================================================= #
 # Vars                                                                      #
@@ -196,72 +188,70 @@ PathOrImg = str | np.ndarray | PathLike
 class SyntheticBgFgMtgImages:
     def __init__(
         self,
-        ds_mtg=None,  # Replace with actual type, e.g., MtgImages
-        ds_bg=None,  # Replace with actual type, e.g., IlsvrcImages
+        ds_mtg=None,
+        ds_bg=None,
         *,
         half_upsidedown: bool = False,
         default_x_size_hw: SizeHW = (192, 128),
         default_y_size_hw: SizeHW = (192, 128),
     ):
-        # Placeholder datasets; replace with actual implementations
-        self.ds_mtg = ds_mtg if ds_mtg is not None else ScryfallDataset()
-        self.ds_bg = (
-            ds_bg if ds_bg is not None else ScryfallDataset()
-        )  # Adjust as needed
-
+        self.ds_mtg = ds_mtg if ds_mtg is not None else MtgImages()
+        self.ds_bg = ds_bg if ds_bg is not None else IlsvrcImages()
         self._default_x_size_hw = default_x_size_hw
         self._default_y_size_hw = default_y_size_hw
 
+        # Define augmentations with the new system
         # Upside-down augmentation
-        if half_upsidedown:
-            self._aug_upsidedown = uran.ApplyFn(uimg.my_upsidedown, p=0.5)
-        else:
-            self._aug_upsidedown = uran.NoOp()
+        self._aug_upsidedown = A.Rotate180(p=0.5) if half_upsidedown else A.NoOp()
 
         # Background augmentations (image only)
-        self._aug_bg = uran.ApplySequence(
-            uran.ApplyFn(uimg.my_flip_horr, p=0.5),
-            uran.ApplyFn(uimg.my_flip_vert, p=0.5),
-            uran.ApplyFn(
-                lambda data: uimg.my_rotate_bounded(data, deg=random.uniform(0, 360))
-            ),
-            uran.ApplyFn(uimg.my_tint, amount=0.15, p=0.9),
+        self._aug_bg = A.SomeOf(
+            A.FlipHorizontal(p=0.5),
+            A.FlipVertical(p=0.5),
+            A.RotateBounded(deg=(0, 360), p=1.0),
+            A.ColorTint(tint=(-0.15, 0.15), p=0.9),
+            n=(1, 4),
         )
 
         # Foreground augmentations (image and mask)
-        self._aug_fg = uran.ApplyShuffled(
-            uran.ApplySequence(
-                uran.ApplyFn(
-                    uimg.my_shift_scale_rotate,
-                    shift_limit=(-0.0625, 0.0625),
-                    scale_limit=(-0.2, 0.0),
+        self._aug_fg = A.SomeOf(
+            A.AllOf(
+                A.ShiftScaleRotate(
+                    shift_ratio=(-0.0625, 0.0625),
+                    scale_ratio=(-0.1, 0.0),
                     rotate_limit=(-5, 5),
+                    p=1.0,
                 ),
-                uran.ApplyFn(uimg.my_perspective, scale=(0, 0.075)),
+                A.PerspectiveWarp(
+                    corner_jitter_ratio=(-0.075, 0.075),
+                    p=1.0,
+                ),
                 p=0.8,
             ),
-            uran.ApplyFn(uimg.my_erasing, scale=(0.2, 0.7), p=0.2),
-            uran.ApplyFn(uimg.my_tint, amount=0.15, p=0.5),
+            A.RandomErasing(scale=(0.2, 0.7), p=0.2),
+            A.ColorTint(tint=(-0.15, 0.15), p=0.5),
+            n=(1, 3),
         )
 
         # Virtual augmentations (image only)
-        self._aug_vrtl = uran.ApplyShuffled(
-            uran.ApplyFn(
-                uran.ApplyShuffled(
-                    uran.ApplyFn(uimg.my_blur, n_max=7, p=0.5),
-                    uran.ApplyFn(
-                        uimg.my_image_compression, quality_range=(98, 100), p=0.25
-                    ),
-                    uran.ApplyFn(uimg.my_downscale, scale_range=(0.2, 0.9), p=0.25),
-                ),
-                p=0.5,
+        self._aug_vrtl = A.SomeOf(
+            A.AllOf(
+                A.BlurGaussian(radius=(0, 7), p=0.5),
+                A.BlurJpegCompression(quality=(98, 100), p=0.25),
+                A.BlurDownscale(scale=(0.2, 0.9), p=0.25),
             ),
-            uran.ApplyFn(uimg.my_noise, var=0.05, p=0.5),
-            uran.ApplyOne(
-                uran.ApplyFn(uimg.my_tint, amount=0.15),
-                uran.ApplyFn(uimg.my_gamma, gamma_limit=(80, 120)),
-                p=1.0,
+            A.OneOf(
+                A.NoiseAdditiveGaussian(strength=(0, 0.1), p=0.5),
+                A.NoisePoison(strength=(1e-3, 0.1), p=0.5),
+                A.NoiseSaltPepper(strength=(0, 0.1), p=0.5),
+                A.NoiseMultiplicativeGaussian(strength=(0, 0.1), p=0.5),
+                A.RandomErasing(scale=(0.2, 0.7), p=0.5),
             ),
+            A.OneOf(
+                A.ColorTint(tint=(-0.15, 0.15), p=1.0),
+                A.ColorGamma(gamma=(0.8, 1.2), p=1.0),
+            ),
+            n=(2, 4),
         )
 
     # IMAGE LOADING METHODS
@@ -306,24 +296,18 @@ class SyntheticBgFgMtgImages:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Generate an augmented card and its mask."""
         card = self._get_card(path_or_img)
-        # Apply upside-down augmentation to card only initially
-        card = self._aug_upsidedown({"image": card, "mask": np.ones_like(card)})[
-            "image"
-        ]
+        card = self._aug_upsidedown(image=card).image
         card = uimg.resize(card, size_hw=size_hw or self._default_x_size_hw)
         mask = uimg.round_rect_mask(card.shape[:2], radius_ratio=0.05)
-        data = {"image": card, "mask": mask}
-        transformed = self._aug_fg(data)
-        return transformed["image"], transformed["mask"]
+        items = self._aug_fg(image=card, mask=mask)
+        return items.image, items.mask
 
     def _make_aug_bg(
         self, bg_path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
     ) -> np.ndarray:
         """Generate an augmented background."""
         bg = self._get_bg(bg_path_or_img)
-        data = {"image": bg, "mask": np.ones_like(bg)}  # Dummy mask
-        transformed = self._aug_bg(data)
-        bg_aug = transformed["image"]
+        bg_aug = self._aug_bg(image=bg).image
         bg_aug = uimg.crop_to_size(bg_aug, size_hw or self._default_x_size_hw)
         return bg_aug
 
@@ -341,13 +325,7 @@ class SyntheticBgFgMtgImages:
         bg = self._make_aug_bg(bg_path_or_img, size_hw=size_hw)
         # Merge foreground and background
         synthetic_card = uimg.rgb_mask_over_rgb(fg, fg_mask, bg)
-        # Apply virtual augmentations
-        data = {
-            "image": synthetic_card,
-            "mask": np.ones_like(synthetic_card),
-        }  # Dummy mask
-        transformed = self._aug_vrtl(data)
-        synthetic_card_aug = transformed["image"]
+        synthetic_card_aug = self._aug_vrtl(image=synthetic_card).image
         # Size check
         assert synthetic_card_aug.shape[:2] == size_hw, (
             f"Expected size_hw={size_hw}, got={synthetic_card_aug.shape[:2]}"
