@@ -375,69 +375,6 @@ def round_rect_mask(
 
 
 # ========================================================================= #
-# NOISE                                                                     #
-# TODO: this can be replaced with Albumentations or imgaug                  #
-# ========================================================================= #
-
-
-@ensure_float32
-def noise_speckle(img: np.ndarray, strength: float = 0.1) -> np.ndarray:
-    """Add speckle noise to an image."""
-    out = np.copy(asrt_float(img))
-    gauss = np.random.randn(*(img.shape[0], img.shape[1], 3))
-    gauss = gauss.reshape((img.shape[0], img.shape[1], 3))
-    out[:, :, :3] = img[:, :, :3] * (1 + gauss * strength)
-    ret = img_clip(out)
-    return ret
-
-
-@ensure_float32
-def noise_gaussian(img: np.ndarray, mean: float = 0, var: float = 0.5) -> np.ndarray:
-    """Add gaussian noise to an image."""
-    out = np.copy(asrt_float(img))
-    sigma = var**0.5
-    gauss = np.random.normal(mean, sigma, (img.shape[0], img.shape[1], 3))
-    gauss = gauss.reshape((img.shape[0], img.shape[1], 3))
-    out[:, :, :3] = img[:, :, :3] + gauss
-    ret = img_clip(out)
-    return ret
-
-
-@ensure_float32
-def noise_salt_pepper(
-    img: np.ndarray, strength: float = 0.1, svp: float = 0.5
-) -> np.ndarray:
-    """Add salt and pepper noise to an image."""
-    out = np.copy(asrt_float(img))
-    if img.shape[2] > 3:
-        alpha = img[:, :, 3]
-    # Salt mode
-    num_salt = np.ceil(strength * img.size * svp)
-    cx, cy, cs = [np.random.randint(0, i - 1, int(num_salt)) for i in img.shape]
-    out[cx, cy, cs] = 1
-    # Pepper mode
-    num_pepper = np.ceil(strength * img.size * (1 - svp))
-    cx, cy, cs = [np.random.randint(0, i - 1, int(num_pepper)) for i in img.shape]
-    out[cx, cy, cs] = 0
-    if img.shape[2] > 3:
-        out[:, :, 3] = alpha
-    ret = img_clip(out)
-    return ret
-
-
-@ensure_float32
-def noise_poisson(
-    img: np.ndarray, peak: float = 0.1, amount: float = 0.25
-) -> np.ndarray:
-    """Add poisson noise to an image."""
-    img = img_clip(asrt_float(img))
-    noise = np.zeros_like(img)
-    noise[:, :, :3] = np.random.poisson(img[:, :, :3] * peak) / peak
-    ret = img_clip((1 - amount) * img + amount * noise)
-    return ret
-
-
-# ========================================================================= #
 # RANDOM TRANSFORMS                                                         #
 # ========================================================================= #
 

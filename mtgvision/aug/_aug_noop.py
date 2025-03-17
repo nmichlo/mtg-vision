@@ -23,30 +23,24 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
-import warnings
-import random
+__all__ = [
+    "NoOp",
+]
 
 
-def seed_all(seed: int):
-    # random
-    random.seed(seed)
-    # numpy
-    try:
-        import np
-
-        np.random.seed(seed)
-    except (ImportError, ModuleNotFoundError):
-        warnings.warn("numpy not found, skipping seed")
-
-    # torch
-    try:
-        import torch
-
-        torch.manual_seed(seed)
-    except (ImportError, ModuleNotFoundError):
-        warnings.warn("torch not found, skipping seed")
+from mtgvision.aug._base import AugItems, Augment, AugPrngHint
 
 
-# ============================================================================ #
-# END                                                                          #
-# ============================================================================ #
+# ========================================================================= #
+# NoOp                                                                      #
+# ========================================================================= #
+
+
+class NoOp(Augment):
+    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+        return x
+
+
+# ========================================================================= #
+# END                                                                       #
+# ========================================================================= #
