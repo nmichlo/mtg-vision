@@ -60,6 +60,27 @@ def _rgb_img_jpeg_compression(
     return img_transformed.astype(np.float32) / 255
 
 
+def _rgb_downscale_upscale(
+    src: NpFloat32,
+    scale: float,
+    inter: int,
+) -> NpFloat32:
+    # downscale
+    img = cv2.resize(
+        src,
+        None,
+        fx=scale,
+        fy=scale,
+        interpolation=inter,
+    )
+    # upscale
+    return cv2.resize(
+        img,
+        (src.shape[1], src.shape[0]),
+        interpolation=inter,
+    )
+
+
 # ========================================================================= #
 # Augments                                                                  #
 # ========================================================================= #
@@ -157,13 +178,15 @@ class BlurDownscale(Augment):
         self,
         scale: ArgFloatHint = (1 / 8, 1),
         aug_mask: bool = False,
-        interpolation: int = cv2.INTER_LINEAR,  # cv2.
-        interpolation_mask: int = cv2.INTER_LINEAR,  # cv2.
+        inter: int = cv2.INTER_LINEAR,
+        inter_mask: int = cv2.INTER_LINEAR,
         p: float = 0.5,
     ):
         super().__init__(p=p)
         self._scale = ArgFloatRange.from_arg(scale, min_val=0, max_val=1)
         self._aug_mask = aug_mask
+        self._inter = inter
+        self._inter_mask = inter_mask
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image or x.has_mask:
@@ -172,18 +195,18 @@ class BlurDownscale(Augment):
                 # image
                 im = x.image
                 if x.has_image:
-                    im = cv2.resize(
-                        x.image,
-                        None,
-                        fx=scale,
-                        fy=scale,
-                        interpolation=cv2.INTER_LINEAR,
+                    im = _rgb_downscale_upscale(
+                        src=x.image,  # don't need to copy
+                        scale=scale,
+                        inter=self._inter,
                     )
                 # mask
                 mask = x.mask
-                if x.has_mask and self._aug_mask:
-                    mask = cv2.resize(
-                        x.mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR
+                if x.has_mask and self._aug_mask and self._inter_mask is not None:
+                    mask = _rgb_downscale_upscale(
+                        src=x.mask,  # don't need to copy
+                        scale=scale,
+                        inter=self._inter_mask,
                     )
                 # done
                 return x.override(image=im, mask=mask)

@@ -31,6 +31,8 @@ __all__ = [
 
 from typing import NamedTuple
 
+import numpy as np
+
 from mtgvision.aug import AugPrngHint
 
 
@@ -85,10 +87,12 @@ class ArgIntRange(NamedTuple):
                 )
         if min_val is not None and low < min_val:
             raise ValueError(
-                f"low int value must be greater than or equal to {min_val}"
+                f"low int value: {low} must be greater than or equal to {min_val}"
             )
         if max_val is not None and high > max_val:
-            raise ValueError(f"high int value must be less than or equal to {max_val}")
+            raise ValueError(
+                f"high int value: {high} must be less than or equal to {max_val}"
+            )
         if low > high:
             raise ValueError(
                 f"low int value: {low} must be less than or equal to high int value: {high}"
@@ -124,7 +128,7 @@ class ArgFloatRange(NamedTuple):
         # get values
         if isinstance(value, tuple):
             low, high = value
-        elif isinstance(value, float):
+        elif isinstance(value, (float, int)):
             low = high = value
         elif value is None:
             if default_val is None:
@@ -142,11 +146,11 @@ class ArgFloatRange(NamedTuple):
                 )
         if min_val is not None and low < min_val:
             raise ValueError(
-                f"low float value must be greater than or equal to {min_val}"
+                f"low float value: {low} must be greater than or equal to {min_val}"
             )
         if max_val is not None and high > max_val:
             raise ValueError(
-                f"high float value must be less than or equal to {max_val}"
+                f"high float value: {high} must be less than or equal to {max_val}"
             )
         if low > high:
             raise ValueError(
@@ -159,7 +163,10 @@ class ArgFloatRange(NamedTuple):
         return cls(low=low, high=high)
 
     def sample(self, prng: AugPrngHint, size=None):
-        return prng.uniform(self.low, self.high, size=size)
+        val = prng.uniform(self.low, self.high, size=size)
+        if isinstance(val, np.ndarray):
+            val = val.astype(np.float32)
+        return val
 
 
 # ========================================================================= #

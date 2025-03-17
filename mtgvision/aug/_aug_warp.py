@@ -205,7 +205,7 @@ class ShiftScaleRotate(Augment):
     ):
         super().__init__(p=p)
         self._shift_limit = ArgFloatRange.from_arg(shift_ratio, min_val=-1, max_val=1)
-        self._scale_limit = ArgFloatRange.from_arg(scale_ratio, min_val=0)
+        self._scale_limit = ArgFloatRange.from_arg(scale_ratio)
         self._rotate_limit = ArgFloatRange.from_arg(
             rotate_limit, min_val=-360, max_val=360
         )

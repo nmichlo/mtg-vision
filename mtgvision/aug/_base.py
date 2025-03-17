@@ -88,19 +88,29 @@ class AugItems(NamedTuple):
         mask: AugMaskHint | None = _MISSING,
         points: AugPointsHint | None = _MISSING,
     ) -> "AugItems":
+        # defaults
+        if image is _MISSING:
+            image = self.image
+        if mask is _MISSING:
+            mask = self.mask
+        if points is _MISSING:
+            points = self.points
         # handle xor, not allowed to change from None to set or set to None
-        if (image is _MISSING) != (self.image is None):
+        if (self.image is None) != (image is None):
             raise ValueError("Cannot change image from None to set or set to None")
-        if (mask is _MISSING) != (self.mask is None):
+        if (self.mask is None) != (mask is None):
             raise ValueError("Cannot change mask from None to set or set to None")
-        if (points is _MISSING) != (self.points is None):
+        if (self.points is None) != (points is None):
             raise ValueError("Cannot change points from None to set or set to None")
+        # checks
+        if image is not None and np.any(np.isnan(image)):
+            raise ValueError("Image contains NaN values")
+        if mask is not None and np.any(np.isnan(mask)):
+            raise ValueError("Mask contains NaN values")
+        if points is not None and np.any(np.isnan(points)):
+            raise ValueError("Points contains NaN values")
         # override
-        return AugItems(
-            image=self.image if (image is _MISSING) else image,
-            mask=self.mask if (mask is _MISSING) else mask,
-            points=self.points if (points is _MISSING) else points,
-        )
+        return AugItems(image=image, mask=mask, points=points)
 
     def get_bounds_hw(self) -> tuple[int, int]:
         if self.has_image and self.has_mask:
@@ -138,10 +148,10 @@ class AugItems(NamedTuple):
         im = warp(self.image, M, (w, h), flags=inter) if self.has_image else None
         mask = warp(self.mask, M, (w, h), flags=inter_mask) if self.has_mask else None
         # Transform points
-        points = self.points.copy() if self.has_points else None
-        if points is not None:
+        points = None
+        if self.has_points:
             M_inv = invert_transform(M)
-            points = transform(points[None, :, :], M_inv)[0]
+            points = transform(self.points[None, :, :], M_inv)[0]
         # done
         return self.override(image=im, mask=mask, points=points)
 
@@ -161,6 +171,18 @@ class Augment(abc.ABC):
 
     def __init__(self, p: float = 1.0):
         self._p = p
+
+    @final
+    def aug_image(self, image: AugImgHint) -> AugImgHint:
+        return self.__call__(image=image).image
+
+    @final
+    def aug_mask(self, mask: AugMaskHint) -> AugMaskHint:
+        return self.__call__(mask=mask).mask
+
+    @final
+    def aug_points(self, points: AugPointsHint) -> AugPointsHint:
+        return self.__call__(points=points).points
 
     @final
     def __call__(

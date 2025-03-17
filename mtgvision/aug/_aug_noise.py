@@ -28,6 +28,7 @@ __all__ = [
     "NoiseAdditiveGaussian",
     "NoisePoison",
     "NoiseSaltPepper",
+    "RandomErasing",
 ]
 
 
