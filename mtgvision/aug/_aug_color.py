@@ -31,6 +31,9 @@ __all__ = [
     "ColorSaturation",
     "ColorHue",
     "ColorTint",
+    "ColorInvert",
+    "ColorGrayscale",
+    "ImgClip",
 ]
 
 
@@ -91,6 +94,10 @@ def _rgb_img_inplace_tint(
 ) -> NpFloat32:
     src[...] = src + np.array(tint_rgb)[None, None, :]
     return src
+
+
+def _clip_image(src: NpFloat32) -> NpFloat32:
+    return np.clip(src, 0, 1)
 
 
 # ========================================================================= #
@@ -241,6 +248,52 @@ class ColorTint(Augment):
                     self._tint.sample(prng),
                 ),
             )
+            return x.override(image=im)
+        return x
+
+
+class ColorInvert(Augment):
+    """
+    Invert the colors of an image.
+    """
+
+    def __init__(self, p: float = 0.5):
+        super().__init__(p=p)
+
+    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+        if x.has_image:
+            im = 1 - x.image
+            return x.override(image=im)
+        return x
+
+
+class ColorGrayscale(Augment):
+    """
+    Convert an image to grayscale.
+    """
+
+    def __init__(self, p: float = 0.5):
+        super().__init__(p=p)
+
+    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+        if x.has_image:
+            im = np.mean(x.image, axis=-1, keepdims=True)
+            im = np.repeat(im, 3, axis=-1)
+            return x.override(image=im)
+        return x
+
+
+class ImgClip(Augment):
+    """
+    Clip the values of an image to the range [0, 1].
+    """
+
+    def __init__(self, p: float = 1.0):
+        super().__init__(p=p)
+
+    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+        if x.has_image:
+            im = _clip_image(x.image.copy())
             return x.override(image=im)
         return x
 
