@@ -32,15 +32,13 @@ __all__ = [
 
 
 import numpy as np
-from mtgvision.aug._base import AugItems, Augment, AugPrngHint
+from mtgvision.aug._base import AugItems, Augment, AugPrngHint, NpFloat32
+from mtgvision.aug._util_args import ArgFloatHint, ArgFloatRange
 
 
 # ========================================================================= #
 # IN-PLACE NOISE                                                            #
 # ========================================================================= #
-
-
-NpFloat32 = np.ndarray[np.float32]
 
 
 def _rgb_img_inplace_noise_multiplicative_speckle(
@@ -49,11 +47,12 @@ def _rgb_img_inplace_noise_multiplicative_speckle(
     src: NpFloat32,
     strength: float = 0.1,
     channelwise: bool = True,
-) -> None:
+) -> NpFloat32:
     if channelwise:
         src[...] *= prng.normal(1, strength, src.shape)
     else:
         src[...] *= prng.normal(1, strength, (*src.shape[:2], 1))
+    return src
 
 
 def _rgb_img_inplace_noise_additive_gaussian(
@@ -62,17 +61,19 @@ def _rgb_img_inplace_noise_additive_gaussian(
     src: NpFloat32,
     strength: float = 0.1,
     channelwise: bool = True,
-) -> None:
+) -> NpFloat32:
     if channelwise:
         src[...] += prng.normal(0, strength, src.shape)
     else:
         src[...] += prng.normal(0, strength, (*src.shape[:2], 1))
+    return src
 
 
 def _rgb_img_inplace_noise_poison(
-    prng: AugPrngHint, *, src: NpFloat32, strength: float = 0.1
-) -> None:
-    src[...] = prng.poisson(src * strength) / strength
+    prng: AugPrngHint, *, src: NpFloat32, strength: float = 0.1, eps: float = 0
+) -> NpFloat32:
+    src[...] = prng.poisson(src * strength) / (strength + eps)
+    return src
 
 
 def _inplace_noise_salt_pepper(
@@ -81,7 +82,7 @@ def _inplace_noise_salt_pepper(
     src: NpFloat32,
     strength: float = 0.1,
     channelwise: bool = False,
-) -> None:
+) -> NpFloat32:
     if channelwise:
         num_noise = int(strength * src.size)
         salt_or_pepper = prng.integers(0, 2, num_noise)
@@ -95,6 +96,7 @@ def _inplace_noise_salt_pepper(
         ix = prng.integers(0, src.shape[0], num_noise)
         iy = prng.integers(0, src.shape[1], num_noise)
         src[ix, iy, :] = salt_or_pepper[:, None]
+    return src
 
 
 # ========================================================================= #
@@ -103,17 +105,30 @@ def _inplace_noise_salt_pepper(
 
 
 class NoiseMultiplicativeGaussian(Augment):
-    def __init__(self, strength: float = 0.1, channelwise: bool = True, p: float = 0.5):
+    """
+    Add multiplicative gaussian noise to the image.
+
+    *NB* Can result in image values outside the range [0, 1], clip images after using this.
+    """
+
+    def __init__(
+        self,
+        strength: ArgFloatHint = 0.1,
+        channelwise: bool = True,
+        p: float = 0.5,
+        inplace: bool = False,
+    ):
         super().__init__(p=p)
-        self._strength = strength
+        self._strength = ArgFloatRange.from_arg(strength, min_val=0)
         self._channelwise = channelwise
+        self._inplace = inplace
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
             im = _rgb_img_inplace_noise_multiplicative_speckle(
                 prng,
-                src=x.image,
-                strength=self._strength,
+                src=x.image if self._inplace else x.image.copy(),
+                strength=self._strength.sample(prng),
                 channelwise=self._channelwise,
             )
             return x.override(image=im)
@@ -121,17 +136,30 @@ class NoiseMultiplicativeGaussian(Augment):
 
 
 class NoiseAdditiveGaussian(Augment):
-    def __init__(self, strength: float = 0.1, channelwise: bool = True, p: float = 0.5):
+    """
+    Add additive gaussian noise to the image.
+
+    *NB* Can result in image values outside the range [0, 1], clip images after using this.
+    """
+
+    def __init__(
+        self,
+        strength: ArgFloatHint = 0.1,
+        channelwise: bool = True,
+        p: float = 0.5,
+        inplace: bool = False,
+    ):
         super().__init__(p=p)
-        self._strength = strength
+        self._strength = ArgFloatRange.from_arg(strength, min_val=0)
         self._channelwise = channelwise
+        self._inplace = inplace
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
             im = _rgb_img_inplace_noise_additive_gaussian(
                 prng,
-                src=x.image,
-                strength=self._strength,
+                src=x.image if self._inplace else x.image.copy(),
+                strength=self._strength.sample(prng),
                 channelwise=self._channelwise,
             )
             return x.override(image=im)
@@ -139,33 +167,54 @@ class NoiseAdditiveGaussian(Augment):
 
 
 class NoisePoison(Augment):
-    def __init__(self, strength: float = 0.1, p: float = 0.5):
+    """
+    Add poisson noise to the image.
+    """
+
+    def __init__(
+        self, strength: ArgFloatHint = 0.1, p: float = 0.5, inplace: bool = False
+    ):
         super().__init__(p=p)
-        self._strength = strength
+        self._strength = ArgFloatRange.from_arg(strength, min_val=0)
+        self._inplace = inplace
+        # checks
+        if self._strength.low == 0:
+            raise ValueError(f"{self.__class__.__name__} cannot have a strength of 0")
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
             im = _rgb_img_inplace_noise_poison(
-                prng, src=x.image, strength=self._strength
+                prng,
+                src=x.image if self._inplace else x.image.copy(),
+                strength=self._strength.sample(prng),
             )
             return x.override(image=im)
         return x
 
 
 class NoiseSaltPepper(Augment):
+    """
+    Add salt and pepper noise to the image.
+    """
+
     def __init__(
-        self, strength: float = 0.1, channelwise: bool = False, p: float = 0.5
+        self,
+        strength: ArgFloatHint = 0.1,
+        channelwise: bool = False,
+        p: float = 0.5,
+        inplace: bool = False,
     ):
         super().__init__(p=p)
-        self._strength = strength
+        self._strength = ArgFloatRange.from_arg(strength, min_val=0, max_val=1)
         self._channelwise = channelwise
+        self._inplace = inplace
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
             im = _inplace_noise_salt_pepper(
                 prng,
-                src=x.image,
-                strength=self._strength,
+                src=x.image if self._inplace else x.image.copy(),
+                strength=self._strength.sample(prng),
                 channelwise=self._channelwise,
             )
             return x.override(image=im)

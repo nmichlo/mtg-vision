@@ -24,6 +24,7 @@
 
 
 __all__ = [
+    "NpFloat32",
     # hints
     "AugImgHint",
     "AugMaskHint",
@@ -48,9 +49,11 @@ from typing_extensions import final, NamedTuple
 # ========================================================================= #
 
 
-AugImgHint = np.ndarray[np.float32]
-AugMaskHint = np.ndarray[np.float32]
-AugPointsHint = np.ndarray[np.float32]
+NpFloat32 = np.ndarray[np.float32]
+
+AugImgHint = NpFloat32
+AugMaskHint = NpFloat32
+AugPointsHint = NpFloat32
 AugPrngHint = npr.Generator
 
 
