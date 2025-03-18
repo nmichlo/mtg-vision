@@ -237,7 +237,7 @@ def resize(
     # OpenCV is W*H not H*W
     return jax.image.resize(
         img,
-        shape=(w, h, *img.shape[2:]),
+        shape=(h, w, *img.shape[2:]),
         method="cubic" if not shrink else "linear",
     )
 

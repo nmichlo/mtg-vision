@@ -30,7 +30,6 @@ __all__ = [
     "SampleOf",
 ]
 
-import jax.numpy as jnp
 import jax.random as jrandom
 
 from mtgvision.aug._base import AugItems, Augment, AugPrngHint
@@ -85,12 +84,8 @@ class _Shuffle(_Chain):
         Sample the augments to apply, with or without replacement.
         """
         k = self._n.sample(prng)
-        # TODO: WRONG
-        # TODO: WRONG
-        # TODO: WRONG
-        # TODO: WRONG
-        idxs = jrandom.choice(prng, len(self._augments), (1,), replace=self._replace)
-        return jnp.take(self._augments, idxs)
+        idxs = jrandom.choice(prng, len(self._augments), (k,), replace=self._replace)
+        return [self._augments[i] for i in idxs]
 
 
 # ========================================================================= #

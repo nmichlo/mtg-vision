@@ -82,7 +82,8 @@ class ArgStrLiterals(NamedTuple):
         return cls(values=value)
 
     def sample(self, prng: AugPrngHint):
-        return jrandom.choice(prng, self.values, ())
+        idx = jrandom.choice(prng, len(self.values))
+        return self.values[idx]
 
 
 class ArgIntRange(NamedTuple):

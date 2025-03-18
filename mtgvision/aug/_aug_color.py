@@ -38,7 +38,6 @@ __all__ = [
     "ColorFadeBlack",
 ]
 
-import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from tqdm import tqdm
@@ -299,6 +298,6 @@ if __name__ == "__main__":
         aug = Aug()
         key = jrandom.key(32)
         src = jrandom.uniform(key, (224, 224, 3), jnp.float32)
-        aug = jax.jit(aug.__call__)
+        # aug = jax.jit(aug.__call__)
         for i in tqdm(range(15000), desc=f"{Aug.__name__}"):
             aug(image=src)

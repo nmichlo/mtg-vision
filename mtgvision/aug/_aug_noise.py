@@ -89,7 +89,7 @@ def _rgb_img_inplace_noise_poison(
     eps: float = 0,
 ) -> NpFloat32:
     p = 255 * peak
-    return jrandom.poisson(prng, src * p, dtype=jnp.float32) / (p + eps)
+    return jrandom.poisson(prng, src * p) / (p + eps)
 
 
 def _rgb_inplace_noise_salt_pepper(
@@ -105,7 +105,7 @@ def _rgb_inplace_noise_salt_pepper(
         ix = jrandom.randint(prng, (num_noise,), 0, src.shape[0])
         iy = jrandom.randint(prng, (num_noise,), 0, src.shape[1])
         ic = jrandom.randint(prng, (num_noise,), 0, src.shape[2])
-        src[ix, iy, ic] = salt_or_pepper
+        src.at[ix, iy, ic].set(salt_or_pepper)
         return src
 
     def _not_channelwise():
@@ -113,7 +113,7 @@ def _rgb_inplace_noise_salt_pepper(
         salt_or_pepper = jrandom.randint(prng, (num_noise,), 0, 2)
         ix = jrandom.randint(prng, (num_noise,), 0, src.shape[0])
         iy = jrandom.randint(prng, (num_noise,), 0, src.shape[1])
-        src[ix, iy, :] = salt_or_pepper[:, None]
+        src.at[ix, iy, :].set(salt_or_pepper[:, None])
         return src
 
     return lax.cond(channelwise, _channelwise, _not_channelwise)
@@ -132,10 +132,10 @@ def _rgb_inplace_random_erasing(
 ) -> NpFloat32:
     h, w = src.shape[:2]
     # scale
-    scale = jrandom.uniform(prng, jnp.float32, *scale_min_max)
+    scale = jrandom.uniform(prng, (), jnp.float32, *scale_min_max)
     target_area = scale * (h * w)
     # aspect
-    aspect_ratio = jrandom.uniform(prng, jnp.float32, *aspect_min_max)
+    aspect_ratio = jrandom.uniform(prng, (), jnp.float32, *aspect_min_max)
     aspect_ratio = lax.cond(
         jrandom.uniform(prng) < 0.5,
         lambda: 1 / aspect_ratio,
@@ -176,7 +176,9 @@ def _rgb_inplace_random_erasing(
     c = lax.switch(
         index[color],
         [
-            lambda: jrandom.uniform(prng, (block_h, block_w, src.shape[2])),
+            lambda: jrandom.uniform(
+                prng, (block_y1 - block_y0, block_x1 - block_x0, src.shape[2])
+            ),
             lambda: jrandom.uniform(prng, (1, 1, src.shape[2])),
             lambda: 0,
             lambda: 1,
