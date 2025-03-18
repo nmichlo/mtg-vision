@@ -28,9 +28,10 @@ from os import PathLike
 from pathlib import Path
 from typing import Iterator, Tuple
 
-import numpy as np
+import jax.numpy as jnp
 from math import ceil
 import random
+
 from tqdm import tqdm
 
 from mtgdata import ScryfallDataset, ScryfallImageType
@@ -69,7 +70,7 @@ class _BaseImgDataset(abc.ABC):
             return uimg.img_float32(path_or_img)
 
     @abc.abstractmethod
-    def __getitem__(self, item) -> np.ndarray: ...
+    def __getitem__(self, item) -> jnp.ndarray: ...
 
     @abc.abstractmethod
     def __iter__(self): ...
@@ -77,13 +78,13 @@ class _BaseImgDataset(abc.ABC):
     @abc.abstractmethod
     def __len__(self) -> int: ...
 
-    def ran(self) -> np.ndarray:
+    def ran(self) -> jnp.ndarray:
         return self._load_image(self.ran_path())
 
     @abc.abstractmethod
     def ran_path(self): ...
 
-    def get(self, idx) -> np.ndarray:
+    def get(self, idx) -> jnp.ndarray:
         return self.__getitem__(idx)
 
 
@@ -177,7 +178,7 @@ class MtgImages(_BaseImgDataset):
 # ========================================================================= #
 
 SizeHW = tuple[int, int]
-PathOrImg = str | np.ndarray | PathLike
+PathOrImg = str | jnp.ndarray | PathLike
 
 
 # ========================================================================= #
@@ -208,7 +209,7 @@ class SyntheticBgFgMtgImages:
         self._aug_bg = A.SomeOf(
             A.FlipHorizontal(p=0.5),
             A.FlipVertical(p=0.5),
-            A.RotateBounded(deg=(0, 360), p=1.0),
+            # A.RotateBounded(deg=(0, 360), p=1.0),
             A.ColorTint(tint=(-0.15, 0.15), p=0.9),
             n=(1, 4),
         )
@@ -216,16 +217,16 @@ class SyntheticBgFgMtgImages:
         # Foreground augmentations (image and mask)
         self._aug_fg = A.AllOf(
             A.AllOf(
-                A.ShiftScaleRotate(
-                    shift_ratio=(-0.0625, 0.0625),
-                    scale_ratio=(-0.1, 0.0),
-                    rotate_limit=(-5, 5),
-                    p=1.0,
-                ),
-                A.PerspectiveWarp(
-                    corner_jitter_ratio=(-0.075, 0.075),
-                    p=1.0,
-                ),
+                # A.ShiftScaleRotate(
+                #     shift_ratio=(-0.0625, 0.0625),
+                #     scale_ratio=(-0.1, 0.0),
+                #     rotate_limit=(-5, 5),
+                #     p=1.0,
+                # ),
+                # A.PerspectiveWarp(
+                #     corner_jitter_ratio=(-0.075, 0.075),
+                #     p=1.0,
+                # ),
                 p=0.95,
             ),
             A.ColorTint(tint=(-0.15, 0.15), p=0.5),
@@ -255,7 +256,7 @@ class SyntheticBgFgMtgImages:
     # IMAGE LOADING METHODS
 
     @classmethod
-    def _get_img(cls, path_or_img: PathOrImg) -> np.ndarray:
+    def _get_img(cls, path_or_img: PathOrImg) -> jnp.ndarray:
         """Load an image as float32."""
         return (
             uimg.imread_float32(path_or_img)
@@ -263,13 +264,13 @@ class SyntheticBgFgMtgImages:
             else uimg.img_float32(path_or_img)
         )
 
-    def _get_card(self, card_path_or_img: PathOrImg | None) -> np.ndarray:
+    def _get_card(self, card_path_or_img: PathOrImg | None) -> jnp.ndarray:
         """Get a random card image or load the specified one."""
         if card_path_or_img is None:
             return self.ds_mtg.ran()  # Adjust based on actual dataset method
         return self._get_img(card_path_or_img)
 
-    def _get_bg(self, bg_path_or_img: PathOrImg | None) -> np.ndarray:
+    def _get_bg(self, bg_path_or_img: PathOrImg | None) -> jnp.ndarray:
         """Get a random background image or load the specified one."""
         if bg_path_or_img is None:
             return self.ds_bg.ran()  # Adjust based on actual dataset method
@@ -279,7 +280,7 @@ class SyntheticBgFgMtgImages:
 
     def make_target_card(
         self, card_path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
-    ) -> np.ndarray:
+    ) -> jnp.ndarray:
         """Create a target card image without background."""
         card = self._get_card(card_path_or_img)
         ret = uimg.remove_border_resized(
@@ -291,7 +292,7 @@ class SyntheticBgFgMtgImages:
 
     def _make_aug_card_and_mask(
         self, path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Generate an augmented card and its mask."""
         card = self._get_card(path_or_img)
         card = self._aug_upsidedown(image=card).image
@@ -302,7 +303,7 @@ class SyntheticBgFgMtgImages:
 
     def _make_aug_bg(
         self, bg_path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
-    ) -> np.ndarray:
+    ) -> jnp.ndarray:
         """Generate an augmented background."""
         bg = self._get_bg(bg_path_or_img)
         bg_aug = self._aug_bg(image=bg).image
@@ -314,7 +315,7 @@ class SyntheticBgFgMtgImages:
         card_path_or_img: PathOrImg | None = None,
         bg_path_or_img: PathOrImg | None = None,
         size_hw: SizeHW | None = None,
-    ) -> np.ndarray:
+    ) -> jnp.ndarray:
         """Create a synthetic input card with background."""
         size_hw = size_hw or self._default_x_size_hw
         # Foreground (card) and mask
@@ -336,7 +337,7 @@ class SyntheticBgFgMtgImages:
         bg_path_or_img: PathOrImg | None = None,
         x_size_hw: SizeHW | None = None,
         y_size_hw: SizeHW | None = None,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Generate a pair of synthetic input and target cards."""
         card = self._get_card(card_path_or_img)
         x = self.make_synthetic_input_card(card, bg_path_or_img, size_hw=x_size_hw)
@@ -368,11 +369,11 @@ if __name__ == "__main__":
         # y = ds._get_bg(None)  # 320 it/s
 
         # 70 it/s
-        try:
-            x, y = ds.make_synthetic_input_and_target_card_pair()
-        except Exception as e:
-            print(e)
-            continue
+        x, y = ds.make_synthetic_input_and_target_card_pair()
+        # try:
+        # except Exception as e:
+        #     print(e)
+        #     continue
 
         # uimg.imshow_loop(x, "x")
         # uimg.imshow_loop(y, "y")

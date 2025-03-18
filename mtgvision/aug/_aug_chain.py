@@ -30,6 +30,9 @@ __all__ = [
     "SampleOf",
 ]
 
+import jax.numpy as jnp
+import jax.random as jrandom
+
 from mtgvision.aug._base import AugItems, Augment, AugPrngHint
 from mtgvision.aug._util_args import ArgIntHint, ArgIntRange
 
@@ -46,14 +49,16 @@ class _Chain(Augment):
         p: float = 1.0,
     ):
         super().__init__(p=p)
-        self._augments = augments or ()
+        self._augments = list(augments or ())
 
     def _get_augments(self, prng: AugPrngHint):
         return self._augments
 
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        for augment in self._get_augments(prng):
-            x = augment._call(self._child_prng(prng), x)
+        augments = self._get_augments(prng)
+        for augment in augments:
+            _, split = jrandom.split(prng)
+            x = augment._call(split, x)
         return x
 
 
@@ -80,7 +85,12 @@ class _Shuffle(_Chain):
         Sample the augments to apply, with or without replacement.
         """
         k = self._n.sample(prng)
-        return prng.choice(self._augments, size=k, replace=self._replace)
+        # TODO: WRONG
+        # TODO: WRONG
+        # TODO: WRONG
+        # TODO: WRONG
+        idxs = jrandom.choice(prng, len(self._augments), (1,), replace=self._replace)
+        return jnp.take(self._augments, idxs)
 
 
 # ========================================================================= #
@@ -91,7 +101,8 @@ class _Shuffle(_Chain):
 # one of the augments
 class OneOf(_Chain):
     def _get_augments(self, prng: AugPrngHint):
-        return [prng.choice(self._augments)]
+        idx = jrandom.choice(prng, len(self._augments))
+        return [self._augments[idx]]
 
 
 # all augments

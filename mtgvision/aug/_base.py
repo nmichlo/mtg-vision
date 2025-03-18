@@ -34,15 +34,17 @@ __all__ = [
     "AugItems",
     # base
     "Augment",
+    "AugmentItems",
 ]
 
 import abc
 
-import cv2
-import numpy as np
-import numpy.random as npr
+import jax
+import jax.random as jrandom
+import numpy.random as np_random
+from jax import lax
 
-from typing_extensions import final, Literal, NamedTuple
+from typing_extensions import final, NamedTuple
 
 
 # ========================================================================= #
@@ -50,12 +52,12 @@ from typing_extensions import final, Literal, NamedTuple
 # ========================================================================= #
 
 
-NpFloat32 = np.ndarray[np.float32]
+NpFloat32 = jax.Array
 
 AugImgHint = NpFloat32
 AugMaskHint = NpFloat32
 AugPointsHint = NpFloat32
-AugPrngHint = npr.Generator
+AugPrngHint = jax.Array
 
 
 _MISSING = object()
@@ -102,13 +104,7 @@ class AugItems(NamedTuple):
             raise ValueError("Cannot change mask from None to set or set to None")
         if (self.points is None) != (points is None):
             raise ValueError("Cannot change points from None to set or set to None")
-        # checks
-        if image is not None and np.any(np.isnan(image)):
-            raise ValueError("Image contains NaN values")
-        if mask is not None and np.any(np.isnan(mask)):
-            raise ValueError("Mask contains NaN values")
-        if points is not None and np.any(np.isnan(points)):
-            raise ValueError("Points contains NaN values")
+        # TODO check for NaN?
         # override
         return AugItems(image=image, mask=mask, points=points)
 
@@ -125,35 +121,6 @@ class AugItems(NamedTuple):
             return self.mask.shape[:2]
         else:
             raise ValueError("Cannot get image dimensions without image or mask")
-
-    def applied_rotation_matrix(
-        self,
-        M: np.ndarray,
-        *,
-        mode: Literal["affine", "perspective"],
-        inter: int = cv2.INTER_LINEAR,
-        inter_mask: int = cv2.INTER_NEAREST,
-    ) -> "AugItems":
-        if mode == "affine":
-            warp = cv2.warpAffine
-            invert_transform = cv2.invertAffineTransform
-            transform = cv2.transform
-        else:
-            warp = cv2.warpPerspective
-            invert_transform = np.linalg.inv
-            transform = cv2.perspectiveTransform
-        # Get dimensions
-        h, w = self.get_bounds_hw()
-        # Warp image and mask
-        im = warp(self.image, M, (w, h), flags=inter) if self.has_image else None
-        mask = warp(self.mask, M, (w, h), flags=inter_mask) if self.has_mask else None
-        # Transform points
-        points = None
-        if self.has_points:
-            M_inv = invert_transform(M)
-            points = transform(self.points[None, :, :], M_inv)[0]
-        # done
-        return self.override(image=im, mask=mask, points=points)
 
 
 # ========================================================================= #
@@ -199,10 +166,12 @@ class Augment(abc.ABC):
         # make items
         items = AugItems(image=image, mask=mask, points=points)
         # make prng
-        if seed is None or isinstance(seed, int):
-            prng = npr.default_rng(seed)
-        elif isinstance(seed, npr.Generator):
-            prng = seed
+        if seed is None:
+            prng = jrandom.key(np_random.randint(0, 2**32 - 1))
+        elif isinstance(seed, int):
+            prng = jrandom.key(seed)
+        elif isinstance(seed, jax.Array):
+            prng = seed  # key
         else:
             raise ValueError(
                 f"Invalid seed type: {type(seed)}, must be int or RandomState"
@@ -227,13 +196,14 @@ class Augment(abc.ABC):
         """
         If augments refer to each other, then this is the method to call NOT __call__.
         """
-        if prng.uniform() < self._p:
-            # split the prng so that each augment gets a different seed
-            # this is important for chaining augments together so that if an augment
-            # is swapped out, the seed state of later augments does not change.
-            return self._apply(self._child_prng(prng), x)
-        else:
-            return x
+        # split the prng so that each augment gets a different seed
+        # this is important for chaining augments together so that if an augment
+        # is swapped out, the seed state of later augments does not change.
+        return lax.cond(
+            jrandom.uniform(prng) < self._p,
+            lambda: self._apply(prng, x),
+            lambda: x,
+        )
 
     @abc.abstractmethod
     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
@@ -244,27 +214,49 @@ class Augment(abc.ABC):
         Don't pass prng into child methods, rather split the PRNG for each child.
         Each new level of function calls should split the PRNG before going down a
         layer.
-
-        e.g. _call splits the PRNG and calls _apply
-        e.g. _apply splits the PRNG and passes this to _call, then uses the original PRNG for its own operations.
+        - Always split at the START of _apply.
+        - Always split before varying numbers of prng calls.
         """
         raise NotImplementedError
 
-    @classmethod
-    @final
-    def _child_prng(cls, prng: AugPrngHint) -> AugPrngHint:
-        """
-        Like jax.random.split, but for numpy.random.RandomState. This is used when
-        chaining augmentations together to ensure that each augmentation gets a
-        different random seed. This is useful because it means swapping out augments
-        does not change the seed state of later augments.
-        """
-        return npr.default_rng(prng.integers(2**32))
 
-    @classmethod
-    @final
-    def _n_child_prng(cls, prng: AugPrngHint, n: int) -> list[AugPrngHint]:
-        return [cls._child_prng(prng) for _ in range(n)]
+# ========================================================================= #
+# Conditional Augments                                                      #
+# ========================================================================= #
+
+
+class AugmentItems(Augment):
+    """
+    Conditional augment that applies an augment if there is a value present
+    """
+
+    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+        # augment image
+        image = x.image
+        if x.has_image:
+            image = self._augment_image(prng, x.image)
+        # augment mask
+        mask = x.mask
+        if x.has_mask:
+            mask = self._augment_mask(prng, x.mask)
+        # augment points
+        points = x.points
+        if x.has_points:
+            hw = x.get_bounds_hw()
+            points = self._augment_points(prng, x.points)
+        # done
+        return x.override(image=image, mask=mask, points=points)
+
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return image
+
+    def _augment_mask(self, prng: AugPrngHint, mask: AugMaskHint) -> AugMaskHint:
+        return mask
+
+    def _augment_points(
+        self, prng: AugPrngHint, points: AugPointsHint, hw: tuple[int, int]
+    ) -> AugPointsHint:
+        return points
 
 
 # ========================================================================= #

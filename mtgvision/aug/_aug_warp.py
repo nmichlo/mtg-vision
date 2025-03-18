@@ -32,12 +32,97 @@ __all__ = [
     "ShiftScaleRotate",
 ]
 
-
-import cv2
-import numpy as np
+import jax.numpy as jnp
+from jax import lax
 
 from mtgvision.aug import AugItems, Augment, AugPrngHint
 from mtgvision.aug._util_args import ArgFloatHint, ArgFloatRange
+from mtgvision.aug._util_jax import ResizeMethod
+
+
+def _get_rotation_matrix_2d(center, angle, scale):
+    """
+    Same as: cv2.getRotationMatrix2D((cx, cy), deg, 1.0), but for jax
+    """
+    cx, cy = center
+    angle = jnp.deg2rad(angle)
+    cos, sin = jnp.cos(angle), jnp.sin(angle)
+    M = jnp.array([[cos, -sin, cx], [sin, cos, cy], [0, 0, 1]], dtype=jnp.float32)
+    return lax.cond(
+        scale == 1.0,
+        lambda: M,
+        lambda: jnp.dot(
+            jnp.array([[scale, 0, 0], [0, scale, 0], [0, 0, 1]], dtype=jnp.float32), M
+        ),
+    )
+
+
+def _get_perspective_transform(src_pts, dst_pts):
+    """
+    Same as: cv2.getPerspectiveTransform(src_pts, dst_pts), but for jax
+    """
+    A = jnp.vstack([src_pts.T, jnp.ones((1, 4), dtype=jnp.float32)])
+    B = jnp.vstack([dst_pts.T, jnp.ones((1, 4), dtype=jnp.float32)])
+    M, _, _, _ = jnp.linalg.lstsq(A.T, B.T, rcond=None)
+    return M.T
+
+
+#     def applied_rotation_matrix(
+#         self,
+#         M: jnp.ndarray,
+#         *,
+#         mode: Literal["affine", "perspective"],
+#         inter: int = cv2.INTER_LINEAR,
+#         inter_mask: int = cv2.INTER_NEAREST,
+#     ) -> "AugItems":
+#         if mode == "affine":
+#             warp = cv2.warpAffine
+#             invert_transform = cv2.invertAffineTransform
+#             transform = cv2.transform
+#         else:
+#             warp = cv2.warpPerspective
+#             invert_transform = jnp.linalg.inv
+#             transform = cv2.perspectiveTransform
+#         # Get dimensions
+#         h, w = self.get_bounds_hw()
+#         # Warp image and mask
+#         im = warp(self.image, M, (w, h), flags=inter) if self.has_image else None
+#         mask = warp(self.mask, M, (w, h), flags=inter_mask) if self.has_mask else None
+#         # Transform points
+#         points = None
+#         if self.has_points:
+#             M_inv = invert_transform(M)
+#             points = transform(self.points[None, :, :], M_inv)[0]
+#         # done
+#         return self.override(image=im, mask=mask, points=points)
+
+
+def applied_rotation_matrix(
+    x: AugItems,
+    M: jnp.ndarray,
+    *,
+    mode: str,
+    inter: ResizeMethod,
+    inter_mask: ResizeMethod,
+) -> AugItems:
+    if mode == "affine":
+        warp = jnp.array
+        invert_transform = jnp.linalg.inv
+        transform = jnp.matmul
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+    # Get dimensions
+    h, w = x.get_bounds_hw()
+    # Warp image and mask
+    im = warp(M, x.image, (w, h), flags=inter) if x.has_image else None
+    mask = warp(M, x.mask, (w, h), flags=inter_mask) if x.has_mask else None
+    # Transform points
+    points = None
+    if x.has_points:
+        M_inv = invert_transform(M)
+        points = transform(M_inv, x.points.T).T
+    # done
+    return x.override(image=im, mask=mask, points=points)
 
 
 # ========================================================================= #
@@ -54,9 +139,9 @@ class FlipHorizontal(Augment):
         if x.has_image or x.has_mask or x.has_points:
             _, w = x.get_bounds_hw()
             # Flip image
-            im = np.fliplr(x.image) if x.has_image else None
+            im = jnp.fliplr(x.image) if x.has_image else None
             # Flip mask
-            mask = np.fliplr(x.mask) if x.has_mask else None
+            mask = jnp.fliplr(x.mask) if x.has_mask else None
             # Flip points (x -> W - 1 - x)
             points = x.points.copy() if x.has_points else None
             if points is not None:
@@ -74,9 +159,9 @@ class FlipVertical(Augment):
         if x.has_image or x.has_mask or x.has_points:
             h, _ = x.get_bounds_hw()
             # Flip image
-            im = np.flipud(x.image) if x.has_image else None
+            im = jnp.flipud(x.image) if x.has_image else None
             # Flip mask
-            mask = np.flipud(x.mask) if x.has_mask else None
+            mask = jnp.flipud(x.mask) if x.has_mask else None
             # Flip points (y -> H - 1 - y)
             points = x.points.copy() if x.has_points else None
             if points is not None:
@@ -93,8 +178,8 @@ class RotateBounded(Augment):
     def __init__(
         self,
         deg: ArgFloatHint = (0, 360),
-        inter: int = cv2.INTER_LINEAR,
-        inter_mask: int = cv2.INTER_NEAREST,
+        inter: int = ResizeMethod.LINEAR,
+        inter_mask: int = ResizeMethod.NEAREST,
         p: float = 0.5,
     ):
         super().__init__(p=p)
@@ -110,8 +195,8 @@ class RotateBounded(Augment):
             # Compute center
             cy, cx = h / 2, w / 2
             # Compute rotation matrix
-            M = cv2.getRotationMatrix2D((cx, cy), deg, 1.0)
-            cos, sin = np.abs(M[0, 0]), np.abs(M[0, 1])
+            M = _get_rotation_matrix_2d((cx, cy), deg, 1.0)
+            cos, sin = jnp.abs(M[0, 0]), jnp.abs(M[0, 1])
             # New bounding dimensions
             nw = int((h * sin) + (w * cos))
             nh = int((h * cos) + (w * sin))
@@ -119,8 +204,8 @@ class RotateBounded(Augment):
             M[0, 2] += (nw / 2) - cx
             M[1, 2] += (nh / 2) - cy
             # Warp
-            return x.applied_rotation_matrix(
-                M, mode="affine", inter=self._inter, inter_mask=self._inter_mask
+            return applied_rotation_matrix(
+                x, M, mode="affine", inter=self._inter, inter_mask=self._inter_mask
             )
         return x
 
@@ -135,8 +220,8 @@ class Rotate180(Augment):
             # Determine dimensions
             h, w = x.get_bounds_hw()
             # Rotate image and mask
-            im = np.rot90(x.image, k=2) if x.has_image else None
-            mask = np.rot90(x.mask, k=2) if x.has_mask else None
+            im = jnp.rot90(x.image, k=2) if x.has_image else None
+            mask = jnp.rot90(x.mask, k=2) if x.has_mask else None
             # Transform points (x, y) -> (W - 1 - x, H - 1 - y)
             points = x.points.copy() if x.has_points else None
             if points is not None:
@@ -155,8 +240,8 @@ class PerspectiveWarp(Augment):
         self,
         corner_jitter_ratio: ArgFloatHint = (-0.1, 0.1),
         corner_jitter_offset: ArgFloatHint = 0,
-        inter: int = cv2.INTER_LINEAR,
-        inter_mask: int = cv2.INTER_NEAREST,
+        inter: int = ResizeMethod.LINEAR,
+        inter_mask: int = ResizeMethod.NEAREST,
         p: float = 0.5,
     ):
         super().__init__(p=p)
@@ -171,20 +256,20 @@ class PerspectiveWarp(Augment):
             h, w = x.get_bounds_hw()
             # Random offsets
             ran = self._corner_jitter_ratio.sample(prng, size=(4, 2))
-            offsets = ran * np.array(
-                [(h, w), (h, -w), (-h, w), (-h, -w)], dtype=np.float32
+            offsets = ran * jnp.array(
+                [(h, w), (h, -w), (-h, w), (-h, -w)], dtype=jnp.float32
             )
             offsets += self._corner_jitter_offset.sample(prng, size=(4, 2))
             # Define source points (corners)
-            src_pts = np.array(
-                [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)], dtype=np.float32
+            src_pts = jnp.array(
+                [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)], dtype=jnp.float32
             )
             dst_pts = src_pts + offsets
             # Compute perspective transform
-            M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+            M = _get_perspective_transform(src_pts, dst_pts)
             # Warp
-            return x.applied_rotation_matrix(
-                M, mode="perspective", inter=self._inter, inter_mask=self._inter_mask
+            return applied_rotation_matrix(
+                x, M, mode="perspective", inter=self._inter, inter_mask=self._inter_mask
             )
         return x
 
@@ -199,8 +284,8 @@ class ShiftScaleRotate(Augment):
         shift_ratio: ArgFloatHint = (-0.0625, 0.0625),
         scale_ratio: ArgFloatHint = (-0.2, 0.0),
         rotate_limit: ArgFloatHint = (-5, 5),
-        inter: int = cv2.INTER_LINEAR,
-        inter_mask: int = cv2.INTER_NEAREST,
+        inter: int = ResizeMethod.LINEAR,
+        inter_mask: int = ResizeMethod.NEAREST,
         p: float = 0.5,
     ):
         super().__init__(p=p)
@@ -222,11 +307,11 @@ class ShiftScaleRotate(Augment):
             scale = 1 + self._scale_limit.sample(prng)
             angle = self._rotate_limit.sample(prng)
             # Compute affine matrix
-            M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, scale)
-            M[:, 2] += [shift_x, shift_y]
+            M = _get_rotation_matrix_2d((w / 2, h / 2), angle, scale)
+            M[:, 2] += jnp.asarray([shift_x, shift_y])
             # Warp
-            return x.applied_rotation_matrix(
-                M, mode="affine", inter=self._inter, inter_mask=self._inter_mask
+            return applied_rotation_matrix(
+                x, M, mode="affine", inter=self._inter, inter_mask=self._inter_mask
             )
         return x
 

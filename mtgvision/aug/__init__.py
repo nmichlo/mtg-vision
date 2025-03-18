@@ -1,7 +1,7 @@
 __all__ = [
     # blur
     "BlurGaussian",
-    "BlurMedian",
+    # "BlurMedian",
     "BlurJpegCompression",
     "BlurDownscale",
     # chain
@@ -54,7 +54,7 @@ from ._base import (
     AugMaskHint,
     AugPointsHint,
 )
-from ._aug_blur import BlurGaussian, BlurMedian, BlurJpegCompression, BlurDownscale
+from ._aug_blur import BlurGaussian, BlurJpegCompression, BlurDownscale
 from ._aug_chain import (
     OneOf,
     AllOf,

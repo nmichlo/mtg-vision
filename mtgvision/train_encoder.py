@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import IterableDataset, DataLoader
-import numpy as np
+import jax.numpy as jnp
 import random
 import wandb
 import kornia as K
@@ -59,9 +59,9 @@ _MODELS = {
 
 
 class BatchHintNumpy(TypedDict, total=False):
-    x: np.ndarray
-    y: np.ndarray
-    x2: np.ndarray
+    x: jnp.ndarray
+    y: jnp.ndarray
+    x2: jnp.ndarray
 
 
 class BatchHintTensor(TypedDict, total=False):
@@ -128,7 +128,7 @@ class RanMtgEncDecDataset(IterableDataset):
         return {k: K.image_to_tensor(v) for k, v in batch.items()}
 
     def make_image_batch(
-        self, img_pairs: list[tuple[np.ndarray, np.ndarray]]
+        self, img_pairs: list[tuple[jnp.ndarray, jnp.ndarray]]
     ) -> BatchHintNumpy:
         # generate random samples
         xs0, xs1, ys = [], [], []
@@ -141,9 +141,9 @@ class RanMtgEncDecDataset(IterableDataset):
                 xs1.append(self.synth.make_synthetic_input_card(card, bg1))
         # stack
         return {
-            "x": np.stack(xs0, axis=0),
-            **({"y": np.stack(ys, axis=0)} if self.targets else {}),
-            **({"x2": np.stack(xs1, axis=0)} if self.paired else {}),
+            "x": jnp.stack(xs0, axis=0),
+            **({"y": jnp.stack(ys, axis=0)} if self.targets else {}),
+            **({"x2": jnp.stack(xs1, axis=0)} if self.paired else {}),
         }
 
     def set_batch_size(self, batch_size):
@@ -253,7 +253,7 @@ class MtgVisionEncoder(pl.LightningModule):
     def forward_img(self, img):
         assert img.ndim == 3
         assert img.shape[-1] == 3
-        assert img.dtype == np.float32  # in range [0, 1]
+        assert img.dtype == jnp.float32  # in range [0, 1]
         _, [y, *_] = self(K.image_to_tensor(img)[None, ...])
         return K.tensor_to_image(y)
 
@@ -410,10 +410,10 @@ class ImageLoggingCallback(Callback):
     @staticmethod
     def join_images_into_row(images, padding=5):
         const = 127
-        if images[0].dtype in [np.float16, np.float32, np.float64]:
+        if images[0].dtype in [jnp.float16, jnp.float32, jnp.float64]:
             const = 0.5
         images = [
-            np.pad(
+            jnp.pad(
                 image,
                 [(padding, padding), (padding, padding), (0, 0)],
                 mode="constant",
@@ -421,7 +421,7 @@ class ImageLoggingCallback(Callback):
             )
             for image in images
         ]
-        return np.concatenate(images, axis=1)
+        return jnp.concatenate(images, axis=1)
 
     def log_images(self, model, vis_batch_np):
         print("Logging images...")
@@ -431,13 +431,13 @@ class ImageLoggingCallback(Callback):
         logs = {}
         model.eval()
         with torch.no_grad():
-            x_np = np.stack([batch["x"] for batch in vis_batch_np], axis=0)
-            y_np = np.stack([batch["y"] for batch in vis_batch_np], axis=0)
+            x_np = jnp.stack([batch["x"] for batch in vis_batch_np], axis=0)
+            y_np = jnp.stack([batch["y"] for batch in vis_batch_np], axis=0)
             x = torch.from_numpy(x_np).float().permute(0, 3, 1, 2).to(model.device)
             _, y = model(x)
             mout_np = []
             for out in [y]:
-                mout_np.append(np.clip(K.tensor_to_image(out), 0, 1))
+                mout_np.append(jnp.clip(K.tensor_to_image(out), 0, 1))
             # log images
             if self._first_log:
                 logs["images_x"] = wandb.Image(

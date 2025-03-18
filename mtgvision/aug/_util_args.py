@@ -27,11 +27,14 @@ __all__ = [
     "ArgFloatRange",
     "ArgIntHint",
     "ArgFloatHint",
+    "ArgStrLiterals",
+    "ArgStrLiteralsHint",
 ]
 
 from typing import NamedTuple
 
-import numpy as np
+import jax.numpy as jnp
+import jax.random as jrandom
 
 from mtgvision.aug import AugPrngHint
 
@@ -78,8 +81,8 @@ class ArgStrLiterals(NamedTuple):
                 )
         return cls(values=value)
 
-    def sample(self, prng: AugPrngHint) -> str:
-        return prng.choice(self.values)
+    def sample(self, prng: AugPrngHint):
+        return jrandom.choice(prng, self.values, ())
 
 
 class ArgIntRange(NamedTuple):
@@ -141,10 +144,10 @@ class ArgIntRange(NamedTuple):
             raise ValueError(
                 f"low int value: {low} must not be equal to high int value: {high}"
             )
-        return cls(low=low, high=high)
+        return cls(low=int(low), high=int(high))
 
-    def sample(self, prng: AugPrngHint, size=None):
-        return prng.integers(self.low, self.high + 1, size=size)  # excludes high
+    def sample(self, prng: AugPrngHint, size=()):
+        return jrandom.randint(prng, size, self.low, self.high, jnp.int32)
 
 
 class ArgFloatRange(NamedTuple):
@@ -210,11 +213,8 @@ class ArgFloatRange(NamedTuple):
             )
         return cls(low=low, high=high)
 
-    def sample(self, prng: AugPrngHint, size=None):
-        val = prng.uniform(self.low, self.high, size=size)
-        if isinstance(val, np.ndarray):
-            val = val.astype(np.float32)
-        return val
+    def sample(self, prng: AugPrngHint, size=()):
+        return jrandom.uniform(prng, size, jnp.float32, self.low, self.high)
 
 
 # ========================================================================= #

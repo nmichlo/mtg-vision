@@ -29,6 +29,8 @@ from os import PathLike
 from typing import TypeVar
 
 import cv2
+import jax.image
+import jax.numpy as jnp
 import numpy as np
 from PIL import Image
 
@@ -49,13 +51,13 @@ def ensure_float32(fn: T) -> T:
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         result = fn(*args, **kwargs)
-        if not isinstance(result, np.ndarray):
+        if not isinstance(result, jnp.ndarray):
             raise Exception(
                 f"Function {fn.__name__} did not return a numpy array, got: {type(result)}"
             )
-        if result.dtype != np.float32:
+        if result.dtype != jnp.float32:
             raise Exception(
-                f"Function {fn.__name__} did not return a numpy array of type {np.float32}, got: {result.dtype}"
+                f"Function {fn.__name__} did not return a numpy array of type {jnp.float32}, got: {result.dtype}"
             )
         return result
 
@@ -63,10 +65,10 @@ def ensure_float32(fn: T) -> T:
 
 
 def asrt_float(x):
-    assert isinstance(x, np.ndarray) and x.dtype in [
-        np.float16,
-        np.float32,
-        np.float64,
+    assert isinstance(x, (jnp.ndarray, np.ndarray)) and x.dtype in [
+        jnp.float16,
+        jnp.float32,
+        jnp.float64,
     ], f"Expected any np.float*, got {x.dtype}"
     return x
 
@@ -76,17 +78,17 @@ def asrt_float(x):
 # ========================================================================= #
 
 
-def imwrite(path: str | PathLike, img: np.ndarray):
+def imwrite(path: str | PathLike, img: jnp.ndarray):
     """
     Save an image to disk, support both float images in range [0, 1]
     and int or uint images in range [0, 255]
     """
-    if img.dtype in [np.float16, np.float32, np.float64]:
-        img = (img * 255).astype(np.uint8)
+    if img.dtype in [jnp.float16, jnp.float32, jnp.float64]:
+        img = (img * 255).astype(jnp.uint8)
     cv2.imwrite(str(path), img)
 
 
-def imread_float32(path: str | PathLike) -> np.ndarray[np.float32]:
+def imread_float32(path: str | PathLike) -> jnp.ndarray:
     """
     Read an image from disk, and convert it to a float32 image in range [0, 1].
     """
@@ -125,34 +127,34 @@ def imshow_loop(image, window_name="image", scale=1):
 # ============================================================================ #
 
 
-def img_clip(img: np.ndarray) -> np.ndarray:
+def img_clip(img: jnp.ndarray) -> jnp.ndarray:
     """
     Clip an image to the correct range, supports float images in range [0, 1]
     and int or uint images in range [0, 255].
     """
-    if img.dtype in [np.float16, np.float32, np.float64]:
-        im = np.clip(img, 0, 1)
-    elif img.dtype in [np.uint8, np.int32, np.int64, np.uint64]:
-        im = np.clip(img, 0, 255)
+    if img.dtype in [jnp.float16, jnp.float32, jnp.float64]:
+        im = jnp.clip(img, 0, 1)
+    elif img.dtype in [jnp.uint8, jnp.int32, jnp.int64, jnp.uint64]:
+        im = jnp.clip(img, 0, 255)
     else:
         raise Exception(f"Unsupported Type: {img.dtype}")
     assert im.dtype == img.dtype
     return im
 
 
-def img_uint8(img: np.ndarray | Image.Image) -> np.ndarray[np.uint8]:
+def img_uint8(img: jnp.ndarray | Image.Image) -> jnp.ndarray:
     """
     Convert an image to uint8, supports float images in range [0, 1]
     and int or uint images in range [0, 255].
     """
     if isinstance(img, Image.Image):
-        return np.asarray(img, dtype=np.uint8)
-    elif isinstance(img, np.ndarray):
-        if img.dtype in [np.uint8]:
+        return jnp.asarray(img, dtype=jnp.uint8)
+    elif isinstance(img, (jnp.ndarray, np.ndarray)):
+        if img.dtype in [jnp.uint8]:
             return img
-        elif img.dtype in [np.float16, np.float32, np.float64]:
-            return np.multiply(img_clip(img), 255.0, dtype=np.uint8)
-        elif img.dtype in [np.int32]:
+        elif img.dtype in [jnp.float16, jnp.float32, jnp.float64]:
+            return (img_clip(img) * 255.0).astype(jnp.uint8)
+        elif img.dtype in [jnp.int32]:
             return img_clip(img)
         else:
             raise Exception(f"Unsupported Numpy Type: {img.dtype}")
@@ -160,20 +162,20 @@ def img_uint8(img: np.ndarray | Image.Image) -> np.ndarray[np.uint8]:
         raise Exception(f"Unsupported Type: {type(img)}")
 
 
-def img_float32(img: np.ndarray | Image.Image) -> np.ndarray[np.float32]:
+def img_float32(img: jnp.ndarray | Image.Image) -> jnp.ndarray:
     """
     Convert an image to float32, supports float images in range [0, 1]
     and int or uint images in range [0, 255].
     """
     if isinstance(img, Image.Image):
-        return np.divide(img, 255.0, dtype=np.float32)
-    elif isinstance(img, np.ndarray):
-        if img.dtype in [np.float32]:
+        return jnp.asarray(img, dtype=jnp.float32) / 255.0
+    elif isinstance(img, (jnp.ndarray, np.ndarray)):
+        if img.dtype in [jnp.float32]:
             return img_clip(img)
-        elif img.dtype in [np.float16, np.float64]:
-            return img_clip(img.astype(np.float32))
-        elif img.dtype in [np.uint8, np.int32]:
-            return img_clip(np.divide(img, 255.0, dtype=np.float32))
+        elif img.dtype in [jnp.float16, jnp.float64]:
+            return img_clip(img.astype(jnp.float32))
+        elif img.dtype in [jnp.uint8, jnp.int32]:
+            return img_clip(img.astype(jnp.float32) / 255.0)
         else:
             raise Exception(f"Unsupported Numpy Type: {img.dtype}")
     else:
@@ -187,8 +189,8 @@ def img_float32(img: np.ndarray | Image.Image) -> np.ndarray[np.float32]:
 
 @ensure_float32
 def rgba_over_rgb(
-    fg_rgba: np.ndarray[np.float32 | np.uint8],
-    bg_rgb: np.ndarray[np.float32 | np.uint8],
+    fg_rgba: jnp.ndarray,
+    bg_rgb: jnp.ndarray,
 ):
     """
     Merge a foreground RGBA image with a background RGB image, supports float
@@ -203,9 +205,9 @@ def rgba_over_rgb(
 
 
 def rgb_mask_over_rgb(
-    fg_rgb: np.ndarray[np.float32 | np.uint8],
-    fg_mask: np.ndarray[np.float32 | np.uint8],
-    bg_rgb: np.ndarray[np.float32 | np.uint8],
+    fg_rgb: jnp.ndarray,
+    fg_mask: jnp.ndarray,
+    bg_rgb: jnp.ndarray,
 ):
     """
     Merge a foreground RGB image with a mask image over a background RGB image,
@@ -228,22 +230,22 @@ def rgb_mask_over_rgb(
 
 @ensure_float32
 def resize(
-    img: np.ndarray, size_hw: tuple[int, int], shrink: bool = True
-) -> np.ndarray:
+    img: jnp.ndarray, size_hw: tuple[int, int], shrink: bool = True
+) -> jnp.ndarray:
     """Resize an image to a new size."""
     h, w = size_hw
     # OpenCV is W*H not H*W
-    return cv2.resize(
+    return jax.image.resize(
         img,
-        (w, h),
-        interpolation=cv2.INTER_AREA if shrink else cv2.INTER_CUBIC,
+        shape=(w, h, *img.shape[2:]),
+        method="cubic" if not shrink else "linear",
     )
 
 
 @ensure_float32
 def remove_border_resized(
-    img: np.ndarray, border_width: int, size_hw: tuple[int, int] = None
-) -> np.ndarray:
+    img: jnp.ndarray, border_width: int, size_hw: tuple[int, int] = None
+) -> jnp.ndarray:
     """Remove a border of specified size (crop) from an image and resize it."""
     (ih, iw) = img.shape[:2]
     crop = img[border_width : ih - border_width, border_width : iw - border_width, :]
@@ -254,8 +256,8 @@ def remove_border_resized(
 
 @ensure_float32
 def crop_to_size(
-    img: np.ndarray, size_hw: tuple[int, int], pad: bool = False
-) -> np.ndarray:
+    img: jnp.ndarray, size_hw: tuple[int, int], pad: bool = False
+) -> jnp.ndarray:
     """
     Crop an image to a new size, if pad is True then the image is padded
     if the new size is smaller than the original. Otherwise, the image is
@@ -273,7 +275,7 @@ def crop_to_size(
         # resize
         resized = resize(img, (rh, rw))
         if pad:
-            zeros = np.zeros((sh, sw, img.shape[2]), dtype=img.dtype)
+            zeros = jnp.zeros((sh, sw, img.shape[2]), dtype=img.dtype)
             y0, x0 = (sh - rh) // 2, (sw - rw) // 2
             zeros[y0 : y0 + rh, x0 : x0 + rw, :] = resized
             ret = zeros
@@ -284,7 +286,7 @@ def crop_to_size(
 
 
 @ensure_float32
-def rotate_bounded(img: np.ndarray, deg: float) -> np.ndarray:
+def rotate_bounded(img: jnp.ndarray, deg: float) -> jnp.ndarray:
     """
     Rotate an image by a specified number of degrees, the image is bounded
     to the original size, and the image is resized to fit the
@@ -294,7 +296,7 @@ def rotate_bounded(img: np.ndarray, deg: float) -> np.ndarray:
     (cy, cx) = (h // 2, w // 2)
     # rotation matrix
     M = cv2.getRotationMatrix2D(center=(cx, cy), angle=deg, scale=1.0)  # anticlockwise
-    cos, sin = np.abs(M[0, 0]), np.abs(M[0, 1])
+    cos, sin = jnp.abs(M[0, 0]), jnp.abs(M[0, 1])
     # new bounds
     nw, nh = int((h * sin) + (w * cos)), int((h * cos) + (w * sin))
     # adjust the rotation matrix
@@ -312,20 +314,20 @@ def rotate_bounded(img: np.ndarray, deg: float) -> np.ndarray:
 @ensure_float32
 def round_rect_mask(
     size_hw: tuple[int, int], radius: int | None = None, radius_ratio: float = 0.045
-) -> np.ndarray:
+) -> jnp.ndarray:
     """
     Create a mask with a rounded edges.
     """
     if radius is None:
         radius = int(ceil(max(size_hw) * radius_ratio))
-    img = np.ones(size_hw[:2], dtype=np.float32)
+    img = jnp.ones(size_hw[:2], dtype=jnp.float32)
     # corner piece
-    corner = np.zeros((radius, radius), dtype=np.float32)
+    corner = np.zeros((radius, radius), dtype=jnp.float32)
     cv2.circle(corner, (0, 0), radius, 1, cv2.FILLED)
     # fill corners
     y1, x1 = size_hw[:2]
-    img[y1 - radius :, x1 - radius :] = np.rot90(corner, 0)  # br
-    img[:radius, x1 - radius :] = np.rot90(corner, 1)  # tr
-    img[:radius, :radius] = np.rot90(corner, 2)  # tl
-    img[y1 - radius :, :radius] = np.rot90(corner, 3)  # bl
+    img.at[y1 - radius :, x1 - radius :].set(jnp.rot90(corner, 0))  # br
+    img.at[:radius, x1 - radius :].set(jnp.rot90(corner, 1))  # tr
+    img.at[:radius, :radius].set(jnp.rot90(corner, 2))  # tl
+    img.at[y1 - radius :, :radius].set(jnp.rot90(corner, 3))  # bl
     return img

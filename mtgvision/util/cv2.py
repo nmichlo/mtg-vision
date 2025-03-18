@@ -23,7 +23,7 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
-import numpy as np
+import jax.numpy as jnp
 import cv2
 
 from mtgvision.util.image import img_uint8
@@ -38,7 +38,7 @@ from mtgvision.util.image import img_uint8
 def cv2_poly_is_convex(pts):
     if len(pts) < 3:
         raise Exception("Need at least 3 pts")
-    total, i, pts = 0, 0, list(np.array(pts).reshape((-1, 2)))
+    total, i, pts = 0, 0, list(jnp.asarray(pts).reshape((-1, 2)))
     for (ax, ay), (bx, by), (cx, cy) in zip(pts, pts[1:] + pts[:1], pts[2:] + pts[:2]):
         dx1 = bx - ax
         dy1 = by - ay
@@ -57,7 +57,7 @@ def cv2_quad_flip_upright(quad):
     quad = quad.reshape((-1, 2))
     p0, p1, p2, p3 = quad
     m01, m12, m23, m30 = (p0 + p1) / 2, (p1 + p2) / 2, (p2 + p3) / 2, (p3 + p0) / 2
-    d1, d2 = np.linalg.norm(m01 - m23), np.linalg.norm(m12 - m30)
+    d1, d2 = jnp.linalg.norm(m01 - m23), jnp.linalg.norm(m12 - m30)
     # should result in: tl, bl, br, tr
     if d1 > d2:
         quad[[0, 1, 2, 3]] = quad[[1, 2, 3, 0]]
@@ -68,14 +68,14 @@ def cv2_poly_expand(poly, ratio=0.05):
     assert len(poly) > 0
     shape = poly.shape
     poly = poly.reshape((-1, 2))
-    center = np.average(poly, axis=0)
-    poly += np.round((poly - center) * ratio).astype(np.int32)
+    center = jnp.average(poly, axis=0)
+    poly += jnp.round((poly - center) * ratio).astype(jnp.int32)
     return poly.reshape(shape)
 
 
 def cv2_poly_center(poly):
     assert len(poly) > 0
-    return np.average(poly.reshape((-1, 2)), axis=0)
+    return jnp.average(poly.reshape((-1, 2)), axis=0)
 
 
 # ============================================================================ #
@@ -91,15 +91,15 @@ def cv2_warp_imgs_onto(img, cards, bounds):
 
         card = img_uint8(card)
 
-        src_pts = np.array(
+        src_pts = jnp.asarray(
             [(0, 0), (0, scard[0]), (scard[1], scard[0]), (scard[1], 0)],
-            dtype=np.float32,
+            dtype=jnp.float32,
         )
-        dst_pts = np.array([p[0] for p in bound], dtype=np.float32)
+        dst_pts = jnp.asarray([p[0] for p in bound], dtype=jnp.float32)
 
         M = cv2.getPerspectiveTransform(src_pts, dst_pts)
         warp = cv2.warpPerspective(card, M, (scnvs[1], scnvs[0]))
-        cv2.fillConvexPoly(img, points=dst_pts.astype(np.int32), color=(0, 0, 0))
+        cv2.fillConvexPoly(img, points=dst_pts.astype(jnp.int32), color=(0, 0, 0))
         img = cv2.bitwise_or(warp, img)
     return img
 

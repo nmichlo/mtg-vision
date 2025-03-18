@@ -38,9 +38,14 @@ __all__ = [
     "ColorFadeBlack",
 ]
 
+import jax
+import jax.numpy as jnp
+import jax.random as jrandom
+from tqdm import tqdm
+import dm_pix as pix
 
-import numpy as np
-from mtgvision.aug._base import AugItems, Augment, AugPrngHint, NpFloat32
+from mtgvision.aug import AugImgHint
+from mtgvision.aug._base import AugmentItems, AugPrngHint, NpFloat32
 from mtgvision.aug._util_args import ArgFloatHint, ArgFloatRange
 
 
@@ -49,67 +54,47 @@ from mtgvision.aug._util_args import ArgFloatHint, ArgFloatRange
 # ========================================================================= #
 
 
-def _rgb_img_inplace_gamma(src: NpFloat32, gamma: float = 1.0) -> NpFloat32:
-    src[...] = np.power(src, gamma)
-    return src
+def _rgb_img_gamma(src: NpFloat32, gamma: float = 1.0) -> NpFloat32:
+    return jnp.power(src, gamma)
 
 
-def _rgb_img_inplace_brightness(src: NpFloat32, brightness: float = 0.0) -> NpFloat32:
-    src[...] += brightness
-    return src
+def _rgb_img_brightness(src: NpFloat32, brightness: float = 0.0) -> NpFloat32:
+    return src + brightness
 
 
-def _rgb_img_inplace_contrast(src: NpFloat32, contrast: float = 1.0) -> NpFloat32:
-    src[...] = (src - 0.5) * contrast + 0.5
-    return src
+def _rgb_img_contrast(src: NpFloat32, contrast: float = 1.0) -> NpFloat32:
+    # effectively LERP between image and 0.5
+    return contrast * src + (1 - contrast) * 0.5
 
 
-def _rgb_img_inplace_exposure(src: NpFloat32, exposure: float = 0.0) -> NpFloat32:
-    src[...] = 1 - np.exp(-src * exposure)
-    return src
+def _rgb_img_exposure(src: NpFloat32, exposure: float = 0.0) -> NpFloat32:
+    return src * 2**exposure
 
 
-def _rgb_img_inplace_saturation(src: NpFloat32, saturation: float = 1.0) -> NpFloat32:
-    # TODO: relies on torch and kornia
-    import kornia.enhance as ke
-    import torch
-
-    src[...] = (
-        ke.adjust_saturation_with_gray_subtraction(torch.as_tensor(src), saturation)
-        .numpy()
-        .astype(np.float32)
-    )
-    return src
+def _rgb_img_saturation(src: NpFloat32, saturation: float = 1.0) -> NpFloat32:
+    # taken from kornia.enhance.adjust_saturation_with_gray_subtraction
+    grey = pix.rgb_to_grayscale(src, keep_dims=True)
+    # blend the image with the grayscaled image
+    return (1 - saturation) * grey + saturation * src
 
 
-def _rgb_img_inplace_hue(src: NpFloat32, hue: float = 0.0) -> NpFloat32:
-    # TODO: relies on torch and kornia
-    import kornia.enhance as ke
-    import torch
-
-    src[...] = ke.adjust_hue(torch.as_tensor(src), hue).numpy().astype(np.float32)
-    return src
+def _rgb_img_hue(src: NpFloat32, hue: float = 0.0) -> NpFloat32:
+    return pix.adjust_hue(jnp.clip(src, 0, 1), hue)
 
 
-def _rgb_img_inplace_tint(
-    src: NpFloat32, tint_rgb: tuple[float, float, float] = (0, 0, 0)
+def _rgb_img_tint(
+    src: NpFloat32,
+    tint_rgb: tuple[float, float, float] = (0, 0, 0),
 ) -> NpFloat32:
-    src[...] = src + np.array(tint_rgb)[None, None, :]
-    return src
+    return src + jnp.asarray(tint_rgb, dtype=jnp.float32)[None, None, :]
 
 
-def _clip_image(src: NpFloat32) -> NpFloat32:
-    return np.clip(src, 0, 1)
+def _rgb_img_fade_white(src: NpFloat32, ratio: float = 0.33) -> NpFloat32:
+    return (1 - ratio) * src + (ratio * 1)
 
 
-def _rgb_img_inplace_fade_white(src: NpFloat32, ratio: float = 0.33) -> NpFloat32:
-    src[...] = (1 - ratio) * src + (ratio * 1)
-    return src
-
-
-def _rgb_img_inplace_fade_black(src: NpFloat32, ratio: float = 0.5) -> NpFloat32:
-    src[...] = (1 - ratio) * src  # + (ratio*0)
-    return src
+def _rgb_img_fade_black(src: NpFloat32, ratio: float = 0.5) -> NpFloat32:
+    return (1 - ratio) * src  # + (ratio*0)
 
 
 # ========================================================================= #
@@ -117,22 +102,16 @@ def _rgb_img_inplace_fade_black(src: NpFloat32, ratio: float = 0.5) -> NpFloat32
 # ========================================================================= #
 
 
-class ColorGamma(Augment):
+class ColorGamma(AugmentItems):
     def __init__(self, gamma: ArgFloatHint = (0, 0.5), p: float = 0.5):
         super().__init__(p=p)
         self._gamma = ArgFloatRange.from_arg(gamma, min_val=0)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_gamma(
-                src=x.image.copy(),
-                gamma=self._gamma.sample(prng),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_gamma(src=image, gamma=self._gamma.sample(prng))
 
 
-class ColorBrightness(Augment):
+class ColorBrightness(AugmentItems):
     """
     Adjust the brightness of an image.
 
@@ -143,17 +122,11 @@ class ColorBrightness(Augment):
         super().__init__(p=p)
         self._brightness = ArgFloatRange.from_arg(brightness, min_val=-1, max_val=1)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_brightness(
-                src=x.image.copy(),
-                brightness=self._brightness.sample(prng),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_brightness(src=image, brightness=self._brightness.sample(prng))
 
 
-class ColorContrast(Augment):
+class ColorContrast(AugmentItems):
     """
     Adjust the contrast of an image.
 
@@ -164,17 +137,11 @@ class ColorContrast(Augment):
         super().__init__(p=p)
         self._contrast = ArgFloatRange.from_arg(contrast, min_val=0)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_contrast(
-                src=x.image.copy(),
-                contrast=self._contrast.sample(prng),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_contrast(src=image, contrast=self._contrast.sample(prng))
 
 
-class ColorExposure(Augment):
+class ColorExposure(AugmentItems):
     """
     Adjust the exposure of an image.
 
@@ -183,19 +150,13 @@ class ColorExposure(Augment):
 
     def __init__(self, exposure: ArgFloatHint = (0.5, 2), p: float = 0.5):
         super().__init__(p=p)
-        self._exposure = ArgFloatRange.from_arg(exposure, min_val=-1, max_val=1)
+        self._exposure = ArgFloatRange.from_arg(exposure)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_exposure(
-                src=x.image.copy(),
-                exposure=self._exposure.sample(prng),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_exposure(src=image, exposure=self._exposure.sample(prng))
 
 
-class ColorSaturation(Augment):
+class ColorSaturation(AugmentItems):
     """
     Adjust the saturation of an image.
 
@@ -206,17 +167,11 @@ class ColorSaturation(Augment):
         super().__init__(p=p)
         self._saturation = ArgFloatRange.from_arg(saturation, min_val=0)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_saturation(
-                src=x.image.copy(),
-                saturation=self._saturation.sample(prng),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_saturation(src=image, saturation=self._saturation.sample(prng))
 
 
-class ColorHue(Augment):
+class ColorHue(AugmentItems):
     """
     Adjust the hue of an image.
 
@@ -227,17 +182,11 @@ class ColorHue(Augment):
         super().__init__(p=p)
         self._hue = ArgFloatRange.from_arg(hue, min_val=-1, max_val=1)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_hue(
-                src=x.image.copy(),
-                hue=self._hue.sample(prng),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_hue(src=image, hue=self._hue.sample(prng))
 
 
-class ColorTint(Augment):
+class ColorTint(AugmentItems):
     """
     Adjust the tint of an image.
 
@@ -248,21 +197,18 @@ class ColorTint(Augment):
         super().__init__(p=p)
         self._tint = ArgFloatRange.from_arg(tint, min_val=-1, max_val=1)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_tint(
-                src=x.image.copy(),
-                tint_rgb=(
-                    self._tint.sample(prng),
-                    self._tint.sample(prng),
-                    self._tint.sample(prng),
-                ),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_tint(
+            src=image,
+            tint_rgb=(
+                self._tint.sample(prng),
+                self._tint.sample(prng),
+                self._tint.sample(prng),
+            ),
+        )
 
 
-class ColorInvert(Augment):
+class ColorInvert(AugmentItems):
     """
     Invert the colors of an image.
     """
@@ -270,14 +216,11 @@ class ColorInvert(Augment):
     def __init__(self, p: float = 0.5):
         super().__init__(p=p)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = 1 - x.image
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return 1 - image
 
 
-class ColorGrayscale(Augment):
+class ColorGrayscale(AugmentItems):
     """
     Convert an image to grayscale.
     """
@@ -285,15 +228,13 @@ class ColorGrayscale(Augment):
     def __init__(self, p: float = 0.5):
         super().__init__(p=p)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = np.mean(x.image, axis=-1, keepdims=True)
-            im = np.repeat(im, 3, axis=-1)
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        im = jnp.mean(image, axis=-1, keepdims=True)
+        im = jnp.repeat(im, 3, axis=-1)
+        return im
 
 
-class ImgClip(Augment):
+class ImgClip(AugmentItems):
     """
     Clip the values of an image to the range [0, 1].
     """
@@ -301,14 +242,11 @@ class ImgClip(Augment):
     def __init__(self, p: float = 1.0):
         super().__init__(p=p)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _clip_image(x.image.copy())
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return jnp.clip(image, 0, 1)
 
 
-class ColorFadeWhite(Augment):
+class ColorFadeWhite(AugmentItems):
     """
     Fade the colors of an image to white.
 
@@ -319,17 +257,11 @@ class ColorFadeWhite(Augment):
         super().__init__(p=p)
         self._ratio = ArgFloatRange.from_arg(ratio, min_val=0, max_val=1)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_fade_white(
-                src=x.image.copy(),
-                ratio=self._ratio.sample(prng),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_fade_white(src=image, ratio=self._ratio.sample(prng))
 
 
-class ColorFadeBlack(Augment):
+class ColorFadeBlack(AugmentItems):
     """
     Fade the colors of an image to black.
 
@@ -340,16 +272,33 @@ class ColorFadeBlack(Augment):
         super().__init__(p=p)
         self._ratio = ArgFloatRange.from_arg(ratio, min_val=0, max_val=1)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
-        if x.has_image:
-            im = _rgb_img_inplace_fade_black(
-                src=x.image.copy(),
-                ratio=self._ratio.sample(prng),
-            )
-            return x.override(image=im)
-        return x
+    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        return _rgb_img_fade_black(src=image, ratio=self._ratio.sample(prng))
 
 
 # ========================================================================= #
 # END                                                                       #
 # ========================================================================= #
+
+
+if __name__ == "__main__":
+    for Aug in [
+        ColorGamma,
+        ColorBrightness,
+        ColorContrast,
+        ColorExposure,
+        ColorSaturation,
+        ColorHue,
+        ColorTint,
+        ColorInvert,
+        ColorGrayscale,
+        ImgClip,
+        ColorFadeWhite,
+        ColorFadeBlack,
+    ]:
+        aug = Aug()
+        key = jrandom.key(32)
+        src = jrandom.uniform(key, (224, 224, 3), jnp.float32)
+        aug = jax.jit(aug.__call__)
+        for i in tqdm(range(15000), desc=f"{Aug.__name__}"):
+            aug(image=src)

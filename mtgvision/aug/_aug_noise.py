@@ -31,10 +31,11 @@ __all__ = [
     "RandomErasing",
 ]
 
-import math
+import jax.numpy as jnp
 from typing import Literal
+import jax.random as jrandom
+from jax import lax
 
-import numpy as np
 from mtgvision.aug._base import AugItems, Augment, AugPrngHint, NpFloat32
 from mtgvision.aug._util_args import (
     ArgFloatHint,
@@ -57,11 +58,12 @@ def _rgb_img_inplace_noise_multiplicative_speckle(
     strength: float = 0.1,
     channelwise: bool = True,
 ) -> NpFloat32:
-    if channelwise:
-        src[...] *= prng.normal(1, strength, src.shape)
-    else:
-        src[...] *= prng.normal(1, strength, (*src.shape[:2], 1))
-    return src
+    shape = lax.cond(
+        channelwise,
+        lambda: src.shape,
+        lambda: (*src.shape[:2], 1),
+    )
+    return src * (jrandom.normal(prng, shape, dtype=jnp.float32) * strength + 1)
 
 
 def _rgb_img_inplace_noise_additive_gaussian(
@@ -71,11 +73,12 @@ def _rgb_img_inplace_noise_additive_gaussian(
     strength: float = 0.1,
     channelwise: bool = True,
 ) -> NpFloat32:
-    if channelwise:
-        src[...] += prng.normal(0, strength, src.shape)
-    else:
-        src[...] += prng.normal(0, strength, (*src.shape[:2], 1))
-    return src
+    shape = lax.cond(
+        channelwise,
+        lambda: src.shape,
+        lambda: (*src.shape[:2], 1),
+    )
+    return src + (jrandom.normal(prng, shape, dtype=jnp.float32) * strength)
 
 
 def _rgb_img_inplace_noise_poison(
@@ -85,8 +88,8 @@ def _rgb_img_inplace_noise_poison(
     peak: float = 1.0,
     eps: float = 0,
 ) -> NpFloat32:
-    src[...] = prng.poisson(src * 255 * peak) / (peak * 255 + eps)
-    return src
+    p = 255 * peak
+    return jrandom.poisson(prng, src * p, dtype=jnp.float32) / (p + eps)
 
 
 def _rgb_inplace_noise_salt_pepper(
@@ -96,20 +99,24 @@ def _rgb_inplace_noise_salt_pepper(
     strength: float = 0.1,
     channelwise: bool = False,
 ) -> NpFloat32:
-    if channelwise:
+    def _channelwise():
         num_noise = int(strength * src.size)
-        salt_or_pepper = prng.integers(0, 2, num_noise)
-        ix = prng.integers(0, src.shape[0], num_noise)
-        iy = prng.integers(0, src.shape[1], num_noise)
-        ic = prng.integers(0, src.shape[2], num_noise)
+        salt_or_pepper = jrandom.randint(prng, (num_noise,), 0, 2)
+        ix = jrandom.randint(prng, (num_noise,), 0, src.shape[0])
+        iy = jrandom.randint(prng, (num_noise,), 0, src.shape[1])
+        ic = jrandom.randint(prng, (num_noise,), 0, src.shape[2])
         src[ix, iy, ic] = salt_or_pepper
-    else:
-        num_noise = int(strength * np.prod(src.shape[:2]))
-        salt_or_pepper = prng.integers(0, 2, num_noise)
-        ix = prng.integers(0, src.shape[0], num_noise)
-        iy = prng.integers(0, src.shape[1], num_noise)
+        return src
+
+    def _not_channelwise():
+        num_noise = int(strength * src.shape[0] * src.shape[1])
+        salt_or_pepper = jrandom.randint(prng, (num_noise,), 0, 2)
+        ix = jrandom.randint(prng, (num_noise,), 0, src.shape[0])
+        iy = jrandom.randint(prng, (num_noise,), 0, src.shape[1])
         src[ix, iy, :] = salt_or_pepper[:, None]
-    return src
+        return src
+
+    return lax.cond(channelwise, _channelwise, _not_channelwise)
 
 
 def _rgb_inplace_random_erasing(
@@ -125,41 +132,59 @@ def _rgb_inplace_random_erasing(
 ) -> NpFloat32:
     h, w = src.shape[:2]
     # scale
-    scale = prng.uniform(*scale_min_max)
+    scale = jrandom.uniform(prng, jnp.float32, *scale_min_max)
     target_area = scale * (h * w)
     # aspect
-    aspect_ratio = prng.uniform(*aspect_min_max)
-    if prng.random() < 0.5:
-        aspect_ratio = 1 / aspect_ratio
+    aspect_ratio = jrandom.uniform(prng, jnp.float32, *aspect_min_max)
+    aspect_ratio = lax.cond(
+        jrandom.uniform(prng) < 0.5,
+        lambda: 1 / aspect_ratio,
+        lambda: aspect_ratio,
+    )
+
     block_w = int((target_area / aspect_ratio) ** 0.5)
     block_h = int((target_area * aspect_ratio) ** 0.5)
     # get coords
-    if inside:
-        cx = prng.integers(block_w // 2, w - block_w // 2)
-        cy = prng.integers(block_h // 2, h - block_h // 2)
-    else:
-        cx = prng.integers(0 - block_w // 2, w + block_w // 2)
-        cy = prng.integers(0 - block_h // 2, h + block_h // 2)
+    (mx, Mx), (my, My) = lax.cond(
+        inside,
+        lambda: ((block_w // 2, w - block_w // 2), (block_h // 2, h - block_h // 2)),
+        lambda: (
+            (0 - block_w // 2, w + block_w // 2),
+            (0 - block_h // 2, h + block_h // 2),
+        ),
+    )
+    cx = jrandom.randint(prng, (), mx, Mx)
+    cy = jrandom.randint(prng, (), my, My)
+
     # clamp to valid ranges
-    block_x0 = max(0, cx - block_w // 2)
-    block_y0 = max(0, cy - block_h // 2)
-    block_x1 = min(w, cx + block_w // 2)
-    block_y1 = min(h, cy + block_h // 2)
+    block_x0 = jnp.maximum(0, cx - block_w // 2)
+    block_y0 = jnp.maximum(0, cy - block_h // 2)
+    block_x1 = jnp.minimum(w, cx + block_w // 2)
+    block_y1 = jnp.minimum(h, cy + block_h // 2)
+
+    index = {
+        "random": 0,
+        "uniform_random": 1,
+        "zero": 2,
+        "black": 2,
+        "one": 3,
+        "white": 3,
+        "mean": 4,
+    }
+
     # color
-    if color == "random":
-        c = prng.uniform(0, 1, size=(block_h, block_w, src.shape[2]))
-    elif color == "uniform_random":
-        c = prng.uniform(0, 1, size=(1, 1, src.shape[2]))
-    elif color in ("zero", "black"):
-        c = 0
-    elif color in ("one", "white"):
-        c = 1
-    elif color == "mean":
-        c = src[block_y0:block_y1, block_x0:block_x1].mean()
-    else:
-        raise ValueError(f"invalid color: {color}")
-    # fill
-    src[block_y0:block_y1, block_x0:block_x1, ...] = c
+    c = lax.switch(
+        index[color],
+        [
+            lambda: jrandom.uniform(prng, (block_h, block_w, src.shape[2])),
+            lambda: jrandom.uniform(prng, (1, 1, src.shape[2])),
+            lambda: 0,
+            lambda: 1,
+            lambda: src[block_y0:block_y1, block_x0:block_x1].mean(0),
+        ],
+    )
+    # fill jax
+    src.at[block_y0:block_y1, block_x0:block_x1].set(c)
     return src
 
 
@@ -254,8 +279,8 @@ class NoisePoison(Augment):
         self._logprob = logprob
         if logprob:
             self._peak = ArgFloatRange(
-                low=math.log(self._peak.low),
-                high=math.log(self._peak.high),
+                low=jnp.log(self._peak.low),
+                high=jnp.log(self._peak.high),
             )
         # checks
         if self._peak.low == 0:
@@ -265,7 +290,7 @@ class NoisePoison(Augment):
         if x.has_image:
             peak = self._peak.sample(prng)
             if self._logprob:
-                peak = math.exp(peak)
+                peak = jnp.exp(peak)
             # scale values from [0 (no aug), 1 (full aug)] to [inf (no aug), 0 (full aug)]
             # peak=max(1e-5, 1 / (self._strength.sample(prng) + 1e-5) - 1),
             im = _rgb_img_inplace_noise_poison(
