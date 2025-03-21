@@ -38,11 +38,16 @@ __all__ = [
 ]
 
 import abc
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional, Type, TypeVar
 
 import jax
 import jax.random as jrandom
 import numpy.random as np_random
+import jax.numpy as jnp
 from jax import lax
+from jax._src.tree_util import register_dataclass
+from tqdm import tqdm
 
 from typing_extensions import final, NamedTuple
 
@@ -257,6 +262,138 @@ class AugmentItems(Augment):
         self, prng: AugPrngHint, points: AugPointsHint, hw: tuple[int, int]
     ) -> AugPointsHint:
         return points
+
+
+# ========================================================================= #
+# Helper                                                                    #
+# ========================================================================= #
+
+
+# NOTE: by convention for jax, the first arg is usually the one that is differentiated.
+# - (params, start_params) -> float
+LossModel = Callable[[NamedTuple, NamedTuple, NamedTuple], float]
+
+# - (params, pts) -> transformed_pts
+ParamModel = Callable[[NamedTuple, NamedTuple, "xnp.ndarray"], "xnp.ndarray"]
+
+# - (pts) -> transformed_pts   |   not intended for differentiation
+FullModel = Callable[["xnp.ndarray"], "xnp.ndarray"]
+
+
+# ========================================================================= #
+# Helper                                                                    #
+# ========================================================================= #
+
+
+T = TypeVar("T")
+
+
+def jax_static_field(**kwargs) -> Type[T]:
+    return field(**kwargs, metadata=dict(static=True))
+
+
+@register_dataclass
+@dataclass
+class Items:
+    image: jax.Array = None
+    mask: jax.Array = None
+    points: jax.Array = None
+
+
+@register_dataclass
+@dataclass
+class ParamsRanSeq:
+    augments: list[Any] = jax_static_field(default_factory=list)
+    n_min: Optional[int] = jax_static_field(default=None)
+    n_max: Optional[int] = jax_static_field(default=None)
+    shuffle: bool = jax_static_field(default=False)
+
+    def apply(self, key, items: Items) -> Items:
+        # 0. get bounds, default is always number of augments
+        m = len(self.augments) if self.n_min is None else self.n_min
+        M = len(self.augments) if self.n_max is None else self.n_max
+        # 1. get random order of ALL augments
+        #    jax struggles with indexing based on a traced array. So we need to use
+        #    switch to select the correct augment based on the random index
+        order = jrandom.choice(key, len(self.augments), (M,), replace=False)
+        branches = [lambda k, itms: aug.apply(k, itms) for aug in self.augments]
+        branch = lambda i, itms: jax.lax.switch(
+            order[i], branches, key, itms
+        )  # is order correctly re-done each time?
+        # 2. choose number of augments to apply, and apply them
+        n = jrandom.randint(key, (), m, M)
+        # 3. loop and apply
+        return lax.fori_loop(0, n, branch, items)
+
+
+@register_dataclass
+@dataclass
+class ParamsBrightness:
+    brightness_min: float = jax_static_field(default=-0.1)
+    brightness_max: float = jax_static_field(default=0.1)
+
+    def apply(self, key, items: Items) -> Items:
+        brightness = jrandom.uniform(
+            key,
+            minval=self.brightness_min,
+            maxval=self.brightness_max,
+        )
+        items.image += brightness
+        return items
+
+
+@register_dataclass
+@dataclass
+class ParamsExposure:
+    exposure_min: float = jax_static_field(default=-0.1)
+    exposure_max: float = jax_static_field(default=0.1)
+
+    def apply(self, key, items: Items) -> Items:
+        brightness = jrandom.uniform(
+            key,
+            minval=self.exposure_min,
+            maxval=self.exposure_max,
+        )
+        items.image *= brightness
+        return items
+
+
+if __name__ == "__main__":
+    key = jrandom.key(42)
+    img = jrandom.uniform(key, (192, 128, 3), jnp.float32)
+
+    aug = ParamsRanSeq(augments=[ParamsBrightness(), ParamsExposure()])
+
+    items = Items(image=img)
+    aug.apply = jax.jit(aug.apply)
+
+    for i in tqdm(range(100000)):
+        items_new = aug.apply(key, items)
+
+
+#
+# class AbstractModelMaker(abc.ABC):
+#     # <private: model>
+#     # - annotated with ClassVar to make sure pydantic doesn't use it
+#     # - base config classes should NOT share the same Params type, this is so we can link the param type to the config uniquely
+#     # * static variables should always be hashable, eg. int, str, tuple, etc. (not list)
+#     Params: ClassVar[T]
+#
+#     # these should point to static functions that can be JIT compiled with jax and thus
+#     # cached! dynamic dispatch should be handled by examining the params.
+#     AUGMENT_FN: ClassVar[ParamModel]
+#     RANDOM_
+#
+#
+#     MODEL_BACKWARD: ClassVar[ParamModel]
+#     MODEL_LOSS: ClassVar[LossModel] = staticmethod(noop_loss)
+#
+#     def tree_flatten_with_keys(self):
+#         return (((GetAttrKey('x'), self.x), (GetAttrKey('y'), self.y)), None)
+#
+#     @classmethod
+#     def tree_unflatten(cls, aux_data, children):
+#         return cls(*children)
 
 
 # ========================================================================= #
