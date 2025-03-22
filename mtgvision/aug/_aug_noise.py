@@ -31,19 +31,26 @@ __all__ = [
     "RandomErasing",
 ]
 
+from dataclasses import dataclass
+
 import jax.numpy as jnp
 from typing import Literal
 import jax.random as jrandom
+import numpy as np
 from jax import lax
 
 from mtgvision.aug._base import AugItems, Augment, AugPrngHint, JnpFloat32
 from mtgvision.aug._util_args import (
     ArgFloatHint,
-    ArgFloatRange,
-    ArgIntRange,
-    ArgStrLiterals,
+    ArgIntHint,
     ArgStrLiteralsHint,
+    sample_float,
+    sample_int,
+    sample_str,
 )
+
+from jax.tree_util import register_dataclass
+from mtgvision.aug._base import jax_static_field
 
 
 # ========================================================================= #
@@ -51,76 +58,67 @@ from mtgvision.aug._util_args import (
 # ========================================================================= #
 
 
-def _rgb_img_inplace_noise_multiplicative_speckle(
-    prng: AugPrngHint,
+def _rgb_img_noise_multiplicative_speckle(
+    key: AugPrngHint,
     *,
     src: JnpFloat32,
     strength: float = 0.1,
     channelwise: bool = True,
 ) -> JnpFloat32:
-    shape = lax.cond(
+    rand = lax.cond(
         channelwise,
-        lambda: src.shape,
-        lambda: (*src.shape[:2], 1),
+        lambda: jrandom.normal(key, src.shape),
+        lambda: jrandom.normal(key, (*src.shape[:2], 1)).repeat(3, -1),
     )
-    return src * (jrandom.normal(prng, shape, dtype=jnp.float32) * strength + 1)
+    return src * (rand * strength + 1)
 
 
-def _rgb_img_inplace_noise_additive_gaussian(
-    prng: AugPrngHint,
+def _rgb_img_noise_additive_gaussian(
+    key: AugPrngHint,
     *,
     src: JnpFloat32,
     strength: float = 0.1,
     channelwise: bool = True,
 ) -> JnpFloat32:
-    shape = lax.cond(
+    rand = lax.cond(
         channelwise,
-        lambda: src.shape,
-        lambda: (*src.shape[:2], 1),
+        lambda: jrandom.normal(key, src.shape),
+        lambda: jrandom.normal(key, (*src.shape[:2], 1)).repeat(3, -1),
     )
-    return src + (jrandom.normal(prng, shape, dtype=jnp.float32) * strength)
+    return src + (rand * strength)
 
 
-def _rgb_img_inplace_noise_poison(
-    prng: AugPrngHint,
+def _rgb_img_noise_poison(
+    key: AugPrngHint,
     *,
     src: JnpFloat32,
     peak: float = 1.0,
     eps: float = 0,
 ) -> JnpFloat32:
     p = 255 * peak
-    return jrandom.poisson(prng, src * p) / (p + eps)
+    return jrandom.poisson(key, src * p) / (p + eps)
 
 
 def _rgb_inplace_noise_salt_pepper(
-    prng: AugPrngHint,
+    key: AugPrngHint,
     *,
     src: JnpFloat32,
     strength: float = 0.1,
     channelwise: bool = False,
 ) -> JnpFloat32:
-    def _channelwise():
-        num_noise = int(strength * src.size)
-        salt_or_pepper = jrandom.randint(prng, (num_noise,), 0, 2)
-        ix = jrandom.randint(prng, (num_noise,), 0, src.shape[0])
-        iy = jrandom.randint(prng, (num_noise,), 0, src.shape[1])
-        ic = jrandom.randint(prng, (num_noise,), 0, src.shape[2])
-        src.at[ix, iy, ic].set(salt_or_pepper)
-        return src
-
-    def _not_channelwise():
-        num_noise = int(strength * src.shape[0] * src.shape[1])
-        salt_or_pepper = jrandom.randint(prng, (num_noise,), 0, 2)
-        ix = jrandom.randint(prng, (num_noise,), 0, src.shape[0])
-        iy = jrandom.randint(prng, (num_noise,), 0, src.shape[1])
-        src.at[ix, iy, :].set(salt_or_pepper[:, None])
-        return src
-
-    return lax.cond(channelwise, _channelwise, _not_channelwise)
+    rand = lax.cond(
+        channelwise,
+        lambda: jrandom.uniform(key, src.shape),
+        lambda: jrandom.uniform(key, (*src.shape[:2], 1)).repeat(3, -1),
+    )
+    # set salt and pepper
+    src = jnp.where(rand < (strength), 0, src)
+    src = jnp.where(rand < (strength / 2), 1, src)
+    return src
 
 
 def _rgb_inplace_random_erasing(
-    prng: AugPrngHint,
+    key: AugPrngHint,
     *,
     src: JnpFloat32,
     scale_min_max: tuple[float, float] = (0.2, 0.7),  # [0, 1]
@@ -132,18 +130,18 @@ def _rgb_inplace_random_erasing(
 ) -> JnpFloat32:
     h, w = src.shape[:2]
     # scale
-    scale = jrandom.uniform(prng, (), jnp.float32, *scale_min_max)
+    scale = jrandom.uniform(key, (), jnp.float32, *scale_min_max)
     target_area = scale * (h * w)
     # aspect
-    aspect_ratio = jrandom.uniform(prng, (), jnp.float32, *aspect_min_max)
+    aspect_ratio = jrandom.uniform(key, (), jnp.float32, *aspect_min_max)
     aspect_ratio = lax.cond(
-        jrandom.uniform(prng) < 0.5,
+        jrandom.uniform(key) < 0.5,
         lambda: 1 / aspect_ratio,
         lambda: aspect_ratio,
     )
 
-    block_w = int((target_area / aspect_ratio) ** 0.5)
-    block_h = int((target_area * aspect_ratio) ** 0.5)
+    block_w = ((target_area / aspect_ratio) ** 0.5).astype(jnp.int32)
+    block_h = ((target_area * aspect_ratio) ** 0.5).astype(jnp.int32)
     # get coords
     (mx, Mx), (my, My) = lax.cond(
         inside,
@@ -153,8 +151,8 @@ def _rgb_inplace_random_erasing(
             (0 - block_h // 2, h + block_h // 2),
         ),
     )
-    cx = jrandom.randint(prng, (), mx, Mx)
-    cy = jrandom.randint(prng, (), my, My)
+    cx = jrandom.randint(key, (), mx, Mx)
+    cy = jrandom.randint(key, (), my, My)
 
     # clamp to valid ranges
     block_x0 = jnp.maximum(0, cx - block_w // 2)
@@ -163,30 +161,30 @@ def _rgb_inplace_random_erasing(
     block_y1 = jnp.minimum(h, cy + block_h // 2)
 
     index = {
-        "random": 0,
-        "uniform_random": 1,
-        "zero": 2,
-        "black": 2,
-        "one": 3,
-        "white": 3,
-        "mean": 4,
+        "uniform_random": 0,
+        "zero": 1,
+        "black": 1,
+        "one": 2,
+        "white": 2,
     }
 
     # color
     c = lax.switch(
         index[color],
         [
-            lambda: jrandom.uniform(
-                prng, (block_y1 - block_y0, block_x1 - block_x0, src.shape[2])
-            ),
-            lambda: jrandom.uniform(prng, (1, 1, src.shape[2])),
-            lambda: 0,
-            lambda: 1,
-            lambda: src[block_y0:block_y1, block_x0:block_x1].mean(0),
+            lambda: jrandom.uniform(key, (src.shape[-1],)),
+            lambda: jnp.zeros((src.shape[-1],)),
+            lambda: jnp.ones((src.shape[-1],)),
         ],
     )
-    # fill jax
-    src.at[block_y0:block_y1, block_x0:block_x1].set(c)
+
+    # bool mask over fill region
+    masky = jnp.where(np.arange(h) >= block_y0, np.arange(h) < block_y1, False)
+    maskx = jnp.where(np.arange(w) >= block_x0, np.arange(w) < block_x1, False)
+    mask = masky[:, None] & maskx[None, :]
+
+    # fill the region
+    src = jnp.where(mask[:, :, None], c[None, None, :], src)
     return src
 
 
@@ -195,6 +193,8 @@ def _rgb_inplace_random_erasing(
 # ========================================================================= #
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class NoiseMultiplicativeGaussian(Augment):
     """
     Add multiplicative gaussian noise to the image.
@@ -202,30 +202,24 @@ class NoiseMultiplicativeGaussian(Augment):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(
-        self,
-        strength: ArgFloatHint = (0, 0.1),
-        channelwise: bool = True,
-        p: float = 0.5,
-        inplace: bool = False,
-    ):
-        super().__init__(p=p)
-        self._strength = ArgFloatRange.from_arg(strength, min_val=0)
-        self._channelwise = channelwise
-        self._inplace = inplace
+    p: float = jax_static_field(default=0.5)
+    strength: ArgFloatHint = jax_static_field(default=(0, 0.1))  # min 0
+    channelwise: bool = jax_static_field(default=True)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
-            im = _rgb_img_inplace_noise_multiplicative_speckle(
-                prng,
-                src=x.image if self._inplace else x.image.copy(),
-                strength=self._strength.sample(prng),
-                channelwise=self._channelwise,
+            im = _rgb_img_noise_multiplicative_speckle(
+                key,
+                src=x.image,
+                strength=sample_float(key, self.strength),
+                channelwise=self.channelwise,
             )
             return x.override(image=im)
         return x
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class NoiseAdditiveGaussian(Augment):
     """
     Add additive gaussian noise to the image.
@@ -233,30 +227,24 @@ class NoiseAdditiveGaussian(Augment):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(
-        self,
-        strength: ArgFloatHint = (0, 0.1),
-        channelwise: bool = True,
-        p: float = 0.5,
-        inplace: bool = False,
-    ):
-        super().__init__(p=p)
-        self._strength = ArgFloatRange.from_arg(strength, min_val=0)
-        self._channelwise = channelwise
-        self._inplace = inplace
+    p: float = jax_static_field(default=0.5)
+    strength: ArgFloatHint = jax_static_field(default=(0, 0.1))  # min 0
+    channelwise: bool = jax_static_field(default=True)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
-            im = _rgb_img_inplace_noise_additive_gaussian(
-                prng,
-                src=x.image if self._inplace else x.image.copy(),
-                strength=self._strength.sample(prng),
-                channelwise=self._channelwise,
+            im = _rgb_img_noise_additive_gaussian(
+                key,
+                src=x.image,
+                strength=sample_float(key, self.strength),
+                channelwise=self.channelwise,
             )
             return x.override(image=im)
         return x
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class NoisePoison(Augment):
     """
     Add poisson noise to the image.
@@ -267,113 +255,104 @@ class NoisePoison(Augment):
     * peak=inf is no noise
     """
 
-    def __init__(
-        self,
-        peak: ArgFloatHint = (0.01, 0.2),
-        logprob: bool = True,
-        p: float = 0.5,
-        inplace: bool = False,
-    ):
-        super().__init__(p=p)
-        self._peak = ArgFloatRange.from_arg(peak, min_val=0)
-        self._inplace = inplace
-        # log prob
-        self._logprob = logprob
-        if logprob:
-            self._peak = ArgFloatRange(
-                low=jnp.log(self._peak.low),
-                high=jnp.log(self._peak.high),
-            )
-        # checks
-        if self._peak.low == 0:
-            raise ValueError(f"{self.__class__.__name__} cannot have a strength of 0")
+    p: float = jax_static_field(default=0.5)
+    peak: ArgFloatHint = jax_static_field(default=(0.01, 0.2))  # min 0
+    logprob: bool = jax_static_field(default=True)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
-            peak = self._peak.sample(prng)
-            if self._logprob:
+            peak = sample_float(key, self.peak)
+            if self.logprob:
                 peak = jnp.exp(peak)
             # scale values from [0 (no aug), 1 (full aug)] to [inf (no aug), 0 (full aug)]
             # peak=max(1e-5, 1 / (self._strength.sample(prng) + 1e-5) - 1),
-            im = _rgb_img_inplace_noise_poison(
-                prng,
-                src=x.image if self._inplace else x.image.copy(),
-                peak=max(1e-7, peak),
+            im = _rgb_img_noise_poison(
+                key,
+                src=x.image,
+                peak=jnp.maximum(1e-7, peak),
             )
             return x.override(image=im)
         return x
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class NoiseSaltPepper(Augment):
     """
     Add salt and pepper noise to the image.
     """
 
-    def __init__(
-        self,
-        strength: ArgFloatHint = (0, 0.2),
-        channelwise: bool = False,
-        p: float = 0.5,
-        inplace: bool = False,
-    ):
-        super().__init__(p=p)
-        self._strength = ArgFloatRange.from_arg(strength, min_val=0, max_val=1)
-        self._channelwise = channelwise
-        self._inplace = inplace
+    p: float = jax_static_field(default=0.5)
+    strength: ArgFloatHint = jax_static_field(default=(0, 0.2))  # min 0, max 1
+    channelwise: bool = jax_static_field(default=False)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
             im = _rgb_inplace_noise_salt_pepper(
-                prng,
-                src=x.image if self._inplace else x.image.copy(),
-                strength=self._strength.sample(prng),
-                channelwise=self._channelwise,
+                key,
+                src=x.image.copy(),
+                strength=sample_float(key, self.strength),
+                channelwise=self.channelwise,
             )
             return x.override(image=im)
         return x
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class RandomErasing(Augment):
     """
     Randomly erase a rectangular region in the image, leaving mask and points unchanged.
     """
 
-    def __init__(
-        self,
-        scale: ArgFloatHint = (0.2, 0.7),
-        aspect: ArgFloatHint = (1, 3),
-        color: ArgStrLiteralsHint = "uniform_random",
-        n: ArgIntRange = 1,
-        inside: bool = False,
-        p: float = 0.5,
-    ):
-        super().__init__(p=p)
-        self._n = ArgIntRange.from_arg(n, min_val=0)
-        self._scale = ArgFloatRange.from_arg(scale, min_val=0, max_val=1)
-        self._aspect = ArgFloatRange.from_arg(aspect, min_val=1)
-        self._color = ArgStrLiterals.from_arg(
-            color, allowed_vals=("random", "uniform_random", "black", "white", "mean")
-        )
-        self._inside = inside
+    p: float = jax_static_field(default=0.5)
+    scale: ArgFloatHint = jax_static_field(default=(0.2, 0.7))  # min 0, max 1
+    n: ArgIntHint = jax_static_field(default=1)  # min 0
+    aspect: ArgFloatHint = jax_static_field(default=(1, 3))  # min 1
+    color: ArgStrLiteralsHint = jax_static_field(default="uniform_random")
+    inside: bool = jax_static_field(default=False)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    @staticmethod
+    def _norm_range(min_max):
+        if isinstance(min_max, (tuple, list)):
+            m, M = min_max
+            return (m, M)
+        return (min_max, min_max)
+
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
-            n = self._n.sample(prng)
-            if n > 0:
-                im = x.image.copy()
-                for _ in range(n):
-                    im = _rgb_inplace_random_erasing(
-                        prng,
-                        src=im,
-                        scale_min_max=(self._scale.low, self._scale.high),
-                        aspect_min_max=(self._aspect.low, self._aspect.high),
-                        color=self._color.sample(prng),
-                        inside=self._inside,
-                    )
-                return x.override(image=im)
+            n = sample_int(key, self.n)
+
+            def apply(im):
+                return _rgb_inplace_random_erasing(
+                    key,
+                    src=im,
+                    scale_min_max=self._norm_range(self.scale),
+                    aspect_min_max=self._norm_range(self.aspect),
+                    color=sample_str(key, self.color),
+                    inside=self.inside,
+                )
+
+            im = lax.fori_loop(0, n, lambda i, im: apply(im), x.image.copy())
+            return x.override(image=im)
         return x
 
 
 # ========================================================================= #
 # END                                                                       #
 # ========================================================================= #
+
+
+if __name__ == "__main__":
+
+    def _main():
+        for Aug in [
+            NoiseMultiplicativeGaussian,
+            NoiseAdditiveGaussian,
+            NoisePoison,
+            NoiseSaltPepper,
+            RandomErasing,
+        ]:
+            Aug().quick_test()
+
+    _main()

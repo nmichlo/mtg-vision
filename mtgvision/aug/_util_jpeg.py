@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
+from jax import lax
 from jax.scipy.fft import dct, idct
 from jax.image import resize
 
@@ -96,7 +97,6 @@ def _process_channel(
     dct_coeffs = _dct2d(blocks_shifted)
     q_table = q_table.astype(dct_coeffs.dtype)
     coeffs_quantized = jnp.round(dct_coeffs / q_table)
-    print(f"Quality {quality}: coeffs_quantized mean = {jnp.mean(coeffs_quantized)}")
     coeffs_dequantized = coeffs_quantized * q_table
     blocks_reconstructed_shifted = _idct2d(coeffs_dequantized)
     blocks_reconstructed = blocks_reconstructed_shifted + 128
@@ -114,17 +114,18 @@ def _process_channel(
 
 # Quantization scaling
 def get_quantization_tables(quality):
-    quality = max(1, min(quality, 100))
-    if quality < 50:
-        scale = 5000 / quality
-    else:
-        scale = 200 - 2 * quality
-    scale = max(1, scale)
+    quality = jnp.clip(quality, 1, 100)
+
+    scale = lax.cond(
+        quality < 50,
+        lambda x: 5000.0 / x,
+        lambda x: 200.0 - 2.0 * x,
+        quality,
+    )
+
+    scale = jnp.maximum(1, scale)
     q_luminance = jnp.round((_q_luminance_base * scale + 50) / 100).clip(1, 255)
     q_chrominance = jnp.round((_q_chrominance_base * scale + 50) / 100).clip(1, 255)
-    print(
-        f"Quality {quality}: q_luminance[0,0] = {q_luminance[0, 0]}, q_chrominance[0,0] = {q_chrominance[0, 0]}"
-    )
     return q_luminance, q_chrominance
 
 

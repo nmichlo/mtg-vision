@@ -27,6 +27,9 @@ __all__ = [
     "NoOp",
 ]
 
+from dataclasses import dataclass
+
+from jax.tree_util import register_dataclass
 
 from mtgvision.aug._base import AugItems, Augment, AugPrngHint
 
@@ -36,11 +39,20 @@ from mtgvision.aug._base import AugItems, Augment, AugPrngHint
 # ========================================================================= #
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class NoOp(Augment):
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         return x
 
 
 # ========================================================================= #
 # END                                                                       #
 # ========================================================================= #
+
+if __name__ == "__main__":
+
+    def _main():
+        NoOp().quick_test()
+
+    _main()

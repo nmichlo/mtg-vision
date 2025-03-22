@@ -40,12 +40,16 @@ __all__ = [
 
 import jax.numpy as jnp
 import jax.random as jrandom
-from tqdm import tqdm
 import dm_pix as pix
 
 from mtgvision.aug import AugImgHint
 from mtgvision.aug._base import AugmentItems, AugPrngHint, JnpFloat32
-from mtgvision.aug._util_args import ArgFloatHint, ArgFloatRange
+from mtgvision.aug._util_args import ArgFloatHint, sample_float
+from dataclasses import dataclass
+
+from jax.tree_util import register_dataclass
+
+from mtgvision.aug._base import jax_static_field
 
 
 # ========================================================================= #
@@ -101,15 +105,23 @@ def _rgb_img_fade_black(src: JnpFloat32, ratio: float = 0.5) -> JnpFloat32:
 # ========================================================================= #
 
 
+def _ran(key, m, M, shape=()):
+    return jrandom.uniform(key, shape, minval=m, maxval=M)
+
+
+@register_dataclass
+@dataclass(frozen=True)
 class ColorGamma(AugmentItems):
-    def __init__(self, gamma: ArgFloatHint = (0, 0.5), p: float = 0.5):
-        super().__init__(p=p)
-        self._gamma = ArgFloatRange.from_arg(gamma, min_val=0)
+    p: float = jax_static_field(default=0.5)
+    gamma: ArgFloatHint = jax_static_field(default=(0, 0.5))  # min 0
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
-        return _rgb_img_gamma(src=image, gamma=self._gamma.sample(prng))
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        val = sample_float(key, self.gamma)
+        return _rgb_img_gamma(src=image, gamma=val)
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorBrightness(AugmentItems):
     """
     Adjust the brightness of an image.
@@ -117,14 +129,16 @@ class ColorBrightness(AugmentItems):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(self, brightness: ArgFloatHint = (-0.5, 0.5), p: float = 0.5):
-        super().__init__(p=p)
-        self._brightness = ArgFloatRange.from_arg(brightness, min_val=-1, max_val=1)
+    p: float = jax_static_field(default=0.5)
+    brightness: ArgFloatHint = jax_static_field(default=(-0.5, 0.5))  # min -1, max 1
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
-        return _rgb_img_brightness(src=image, brightness=self._brightness.sample(prng))
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        val = sample_float(key, self.brightness)
+        return _rgb_img_brightness(src=image, brightness=val)
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorContrast(AugmentItems):
     """
     Adjust the contrast of an image.
@@ -132,14 +146,16 @@ class ColorContrast(AugmentItems):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(self, contrast: ArgFloatHint = (0.5, 2), p: float = 0.5):
-        super().__init__(p=p)
-        self._contrast = ArgFloatRange.from_arg(contrast, min_val=0)
+    p: float = jax_static_field(default=0.5)
+    contrast: ArgFloatHint = jax_static_field(default=(0.5, 2))  # min 0
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
-        return _rgb_img_contrast(src=image, contrast=self._contrast.sample(prng))
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        val = sample_float(key, self.contrast)
+        return _rgb_img_contrast(src=image, contrast=val)
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorExposure(AugmentItems):
     """
     Adjust the exposure of an image.
@@ -147,44 +163,46 @@ class ColorExposure(AugmentItems):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(self, exposure: ArgFloatHint = (0.5, 2), p: float = 0.5):
-        super().__init__(p=p)
-        self._exposure = ArgFloatRange.from_arg(exposure)
+    p: float = jax_static_field(default=0.5)
+    exposure: ArgFloatHint = jax_static_field(default=(0.5, 2))
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
-        return _rgb_img_exposure(src=image, exposure=self._exposure.sample(prng))
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        val = sample_float(key, self.exposure)
+        return _rgb_img_exposure(src=image, exposure=val)
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorSaturation(AugmentItems):
     """
     Adjust the saturation of an image.
-
-    TODO: relies on torch and kornia
     """
 
-    def __init__(self, saturation: ArgFloatHint = (0, 2), p: float = 0.5):
-        super().__init__(p=p)
-        self._saturation = ArgFloatRange.from_arg(saturation, min_val=0)
+    p: float = jax_static_field(default=0.5)
+    saturation: ArgFloatHint = jax_static_field(default=(0, 2))  # min 0
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
-        return _rgb_img_saturation(src=image, saturation=self._saturation.sample(prng))
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        val = sample_float(key, self.saturation)
+        return _rgb_img_saturation(src=image, saturation=val)
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorHue(AugmentItems):
     """
     Adjust the hue of an image.
-
-    TODO: relies on torch and kornia
     """
 
-    def __init__(self, hue: ArgFloatHint = (-0.1, 0.1), p: float = 0.5):
-        super().__init__(p=p)
-        self._hue = ArgFloatRange.from_arg(hue, min_val=-1, max_val=1)
+    p: float = jax_static_field(default=0.5)
+    hue: ArgFloatHint = jax_static_field(default=(-0.1, 0.1))  # min -1, max 1
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
-        return _rgb_img_hue(src=image, hue=self._hue.sample(prng))
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        val = sample_float(key, self.hue)
+        return _rgb_img_hue(src=image, hue=val)
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorTint(AugmentItems):
     """
     Adjust the tint of an image.
@@ -192,59 +210,66 @@ class ColorTint(AugmentItems):
     *NB* Can result in image values outside the range [0, 1], clip images after using this.
     """
 
-    def __init__(self, tint: ArgFloatHint = (-0.3, 0.3), p: float = 0.5):
-        super().__init__(p=p)
-        self._tint = ArgFloatRange.from_arg(tint, min_val=-1, max_val=1)
+    p: float = jax_static_field(default=0.5)
+    tint: ArgFloatHint = jax_static_field(default=(-0.3, 0.3))  # min -1, max 1
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
         return _rgb_img_tint(
             src=image,
             tint_rgb=(
-                self._tint.sample(prng),
-                self._tint.sample(prng),
-                self._tint.sample(prng),
+                sample_float(key, self.tint),
+                sample_float(key, self.tint),
+                sample_float(key, self.tint),
             ),
         )
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorInvert(AugmentItems):
     """
     Invert the colors of an image.
     """
 
-    def __init__(self, p: float = 0.5):
-        super().__init__(p=p)
+    p: float = jax_static_field(default=0.5)
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
         return 1 - image
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorGrayscale(AugmentItems):
     """
     Convert an image to grayscale.
     """
 
-    def __init__(self, p: float = 0.5):
-        super().__init__(p=p)
+    p: float = jax_static_field(default=0.5)
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
         im = jnp.mean(image, axis=-1, keepdims=True)
         im = jnp.repeat(im, 3, axis=-1)
         return im
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ImgClip(AugmentItems):
     """
     Clip the values of an image to the range [0, 1].
     """
 
-    def __init__(self, p: float = 1.0):
-        super().__init__(p=p)
+    p: float = jax_static_field(default=1.0)
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
         return jnp.clip(image, 0, 1)
 
+    def _augment_mask(self, key: AugPrngHint, mask: AugImgHint) -> AugImgHint:
+        return jnp.clip(mask, 0, 1)
 
+
+@register_dataclass
+@dataclass(frozen=True)
 class ColorFadeWhite(AugmentItems):
     """
     Fade the colors of an image to white.
@@ -252,14 +277,16 @@ class ColorFadeWhite(AugmentItems):
     0 is no fade, 1 is full fade.
     """
 
-    def __init__(self, ratio: ArgFloatHint = (0, 0.5), p: float = 0.5):
-        super().__init__(p=p)
-        self._ratio = ArgFloatRange.from_arg(ratio, min_val=0, max_val=1)
+    p: float = jax_static_field(default=0.5)
+    ratio: float = jax_static_field(default=(0, 0.5))  # min 0, max 1
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
-        return _rgb_img_fade_white(src=image, ratio=self._ratio.sample(prng))
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        val = sample_float(key, self.ratio)
+        return _rgb_img_fade_white(src=image, ratio=val)
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class ColorFadeBlack(AugmentItems):
     """
     Fade the colors of an image to black.
@@ -267,12 +294,12 @@ class ColorFadeBlack(AugmentItems):
     0 is no fade, 1 is full fade.
     """
 
-    def __init__(self, ratio: ArgFloatHint = (0, 0.5), p: float = 0.5):
-        super().__init__(p=p)
-        self._ratio = ArgFloatRange.from_arg(ratio, min_val=0, max_val=1)
+    p: float = jax_static_field(default=0.5)
+    ratio: float = jax_static_field(default=(0, 0.5))  # min 0, max 1
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
-        return _rgb_img_fade_black(src=image, ratio=self._ratio.sample(prng))
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
+        val = sample_float(key, self.ratio)
+        return _rgb_img_fade_black(src=image, ratio=val)
 
 
 # ========================================================================= #
@@ -281,23 +308,22 @@ class ColorFadeBlack(AugmentItems):
 
 
 if __name__ == "__main__":
-    for Aug in [
-        ColorGamma,
-        ColorBrightness,
-        ColorContrast,
-        ColorExposure,
-        ColorSaturation,
-        ColorHue,
-        ColorTint,
-        ColorInvert,
-        ColorGrayscale,
-        ImgClip,
-        ColorFadeWhite,
-        ColorFadeBlack,
-    ]:
-        aug = Aug()
-        key = jrandom.key(32)
-        src = jrandom.uniform(key, (224, 224, 3), jnp.float32)
-        # aug = jax.jit(aug.__call__)
-        for i in tqdm(range(15000), desc=f"{Aug.__name__}"):
-            aug(image=src)
+
+    def _main():
+        for Aug in [
+            ColorGamma,
+            ColorBrightness,
+            ColorContrast,
+            ColorExposure,
+            ColorSaturation,
+            ColorHue,
+            ColorTint,
+            ColorInvert,
+            ColorGrayscale,
+            ImgClip,
+            ColorFadeWhite,
+            ColorFadeBlack,
+        ]:
+            Aug().quick_test()
+
+    _main()

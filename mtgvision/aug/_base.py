@@ -46,9 +46,8 @@ import jax.random as jrandom
 import numpy.random as np_random
 import jax.numpy as jnp
 from jax import lax
-from jax._src.tree_util import register_dataclass
+from jax.tree_util import register_dataclass
 from tqdm import tqdm
-
 from typing_extensions import final
 
 
@@ -82,7 +81,7 @@ _MISSING = object()
 
 
 @register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class AugItems:
     """
     Named tuple for holding augment items that are passed between augments and returned.
@@ -148,7 +147,7 @@ class AugItems:
 
 
 @register_dataclass
-@dataclass
+@dataclass(frozen=True)
 class Augment(abc.ABC):
     """
     Based augment supporting:
@@ -159,7 +158,7 @@ class Augment(abc.ABC):
     All subclasses should be wrapped with:
     ```
     @register_dataclass
-    @dataclass
+    @dataclass(frozen=True)
     class Subclass(Augment):
         ...
     ```
@@ -184,7 +183,7 @@ class Augment(abc.ABC):
             raise ValueError("At least one of image, mask, or points must be provided")
         # make items
         items = AugItems(image=image, mask=mask, points=points)
-        # make prng
+        # make prng key
         if seed is None:
             key = jrandom.key(np_random.randint(0, 2**32 - 1))
         elif isinstance(seed, int):
@@ -243,131 +242,67 @@ class Augment(abc.ABC):
         """
         raise NotImplementedError
 
+    def quick_test(
+        self,
+        image_size=(192, 128, 3),
+        mask_size=(192, 128, 1),
+        points_size=(10, 2),
+        n: Optional[int] = 1000,
+        jit: bool = True,
+    ):
+        key = jrandom.key(42)
+        img = jrandom.uniform(key, image_size, jnp.float32)
+        mask = jrandom.uniform(key, mask_size, jnp.float32)
+        points = jrandom.uniform(key, points_size, jnp.float32)
+        items = AugItems(image=img, mask=mask, points=points)
+        call = self.jitted_call() if jit else self
+        if n is not None:
+            for _ in tqdm(range(n), desc=f"{self.__class__.__name__}"):
+                call(key, items)
+        else:
+            call(key, items)
+
 
 # ========================================================================= #
 # Conditional Augments                                                      #
 # ========================================================================= #
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class AugmentItems(Augment, abc.ABC):
     """
     Conditional augment that applies an augment if there is a value present
     """
 
     @final
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         # augment image
         image = x.image
         if x.has_image:
-            image = self._augment_image(prng, x.image)
+            image = self._augment_image(key, x.image)
         # augment mask
         mask = x.mask
         if x.has_mask:
-            mask = self._augment_mask(prng, x.mask)
+            mask = self._augment_mask(key, x.mask)
         # augment points
         points = x.points
         if x.has_points:
             hw = x.get_bounds_hw()
-            points = self._augment_points(prng, x.points, hw)
+            points = self._augment_points(key, x.points, hw)
         # done
         return x.override(image=image, mask=mask, points=points)
 
-    def _augment_image(self, prng: AugPrngHint, image: AugImgHint) -> AugImgHint:
+    def _augment_image(self, key: AugPrngHint, image: AugImgHint) -> AugImgHint:
         return image
 
-    def _augment_mask(self, prng: AugPrngHint, mask: AugMaskHint) -> AugMaskHint:
+    def _augment_mask(self, key: AugPrngHint, mask: AugMaskHint) -> AugMaskHint:
         return mask
 
     def _augment_points(
-        self, prng: AugPrngHint, points: AugPointsHint, hw: tuple[int, int]
+        self, key: AugPrngHint, points: AugPointsHint, hw: tuple[int, int]
     ) -> AugPointsHint:
         return points
-
-
-# ========================================================================= #
-# Helper                                                                    #
-# ========================================================================= #
-
-
-@register_dataclass
-@dataclass
-class AugRanSeq(Augment):
-    p: float = jax_static_field(default=1.0)
-    augments: list[Augment] = jax_static_field(default_factory=list)
-    n_min: Optional[int] = jax_static_field(default=None)
-    n_max: Optional[int] = jax_static_field(default=None)
-    shuffle: bool = jax_static_field(default=False)
-
-    def _apply(self, key: AugPrngHint, items: AugItems) -> AugItems:
-        # 0. get bounds, default is always number of augments
-        m = len(self.augments) if self.n_min is None else self.n_min
-        M = len(self.augments) if self.n_max is None else self.n_max
-        # 1. get random order of ALL augments
-        order = jrandom.choice(key, len(self.augments), (M,), replace=False)
-        # 2. choose number of augments to apply, and apply them
-        n = jrandom.randint(key, (), m, M)
-        # 3. loop and apply
-        #    jax struggles with indexing based on a traced array. So we need to use
-        #    switch to select the correct augment based on the random index
-        branches = [lambda k, itms: aug(k, itms) for aug in self.augments]
-        branch = lambda i, itms: jax.lax.switch(order[i], branches, key, itms)
-        return lax.fori_loop(0, n, branch, items)
-
-
-@register_dataclass
-@dataclass
-class AugBrightness(Augment):
-    p: float = jax_static_field(default=0.5)
-    brightness_min: float = jax_static_field(default=-0.1)
-    brightness_max: float = jax_static_field(default=0.1)
-
-    def _apply(self, key: AugPrngHint, items: AugItems) -> AugItems:
-        if items.image is not None:
-            brightness = jrandom.uniform(
-                key,
-                minval=self.brightness_min,
-                maxval=self.brightness_max,
-            )
-            items.image += brightness
-        return items
-
-
-@register_dataclass
-@dataclass
-class AugExposure(Augment):
-    p: float = jax_static_field(default=0.5)
-    exposure_min: float = jax_static_field(default=-0.1)
-    exposure_max: float = jax_static_field(default=0.1)
-
-    def _apply(self, key: AugPrngHint, items: AugItems) -> AugItems:
-        if items.image is not None:
-            brightness = jrandom.uniform(
-                key,
-                minval=self.exposure_min,
-                maxval=self.exposure_max,
-            )
-            items.image *= brightness
-        return items
-
-
-if __name__ == "__main__":
-
-    def _main():
-        key = jrandom.key(42)
-        img = jrandom.uniform(key, (192, 128, 3), jnp.float32)
-        mask = jrandom.uniform(key, (192, 128, 1), jnp.float32)
-        points = jrandom.uniform(key, (10, 2), jnp.float32)
-
-        aug = AugRanSeq(augments=[AugBrightness(), AugExposure()])
-
-        items = AugItems(image=img, mask=mask, points=points)
-
-        apply = aug.jitted_call()
-
-        for i in tqdm(range(100000)):
-            apply(key, items)
-
-    _main()
 
 
 # ========================================================================= #

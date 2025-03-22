@@ -29,17 +29,25 @@ __all__ = [
     "BlurDownscale",
 ]
 
-import jax
-import dm_pix as pix
+from dataclasses import dataclass
+from typing import Optional
 
-from mtgvision.aug._base import AugItems, Augment, AugPrngHint, JnpFloat32
-from mtgvision.aug._util_args import (
-    ArgFloatHint,
-    ArgFloatRange,
-    ArgIntHint,
-    ArgIntRange,
+import jax
+import jax.random as jrandom
+import dm_pix as pix
+from jax import lax
+from jax.tree_util import register_dataclass
+
+from mtgvision.aug._base import (
+    AugItems,
+    Augment,
+    AugPrngHint,
+    JnpFloat32,
+    jax_static_field,
 )
+from mtgvision.aug._util_args import ArgIntHint, sample_int
 from mtgvision.aug._util_jax import ResizeMethod
+from mtgvision.aug._util_jpeg import rgb_img_jpeg_compression_jax
 
 
 # ========================================================================= #
@@ -47,29 +55,16 @@ from mtgvision.aug._util_jax import ResizeMethod
 # ========================================================================= #
 
 
-def _rgb_img_jpeg_compression(
-    src: JnpFloat32,
-    quality: int,
-) -> JnpFloat32:
-    # # to uint
-    # img = np.clip(src * 255, 0, 255).astype(np.uint8)
-    # # encode, decode
-    # encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-    # _, encimg = cv2.imencode(".jpg", img, encode_param)
-    # img_transformed = cv2.imdecode(encimg, cv2.IMREAD_COLOR)
-    # # to float
-    # return img_transformed.astype(np.float32) / 255
-
-    raise NotImplementedError
-
-
 def _rgb_downscale_upscale(
     src: JnpFloat32,
-    scale: float,
-    method: ResizeMethod,
-    antialias: bool = True,
+    scale: float,  # static
+    method: ResizeMethod,  # static
+    antialias: bool = True,  # static
 ) -> JnpFloat32:
     method = ResizeMethod(method).value
+    # checks
+    if scale >= 1:
+        return src
     # downscale
     img = jax.image.resize(
         src,
@@ -86,70 +81,66 @@ def _rgb_downscale_upscale(
     )
 
 
-def _rgb_gaussian_blur_sigma(
-    src: JnpFloat32,
-    sigma: int,
-    kernel_scale: float = 1.0,
-) -> JnpFloat32:
-    # ~3 sigma on each side of the kernel's center covers ~99.7% of the
-    # probability mass. There is some fiddling for smaller values. Source:
-    # https://docs.opencv.org/3.1.0/d4/d86/group__imgproc__filter.html#gac05a120c1ae92a6060dd0db190a61afa
-    kernel_size = ((sigma - 0.8) / 0.3 + 1) / 0.5 + 1
-    # apply gaussian blur
-    return pix.gaussian_blur(src, sigma, kernel_size * kernel_scale)
-
-
-def _rgb_gaussian_blur_kernel(
-    src: JnpFloat32,
-    kernel_size: int,
-    sigma_scale: float = 1.0,
-) -> JnpFloat32:
-    sigma = ((kernel_size - 1) * 0.5 - 1) * 0.3 + 0.8
-    # apply gaussian blur
-    return pix.gaussian_blur(src, sigma * sigma_scale, kernel_size)
-
-
 # ========================================================================= #
 # Augments                                                                  #
 # ========================================================================= #
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class BlurGaussian(Augment):
     """
     Apply a box blur to the image.
+
+    # ~3 sigma on each side of the kernel's center covers ~99.7% of the
+    # probability mass. There is some fiddling for smaller values. Source:
+    # https://docs.opencv.org/3.1.0/d4/d86/group__imgproc__filter.html#gac05a120c1ae92a6060dd0db190a61afa
+    kernel_size = ((sigma - 0.8) / 0.3 + 1) / 0.5 + 1
+
+    sigma=0.5 --> kernel_size=1
+    sigma=1.0 --> kernel_size=4.333
+    sigma=2.0 --> kernel_size=11
+    sigma=3.0 --> kernel_size=17.667
     """
 
-    def __init__(
-        self,
-        radius: ArgIntHint = (0, 3),
-        aug_mask: bool = False,
-        p: float = 0.5,
-    ):
-        super().__init__(p=p)
-        self._radius = ArgIntRange.from_arg(radius, min_val=0)
-        self._aug_mask = aug_mask
+    p: float = jax_static_field(default=0.5)
+    kernel_size: int = jax_static_field(default=7)
+    sigma: ArgIntHint = jax_static_field(default=(0, 2))  # min 0
+    aug_mask: bool = jax_static_field(default=False)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image or x.has_mask:
-            r = self._radius.sample(prng)
-            if r > 0:
+            sigma = sample_int(key, self.sigma)
+
+            def true_branch(x):
                 # image
                 im = x.image
                 if x.has_image:
-                    im = _rgb_gaussian_blur_kernel(src=x.image, kernel_size=r)
+                    im = pix.gaussian_blur(x.image, sigma, self.kernel_size)
                 # mask
                 mask = x.mask
-                if x.has_mask and self._aug_mask:
-                    mask = _rgb_gaussian_blur_kernel(src=x.mask, kernel_size=r)
+                if x.has_mask and self.aug_mask:
+                    mask = pix.gaussian_blur(x.mask, sigma, self.kernel_size)
                 # done
                 return x.override(image=im, mask=mask)
+
+            return lax.cond(
+                sigma > 0,
+                true_branch,
+                lambda x: x,
+                x,
+            )
+
         return x
 
 
+# @register_dataclass
+# @dataclass(frozen=True)
 # class BlurMedian(Augment):
 #     """
 #     Apply a median blur to the image.
 #     """
+#     p: float = jax_static_field(default=0.5)
 #
 #     def __init__(
 #         self,
@@ -161,9 +152,9 @@ class BlurGaussian(Augment):
 #         self._radius = ArgIntRange.from_arg(radius, min_val=0)
 #         self._aug_mask = aug_mask
 #
-#     def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+#     def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
 #         if x.has_image or x.has_mask:
-#             r = self._radius.sample(prng)
+#             r = self._radius.sample(key)
 #             if r > 0:
 #                 # image
 #                 im = x.image
@@ -178,69 +169,85 @@ class BlurGaussian(Augment):
 #         return x
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class BlurJpegCompression(Augment):
     """
     Apply jpeg compression to the image.
     """
 
-    def __init__(self, quality: ArgIntHint = (10, 100), p: float = 0.5):
-        super().__init__(p=p)
-        self._quality = ArgIntRange.from_arg(quality, min_val=0, max_val=100)
+    p: float = jax_static_field(default=0.5)
+    quality: int = jax_static_field(default=(10, 100))  # min 1, max 100
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:
-            im = _rgb_img_jpeg_compression(
+            quality = sample_int(key, self.quality)
+            im = rgb_img_jpeg_compression_jax(
                 src=x.image,  # don't need to copy
-                quality=self._quality.sample(prng),
+                quality=quality,
             )
             return x.override(image=im)
         return x
 
 
+@register_dataclass
+@dataclass(frozen=True)
 class BlurDownscale(Augment):
     """
     Downscale the image and then upscale it back to the original size.
     """
 
-    def __init__(
-        self,
-        scale: ArgFloatHint = (1 / 8, 1),
-        aug_mask: bool = False,
-        inter: ResizeMethod = ResizeMethod.LINEAR,
-        inter_mask: ResizeMethod = ResizeMethod.LINEAR,
-        p: float = 0.5,
-    ):
-        super().__init__(p=p)
-        self._scale = ArgFloatRange.from_arg(scale, min_val=0, max_val=1)
-        self._aug_mask = aug_mask
-        self._inter = ResizeMethod(inter)
-        self._inter_mask = ResizeMethod(inter_mask)
+    p: float = jax_static_field(default=0.5)
+    scale_levels: tuple[float, ...] = jax_static_field(default=(1 / 8, 1 / 4, 1 / 2, 1))
+    scale_p: Optional[tuple[float, ...]] = jax_static_field(default=None)
+    aug_mask: bool = jax_static_field(default=False)
+    inter: ResizeMethod = jax_static_field(default=ResizeMethod.LINEAR)
+    inter_mask: ResizeMethod = jax_static_field(default=ResizeMethod.LINEAR)
 
-    def _apply(self, prng: AugPrngHint, x: AugItems) -> AugItems:
+    def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image or x.has_mask:
-            scale = self._scale.sample(prng)
-            if scale < 1:
+
+            def true_branch(x, scale):
                 # image
                 im = x.image
                 if x.has_image:
                     im = _rgb_downscale_upscale(
                         src=x.image,  # don't need to copy
                         scale=scale,
-                        method=self._inter,
+                        method=self.inter,
                     )
                 # mask
                 mask = x.mask
-                if x.has_mask and self._aug_mask and self._inter_mask is not None:
+                if x.has_mask and self.aug_mask and self.inter_mask is not None:
                     mask = _rgb_downscale_upscale(
                         src=x.mask,  # don't need to copy
                         scale=scale,
-                        method=self._inter_mask,
+                        method=self.inter_mask,
                     )
                 # done
                 return x.override(image=im, mask=mask)
+
+            return lax.switch(
+                jrandom.choice(key, len(self.scale_levels), (), p=self.scale_p),
+                branches=[
+                    lambda x: true_branch(x, scale) for scale in self.scale_levels
+                ],
+                operand=x,
+            )
+
         return x
 
 
 # ========================================================================= #
 # END                                                                       #
 # ========================================================================= #
+
+
+if __name__ == "__main__":
+
+    def _main():
+        BlurGaussian().quick_test()
+        BlurJpegCompression().quick_test()
+        BlurDownscale().quick_test()
+
+    _main()
