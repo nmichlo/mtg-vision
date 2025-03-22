@@ -36,7 +36,7 @@ from typing import Literal
 import jax.random as jrandom
 from jax import lax
 
-from mtgvision.aug._base import AugItems, Augment, AugPrngHint, NpFloat32
+from mtgvision.aug._base import AugItems, Augment, AugPrngHint, JnpFloat32
 from mtgvision.aug._util_args import (
     ArgFloatHint,
     ArgFloatRange,
@@ -54,10 +54,10 @@ from mtgvision.aug._util_args import (
 def _rgb_img_inplace_noise_multiplicative_speckle(
     prng: AugPrngHint,
     *,
-    src: NpFloat32,
+    src: JnpFloat32,
     strength: float = 0.1,
     channelwise: bool = True,
-) -> NpFloat32:
+) -> JnpFloat32:
     shape = lax.cond(
         channelwise,
         lambda: src.shape,
@@ -69,10 +69,10 @@ def _rgb_img_inplace_noise_multiplicative_speckle(
 def _rgb_img_inplace_noise_additive_gaussian(
     prng: AugPrngHint,
     *,
-    src: NpFloat32,
+    src: JnpFloat32,
     strength: float = 0.1,
     channelwise: bool = True,
-) -> NpFloat32:
+) -> JnpFloat32:
     shape = lax.cond(
         channelwise,
         lambda: src.shape,
@@ -84,10 +84,10 @@ def _rgb_img_inplace_noise_additive_gaussian(
 def _rgb_img_inplace_noise_poison(
     prng: AugPrngHint,
     *,
-    src: NpFloat32,
+    src: JnpFloat32,
     peak: float = 1.0,
     eps: float = 0,
-) -> NpFloat32:
+) -> JnpFloat32:
     p = 255 * peak
     return jrandom.poisson(prng, src * p) / (p + eps)
 
@@ -95,10 +95,10 @@ def _rgb_img_inplace_noise_poison(
 def _rgb_inplace_noise_salt_pepper(
     prng: AugPrngHint,
     *,
-    src: NpFloat32,
+    src: JnpFloat32,
     strength: float = 0.1,
     channelwise: bool = False,
-) -> NpFloat32:
+) -> JnpFloat32:
     def _channelwise():
         num_noise = int(strength * src.size)
         salt_or_pepper = jrandom.randint(prng, (num_noise,), 0, 2)
@@ -122,14 +122,14 @@ def _rgb_inplace_noise_salt_pepper(
 def _rgb_inplace_random_erasing(
     prng: AugPrngHint,
     *,
-    src: NpFloat32,
+    src: JnpFloat32,
     scale_min_max: tuple[float, float] = (0.2, 0.7),  # [0, 1]
     aspect_min_max: tuple[float, float] = (1, 3),  # [1, inf]
     color: Literal[
         "random", "uniform_random", "zero", "one", "mean"
     ] = "uniform_random",
     inside: bool = True,
-) -> NpFloat32:
+) -> JnpFloat32:
     h, w = src.shape[:2]
     # scale
     scale = jrandom.uniform(prng, (), jnp.float32, *scale_min_max)

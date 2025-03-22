@@ -32,7 +32,7 @@ __all__ = [
 import jax
 import dm_pix as pix
 
-from mtgvision.aug._base import AugItems, Augment, AugPrngHint, NpFloat32
+from mtgvision.aug._base import AugItems, Augment, AugPrngHint, JnpFloat32
 from mtgvision.aug._util_args import (
     ArgFloatHint,
     ArgFloatRange,
@@ -48,9 +48,9 @@ from mtgvision.aug._util_jax import ResizeMethod
 
 
 def _rgb_img_jpeg_compression(
-    src: NpFloat32,
+    src: JnpFloat32,
     quality: int,
-) -> NpFloat32:
+) -> JnpFloat32:
     # # to uint
     # img = np.clip(src * 255, 0, 255).astype(np.uint8)
     # # encode, decode
@@ -64,11 +64,11 @@ def _rgb_img_jpeg_compression(
 
 
 def _rgb_downscale_upscale(
-    src: NpFloat32,
+    src: JnpFloat32,
     scale: float,
     method: ResizeMethod,
     antialias: bool = True,
-) -> NpFloat32:
+) -> JnpFloat32:
     method = ResizeMethod(method).value
     # downscale
     img = jax.image.resize(
@@ -87,10 +87,10 @@ def _rgb_downscale_upscale(
 
 
 def _rgb_gaussian_blur_sigma(
-    src: NpFloat32,
+    src: JnpFloat32,
     sigma: int,
     kernel_scale: float = 1.0,
-) -> NpFloat32:
+) -> JnpFloat32:
     # ~3 sigma on each side of the kernel's center covers ~99.7% of the
     # probability mass. There is some fiddling for smaller values. Source:
     # https://docs.opencv.org/3.1.0/d4/d86/group__imgproc__filter.html#gac05a120c1ae92a6060dd0db190a61afa
@@ -100,10 +100,10 @@ def _rgb_gaussian_blur_sigma(
 
 
 def _rgb_gaussian_blur_kernel(
-    src: NpFloat32,
+    src: JnpFloat32,
     kernel_size: int,
     sigma_scale: float = 1.0,
-) -> NpFloat32:
+) -> JnpFloat32:
     sigma = ((kernel_size - 1) * 0.5 - 1) * 0.3 + 0.8
     # apply gaussian blur
     return pix.gaussian_blur(src, sigma * sigma_scale, kernel_size)

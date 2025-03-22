@@ -44,7 +44,7 @@ from tqdm import tqdm
 import dm_pix as pix
 
 from mtgvision.aug import AugImgHint
-from mtgvision.aug._base import AugmentItems, AugPrngHint, NpFloat32
+from mtgvision.aug._base import AugmentItems, AugPrngHint, JnpFloat32
 from mtgvision.aug._util_args import ArgFloatHint, ArgFloatRange
 
 
@@ -53,46 +53,46 @@ from mtgvision.aug._util_args import ArgFloatHint, ArgFloatRange
 # ========================================================================= #
 
 
-def _rgb_img_gamma(src: NpFloat32, gamma: float = 1.0) -> NpFloat32:
+def _rgb_img_gamma(src: JnpFloat32, gamma: float = 1.0) -> JnpFloat32:
     return jnp.power(src, gamma)
 
 
-def _rgb_img_brightness(src: NpFloat32, brightness: float = 0.0) -> NpFloat32:
+def _rgb_img_brightness(src: JnpFloat32, brightness: float = 0.0) -> JnpFloat32:
     return src + brightness
 
 
-def _rgb_img_contrast(src: NpFloat32, contrast: float = 1.0) -> NpFloat32:
+def _rgb_img_contrast(src: JnpFloat32, contrast: float = 1.0) -> JnpFloat32:
     # effectively LERP between image and 0.5
     return contrast * src + (1 - contrast) * 0.5
 
 
-def _rgb_img_exposure(src: NpFloat32, exposure: float = 0.0) -> NpFloat32:
+def _rgb_img_exposure(src: JnpFloat32, exposure: float = 0.0) -> JnpFloat32:
     return src * 2**exposure
 
 
-def _rgb_img_saturation(src: NpFloat32, saturation: float = 1.0) -> NpFloat32:
+def _rgb_img_saturation(src: JnpFloat32, saturation: float = 1.0) -> JnpFloat32:
     # taken from kornia.enhance.adjust_saturation_with_gray_subtraction
     grey = pix.rgb_to_grayscale(src, keep_dims=True)
     # blend the image with the grayscaled image
     return (1 - saturation) * grey + saturation * src
 
 
-def _rgb_img_hue(src: NpFloat32, hue: float = 0.0) -> NpFloat32:
+def _rgb_img_hue(src: JnpFloat32, hue: float = 0.0) -> JnpFloat32:
     return pix.adjust_hue(jnp.clip(src, 0, 1), hue)
 
 
 def _rgb_img_tint(
-    src: NpFloat32,
+    src: JnpFloat32,
     tint_rgb: tuple[float, float, float] = (0, 0, 0),
-) -> NpFloat32:
+) -> JnpFloat32:
     return src + jnp.asarray(tint_rgb, dtype=jnp.float32)[None, None, :]
 
 
-def _rgb_img_fade_white(src: NpFloat32, ratio: float = 0.33) -> NpFloat32:
+def _rgb_img_fade_white(src: JnpFloat32, ratio: float = 0.33) -> JnpFloat32:
     return (1 - ratio) * src + (ratio * 1)
 
 
-def _rgb_img_fade_black(src: NpFloat32, ratio: float = 0.5) -> NpFloat32:
+def _rgb_img_fade_black(src: JnpFloat32, ratio: float = 0.5) -> JnpFloat32:
     return (1 - ratio) * src  # + (ratio*0)
 
 
