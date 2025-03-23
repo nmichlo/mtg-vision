@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-from mtgvision.train_encoder import (
+from mtgvision.encoder_train import (
     get_test_images,
     MtgVisionEncoder,
     RanMtgEncDecDataset,

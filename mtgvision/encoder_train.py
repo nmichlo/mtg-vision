@@ -22,7 +22,7 @@ from pytorch_lightning.callbacks import (
 
 from mtgdata import ScryfallBulkType, ScryfallImageType
 import mtgvision.models.convnextv2ae as cnv2ae
-from mtgvision.datasets import IlsvrcImages, SyntheticBgFgMtgImages
+from mtgvision.encoder_datasets import IlsvrcImages, SyntheticBgFgMtgImages
 from mtgvision.util.random import seed_all
 
 
