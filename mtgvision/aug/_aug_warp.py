@@ -178,7 +178,7 @@ def applied_rotation_matrix(
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class FlipHorizontal(Augment):
     """
     Flip the image, mask, and points horizontally.
@@ -199,7 +199,7 @@ class FlipHorizontal(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class FlipVertical(Augment):
     """
     Flip the image, mask, and points vertically.
@@ -220,7 +220,7 @@ class FlipVertical(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class RotateBounded(Augment):
     """
     Rotate the image, mask, and points within a degree range, keeping output size fixed.
@@ -229,7 +229,7 @@ class RotateBounded(Augment):
     p: float = jax_static_field(default=0.5)
     deg: ArgFloatHint = jax_static_field(default=(0, 360))  # min -360, max 360
     inter: ResizeMethod = jax_static_field(default=ResizeMethod.LINEAR)
-    inter_mask: ResizeMethod = jax_static_field(default=ResizeMethod.NEAREST)
+    inter_mask: ResizeMethod = jax_static_field(default=ResizeMethod.LINEAR)
 
     def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image or x.has_mask or x.has_points:
@@ -244,7 +244,7 @@ class RotateBounded(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class Rotate180(Augment):
     """
     Rotate the image, mask, and points by 180 degrees.
@@ -266,7 +266,7 @@ class Rotate180(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class PerspectiveWarp(Augment):
     """
     Apply a random perspective warp by distorting the four corners.
@@ -276,7 +276,7 @@ class PerspectiveWarp(Augment):
     corner_jitter_ratio: ArgFloatHint = jax_static_field(default=(-0.1, 0.1))
     corner_jitter_offset: ArgFloatHint = jax_static_field(default=0)
     inter: ResizeMethod = jax_static_field(default=ResizeMethod.LINEAR)
-    inter_mask: ResizeMethod = jax_static_field(default=ResizeMethod.NEAREST)
+    inter_mask: ResizeMethod = jax_static_field(default=ResizeMethod.LINEAR)
 
     def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image or x.has_mask or x.has_points:
@@ -298,7 +298,7 @@ class PerspectiveWarp(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ShiftScaleRotate(Augment):
     """
     Apply random shift, scale, and rotation using an affine transform.
@@ -311,7 +311,7 @@ class ShiftScaleRotate(Augment):
     scale_ratio: ArgFloatHint = jax_static_field(default=(-0.2, 0.0))
     rotate_limit: ArgFloatHint = jax_static_field(default=(-5, 5))
     inter: ResizeMethod = jax_static_field(default=ResizeMethod.LINEAR)
-    inter_mask: ResizeMethod = jax_static_field(default=ResizeMethod.NEAREST)
+    inter_mask: ResizeMethod = jax_static_field(default=ResizeMethod.LINEAR)
 
     def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image or x.has_mask or x.has_points:

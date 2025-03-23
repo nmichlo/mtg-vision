@@ -39,11 +39,10 @@ __all__ = [
 
 import abc
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Type, TypeVar
+from typing import Optional, Type, TypeVar
 
 import jax
 import jax.random as jrandom
-import numpy.random as np_random
 import jax.numpy as jnp
 from jax import lax
 from jax.tree_util import register_dataclass
@@ -81,7 +80,7 @@ _MISSING = object()
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class AugItems:
     """
     Named tuple for holding augment items that are passed between augments and returned.
@@ -147,7 +146,7 @@ class AugItems:
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class Augment(abc.ABC):
     """
     Based augment supporting:
@@ -158,7 +157,7 @@ class Augment(abc.ABC):
     All subclasses should be wrapped with:
     ```
     @register_dataclass
-    @dataclass(frozen=True)
+    @dataclass()
     class Subclass(Augment):
         ...
     ```
@@ -166,52 +165,59 @@ class Augment(abc.ABC):
 
     p: float = jax_static_field(default=1.0)
 
-    def jitted_call(self) -> "Callable[[AugPrngHint, AugItems], AugItems]":
-        return jax.jit(self.__call__)
+    # def jit(self):
+    #     if not hasattr(self, '__old_call__'):
+    #         self.__old_call__ = self.__call__
+    #         self.__call__ = jax.jit(self.__call__)
+    #     return self
 
-    def easy_apply(
-        self,
-        *,
-        image: AugImgHint | None = None,
-        mask: AugMaskHint | None = None,
-        points: AugPointsHint | None = None,
-        seed: int | AugPrngHint | None = None,
-        jit: bool = True,
-    ) -> AugItems:
-        # check inputs
-        if all(x is None for x in [image, mask, points]):
-            raise ValueError("At least one of image, mask, or points must be provided")
-        # make items
-        items = AugItems(image=image, mask=mask, points=points)
-        # make prng key
-        if seed is None:
-            key = jrandom.key(np_random.randint(0, 2**32 - 1))
-        elif isinstance(seed, int):
-            key = jrandom.key(seed)
-        elif isinstance(seed, jax.Array):
-            key = seed  # key
-        else:
-            raise ValueError(
-                f"Invalid seed type: {type(seed)}, must be int or RandomState"
-            )
-        # augment
-        results = self.__call__(key, items)
-        # check results correspond
-        for name in ["image", "mask", "points"]:
-            a = getattr(items, name)
-            b = getattr(results, name)
-            if (a is None) and (b is not None):
-                raise ValueError(
-                    f"Augment {self.__class__.__name__} returned a {name} but it was not provided as input."
-                )
-            elif (a is not None) and (b is None):
-                raise ValueError(
-                    f"Augment {self.__class__.__name__} did not return a {name} but it was provided as input."
-                )
-        # done!
-        return results
+    # def jitted_call(self) -> "Callable[[AugPrngHint, AugItems], AugItems]":
+    #     return jax.jit(self.__call__)
+
+    # def easy_apply(
+    #     self,
+    #     *,
+    #     image: AugImgHint | None = None,
+    #     mask: AugMaskHint | None = None,
+    #     points: AugPointsHint | None = None,
+    #     seed: int | AugPrngHint | None = None,
+    #     jit: bool = True,
+    # ) -> AugItems:
+    #     # check inputs
+    #     if all(x is None for x in [image, mask, points]):
+    #         raise ValueError("At least one of image, mask, or points must be provided")
+    #     # make items
+    #     items = AugItems(image=image, mask=mask, points=points)
+    #     # make prng key
+    #     if seed is None:
+    #         key = jrandom.key(np_random.randint(0, 2**32 - 1))
+    #     elif isinstance(seed, int):
+    #         key = jrandom.key(seed)
+    #     elif isinstance(seed, jax.Array):
+    #         key = seed  # key
+    #     else:
+    #         raise ValueError(
+    #             f"Invalid seed type: {type(seed)}, must be int or RandomState"
+    #         )
+    #     # augment
+    #     results = self.__call__(key, items)
+    #     # check results correspond
+    #     for name in ["image", "mask", "points"]:
+    #         a = getattr(items, name)
+    #         b = getattr(results, name)
+    #         if (a is None) and (b is not None):
+    #             raise ValueError(
+    #                 f"Augment {self.__class__.__name__} returned a {name} but it was not provided as input."
+    #             )
+    #         elif (a is not None) and (b is None):
+    #             raise ValueError(
+    #                 f"Augment {self.__class__.__name__} did not return a {name} but it was provided as input."
+    #             )
+    #     # done!
+    #     return results
 
     # DON'T CALL THIS DIRECTLY DOWNSTREAM
+    @jax.jit
     def __call__(self, key: AugPrngHint, x: AugItems) -> AugItems:
         """
         If augments refer to each other, then this is the method to call NOT _apply.
@@ -219,12 +225,12 @@ class Augment(abc.ABC):
         # split the key so that each augment gets a different prng seed
         # this is important for chaining augments together so that if an augment
         # is swapped out, the seed state of later augments does not change.
-        key, subkey = jrandom.split(key)
+        # key, subkey = jrandom.split(key)
         return lax.cond(
             jrandom.uniform(key) < self.p,
             self._apply,
             lambda key, x: x,
-            subkey,
+            key,
             x,
         )
 
@@ -258,12 +264,17 @@ class Augment(abc.ABC):
             return items
 
         key = jrandom.key(42)
-        call = self.jitted_call() if jit else self
-        if n is not None:
-            for _ in tqdm(range(n), desc=f"{self.__class__.__name__}"):
-                call(key, _make())
-        else:
-            call(key, _make())
+        # call = self.jitted_call() if jit else self
+        with jax.disable_jit(disable=not jit):
+            if n is not None:
+                for _ in tqdm(range(n), desc=f"{self.__class__.__name__}"):
+                    result = self(key, _make())
+                    # wait for result
+                    jax.device_get(result)
+            else:
+                result = self(key, _make())
+                # wait for result
+                jax.device_get(result)
 
 
 # ========================================================================= #
@@ -272,7 +283,7 @@ class Augment(abc.ABC):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class AugmentItems(Augment, abc.ABC):
     """
     Conditional augment that applies an augment if there is a value present

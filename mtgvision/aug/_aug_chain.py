@@ -47,13 +47,15 @@ from mtgvision.aug._util_args import ArgIntHint, sample_int_defaults
 # ========================================================================= #
 
 
-@dataclass(frozen=True)
+@register_dataclass
+@dataclass()
 class _Chain(Augment, abc.ABC):
     p: float = jax_static_field(default=1.0)
     augments: tuple[Augment, ...] = jax_static_field(default_factory=list)
 
 
-@dataclass(frozen=True)
+@register_dataclass
+@dataclass()
 class _Shuffle(_Chain, abc.ABC):
     p: float = jax_static_field(default=1.0)
     n: ArgIntHint = jax_static_field(default=None)
@@ -75,7 +77,9 @@ class _Shuffle(_Chain, abc.ABC):
         return lax.fori_loop(
             0,
             n,
-            lambda i, itms: jax.lax.switch(order[i], self.augments, key, itms),
+            lambda i, itms: jax.lax.switch(
+                order[i], [a.__call__ for a in self.augments], key, itms
+            ),
             items,
         )
 
@@ -87,31 +91,31 @@ class _Shuffle(_Chain, abc.ABC):
 
 # one of the augments
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class OneOf(_Chain):
     p: float = jax_static_field(default=1.0)
 
     def _apply(self, key: AugPrngHint, items: AugItems) -> AugItems:
         # DOES NOT SUPPORT len(augments) == 0
         i = jrandom.randint(key, (), 0, len(self.augments))
-        return lax.switch(i, self.augments, key, items)
+        return lax.switch(i, [a.__call__ for a in self.augments], key, items)
 
 
 # all augments
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class AllOf(_Chain):
     p: float = jax_static_field(default=1.0)
 
     def _apply(self, key: AugPrngHint, items: AugItems) -> AugItems:
         for aug in self.augments:
-            items = aug(key, items)
+            items = aug.__call__(key, items)
         return items
 
 
 # sample without replacement
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class SomeOf(_Shuffle):
     # DOES NOT SUPPORT len(augments) == 0
     p: float = jax_static_field(default=1.0)
@@ -120,7 +124,7 @@ class SomeOf(_Shuffle):
 
 # sample with replacement
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class SampleOf(_Shuffle):
     # DOES NOT SUPPORT len(augments) == 0
     p: float = jax_static_field(default=1.0)

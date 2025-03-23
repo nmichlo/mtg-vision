@@ -40,7 +40,7 @@ from mtgvision.aug._base import AugItems, Augment, AugPrngHint
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class NoOp(Augment):
     def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         return x

@@ -29,12 +29,13 @@ from os import PathLike
 from pathlib import Path
 from typing import Iterator, Tuple
 
+import cv2
 import jax.numpy as jnp
 from math import ceil
 import random
 
 import jax.random
-from PIL import Image
+import numpy as np
 from tqdm import tqdm
 
 from mtgdata import ScryfallDataset, ScryfallImageType
@@ -214,7 +215,7 @@ class SyntheticBgFgMtgImages:
             augments=(
                 A.FlipHorizontal(p=0.5),
                 A.FlipVertical(p=0.5),
-                # A.RotateBounded(deg=(0, 360), p=1.0),
+                A.RotateBounded(deg=(0, 360), p=1.0),
                 A.ColorTint(tint=(-0.15, 0.15), p=0.9),
             ),
             n=(1, 4),
@@ -223,21 +224,21 @@ class SyntheticBgFgMtgImages:
         # Foreground augmentations (image and mask)
         self._aug_fg = A.AllOf(
             augments=(
-                A.AllOf(
-                    augments=(
-                        A.ShiftScaleRotate(
-                            shift_ratio=(-0.0625, 0.0625),
-                            scale_ratio=(-0.1, 0.0),
-                            rotate_limit=(-5, 5),
-                            p=1.0,
-                        ),
-                        A.PerspectiveWarp(
-                            corner_jitter_ratio=(-0.075, 0.075),
-                            p=1.0,
-                        ),
-                    ),
-                    p=0.95,
-                ),
+                # A.AllOf(
+                #     augments=(
+                #         A.ShiftScaleRotate(
+                #             shift_ratio=(-0.0625, 0.0625),
+                #             scale_ratio=(-0.1, 0.0),
+                #             rotate_limit=(-5, 5),
+                #             p=1.0,
+                #         ),
+                #         A.PerspectiveWarp(
+                #             corner_jitter_ratio=(-0.075, 0.075),
+                #             p=1.0,
+                #         ),
+                #     ),
+                #     p=0.95,
+                # ),
                 A.ColorTint(tint=(-0.15, 0.15), p=0.5),
             ),
         )
@@ -245,22 +246,20 @@ class SyntheticBgFgMtgImages:
         # Virtual augmentations (image only)
         self._aug_vrtl = A.SomeOf(
             augments=(
-                # A.BlurGaussian(sigma=(0, 2), kernel_size=7, p=0.5),
-                # A.BlurJpegCompression(quality=(98, 100), p=0.25),
+                A.BlurGaussian(sigma=(0, 2), kernel_size=7, p=0.5),
+                A.BlurJpegCompression(quality=(98, 100), p=0.25),
                 A.BlurDownscale(p=0.25),
                 # noise
-                # A.NoiseAdditiveGaussian(strength=(0, 0.1), p=1.0),
+                A.NoiseAdditiveGaussian(strength=(0, 0.1), p=1.0),
                 # A.NoisePoison(peak=(0.01, 1), p=1.0),
-                # A.NoiseSaltPepper(strength=(0, 0.1), p=1.0),
-                # A.NoiseMultiplicativeGaussian(strength=(0, 0.1), p=1.0),
-                # A.RandomErasing(
-                #     scale=(0.2, 0.7), p=1.0, color="uniform_random"
-                # ),
+                A.NoiseSaltPepper(strength=(0, 0.1), p=1.0),
+                A.NoiseMultiplicativeGaussian(strength=(0, 0.1), p=1.0),
+                A.RandomErasing(scale=(0.2, 0.7), p=1.0, color="uniform_random"),
                 # color
-                # A.ColorTint(tint=(-0.15, 0.15), p=1.0),
-                # A.ColorGamma(gamma=(0.8, 1.2), p=1.0),
-                # A.ColorBrightness(brightness=(-0.2, 0.2), p=1.0),
-                # A.ColorExposure(exposure=(-0.2, 0.2), p=1.0),
+                A.ColorTint(tint=(-0.15, 0.15), p=1.0),
+                A.ColorGamma(gamma=(0.8, 1.2), p=1.0),
+                A.ColorBrightness(brightness=(-0.2, 0.2), p=1.0),
+                A.ColorExposure(exposure=(-0.2, 0.2), p=1.0),
             ),
             n=(1, 3),
         )
@@ -269,45 +268,56 @@ class SyntheticBgFgMtgImages:
         # self._aug_upsidedown.quick_test()
         # self._aug_bg.quick_test()
         # self._aug_fg.quick_test()
-        self._aug_vrtl.quick_test()
+        # self._aug_vrtl.quick_test()
 
         # JIT EVERYTHING
-        self._aug_upsidedown = self._aug_upsidedown.jitted_call()
-        self._aug_bg = self._aug_bg.jitted_call()
-        self._aug_fg = self._aug_fg.jitted_call()
-        self._aug_vrtl = self._aug_vrtl.jitted_call()
+        # self._aug_upsidedown
+        # self._aug_bg
+        # self._aug_fg
+        # self._aug_vrtl
 
         self._key = jax.random.key(42)
 
     # IMAGE LOADING METHODS
 
-    @classmethod
-    def _get_img(cls, path_or_img: PathOrImg) -> jnp.ndarray:
+    @staticmethod
+    @jax.jit
+    def _to_float_img(img) -> jnp.ndarray:
         """Load an image as float32."""
-        if isinstance(path_or_img, (str, Path)):
-            img = Image.open(path_or_img)
-            return jnp.array(img).astype(jnp.float32) / 255.0
-        elif isinstance(path_or_img, jnp.ndarray):
-            if path_or_img.dtype == jnp.uint8:
-                return path_or_img.astype(jnp.float32) / 255.0
-            elif path_or_img.dtype == jnp.float32:
-                return path_or_img
+        if isinstance(img, jnp.ndarray):
+            if img.dtype == jnp.uint8:
+                return img.astype(jnp.float32) / 255.0
+            elif img.dtype == jnp.float32:
+                return img
             else:
-                raise ValueError(f"Unsupported dtype: {path_or_img.dtype}")
+                raise ValueError(f"Unsupported dtype: {img.dtype}")
         else:
-            raise ValueError(f"Unsupported type: {type(path_or_img)}")
+            raise ValueError(f"Unsupported type: {type(img)}")
+
+    @classmethod
+    def _load(cls, path_or_img: PathOrImg | None, ran_fn) -> jnp.ndarray:
+        img = path_or_img
+        if img is None:
+            img = ran_fn()
+        if isinstance(img, (str, Path)):
+            img = cv2.imread(img, cv2.IMREAD_COLOR_RGB)  # much faster than Image.open
+            img = np.asarray(img, dtype=jnp.float32) / 255.0  # much faster than jnp???
+            return img
+        assert img.dtype in (np.float32, jnp.float32)
+        return img
 
     def _get_card(self, card_path_or_img: PathOrImg | None) -> jnp.ndarray:
         """Get a random card image or load the specified one."""
-        if card_path_or_img is None:
-            card_path_or_img = self.ds_mtg.ran_path()
-        return self._get_img(card_path_or_img)
+        return self._load(card_path_or_img, self.ds_mtg.ran_path)
 
     def _get_bg(self, bg_path_or_img: PathOrImg | None) -> jnp.ndarray:
         """Get a random background image or load the specified one."""
-        if bg_path_or_img is None:
-            bg_path_or_img = self.ds_bg.ran_path()
-        return self._get_img(bg_path_or_img)
+        return self._load(bg_path_or_img, self.ds_bg.ran_path)
+
+    def next_key(self, key=None):
+        if key is None:
+            self._key, key = jax.random.split(self._key)
+        return key
 
     # AUGMENTED IMAGE METHODS
 
@@ -324,26 +334,31 @@ class SyntheticBgFgMtgImages:
         return ret
 
     def _make_aug_card_and_mask(
-        self, path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
+        self,
+        path_or_img: PathOrImg | None = None,
+        size_hw: SizeHW | None = None,
+        key=None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Generate an augmented card and its mask."""
+        key = self.next_key(key)
         card = self._get_card(path_or_img)
-        card = self._aug_upsidedown(self._key, AugItems(image=card)).image
+        card = self._aug_upsidedown(key, AugItems(image=card)).image
         card = uimg.resize(card, size_hw=size_hw or self._default_x_size_hw)
         mask = uimg.round_rect_mask(card.shape[:2], radius_ratio=0.05)[:, :, None]
-        items = self._aug_fg(self._key, AugItems(image=card, mask=mask))
+        items = self._aug_fg(key, AugItems(image=card, mask=mask))
         return items.image, items.mask[:, :, 0]
 
     def _make_aug_bg(
-        self, bg_path_or_img: PathOrImg | None = None, size_hw: SizeHW | None = None
+        self,
+        bg_path_or_img: PathOrImg | None = None,
+        size_hw: SizeHW | None = None,
+        key=None,
     ) -> jnp.ndarray:
         """Generate an augmented background."""
-        with timer("+ 2c - get_bg"):
-            bg = self._get_bg(bg_path_or_img)
-        with timer("+ 2c - aug bg"):
-            bg_aug = self._aug_bg(self._key, AugItems(image=bg)).image
-        with timer("+ 2c - crop bg"):
-            bg_aug = uimg.crop_to_size(bg_aug, size_hw or self._default_x_size_hw)
+        key = self.next_key(key)
+        bg = self._get_bg(bg_path_or_img)
+        bg_aug = self._aug_bg(key, AugItems(image=bg)).image
+        bg_aug = uimg.crop_to_size(bg_aug, size_hw or self._default_x_size_hw)
         return bg_aug
 
     def make_synthetic_input_card(
@@ -351,23 +366,22 @@ class SyntheticBgFgMtgImages:
         card_path_or_img: PathOrImg | None = None,
         bg_path_or_img: PathOrImg | None = None,
         size_hw: SizeHW | None = None,
+        key=None,
     ) -> jnp.ndarray:
         """Create a synthetic input card with background."""
+        key = self.next_key(key)
         size_hw = size_hw or self._default_x_size_hw
         # Foreground (card) and mask
-        with timer("* 2b"):
-            fg, fg_mask = self._make_aug_card_and_mask(
-                card_path_or_img, size_hw=size_hw
-            )
+        fg, fg_mask = self._make_aug_card_and_mask(
+            card_path_or_img,
+            size_hw=size_hw,
+            key=key,
+        )
         # Background
-        with timer("* 2c"):
-            bg = self._make_aug_bg(bg_path_or_img, size_hw=size_hw)
+        bg = self._make_aug_bg(bg_path_or_img, size_hw=size_hw)
         # Merge foreground and background
         synthetic_card = uimg.rgb_mask_over_rgb(fg, fg_mask, bg)
-        with timer("* 2e"):
-            synthetic_card_aug = self._aug_vrtl(
-                self._key, AugItems(image=synthetic_card)
-            ).image
+        synthetic_card_aug = self._aug_vrtl(key, AugItems(image=synthetic_card)).image
         # Size check
         assert synthetic_card_aug.shape[:2] == size_hw, (
             f"Expected size_hw={size_hw}, got={synthetic_card_aug.shape[:2]}"
@@ -380,14 +394,14 @@ class SyntheticBgFgMtgImages:
         bg_path_or_img: PathOrImg | None = None,
         x_size_hw: SizeHW | None = None,
         y_size_hw: SizeHW | None = None,
+        key=None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Generate a pair of synthetic input and target cards."""
-        with timer("1"):
-            card = self._get_card(card_path_or_img)
-        with timer("2"):
-            x = self.make_synthetic_input_card(card, bg_path_or_img, size_hw=x_size_hw)
-        with timer("3"):
-            y = self.make_target_card(card, size_hw=y_size_hw)
+        card = self._get_card(card_path_or_img)
+        x = self.make_synthetic_input_card(
+            card, bg_path_or_img, size_hw=x_size_hw, key=key
+        )
+        y = self.make_target_card(card, size_hw=y_size_hw)
         return x, y
 
 
@@ -418,17 +432,10 @@ if __name__ == "__main__":
     #     x, y = ds.make_synthetic_input_and_target_card_pair()
 
     # 100%|██████████| 1000/1000 [00:16<00:00, 60.01it/s]
-    for i in tqdm(range(1000)):
-        # 270 it/s
-        # x = ds._get_card(None)  # 1050 it/s
-        # y = ds._get_bg(None)  # 320 it/s
+    for i in tqdm(range(10000)):
+        # 300 it/s
+        x = ds._get_card(None)  # 1150 it/s
+        y = ds._get_bg(None)  # 440 it/s
 
-        # 70 it/s
-        x, y = ds.make_synthetic_input_and_target_card_pair()
-        # try:
-        # except Exception as e:
-        #     print(e)
-        #     continue
-
-        # uimg.imshow_loop(x, "x")
-        # uimg.imshow_loop(y, "y")
+        # 2 it/s
+        x, y = ds.make_synthetic_input_and_target_card_pair(x, y)

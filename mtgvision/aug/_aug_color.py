@@ -110,7 +110,7 @@ def _ran(key, m, M, shape=()):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorGamma(AugmentItems):
     p: float = jax_static_field(default=0.5)
     gamma: ArgFloatHint = jax_static_field(default=(0, 0.5))  # min 0
@@ -121,7 +121,7 @@ class ColorGamma(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorBrightness(AugmentItems):
     """
     Adjust the brightness of an image.
@@ -138,7 +138,7 @@ class ColorBrightness(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorContrast(AugmentItems):
     """
     Adjust the contrast of an image.
@@ -155,7 +155,7 @@ class ColorContrast(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorExposure(AugmentItems):
     """
     Adjust the exposure of an image.
@@ -172,7 +172,7 @@ class ColorExposure(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorSaturation(AugmentItems):
     """
     Adjust the saturation of an image.
@@ -187,7 +187,7 @@ class ColorSaturation(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorHue(AugmentItems):
     """
     Adjust the hue of an image.
@@ -202,7 +202,7 @@ class ColorHue(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorTint(AugmentItems):
     """
     Adjust the tint of an image.
@@ -225,7 +225,7 @@ class ColorTint(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorInvert(AugmentItems):
     """
     Invert the colors of an image.
@@ -238,7 +238,7 @@ class ColorInvert(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorGrayscale(AugmentItems):
     """
     Convert an image to grayscale.
@@ -253,7 +253,7 @@ class ColorGrayscale(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ImgClip(AugmentItems):
     """
     Clip the values of an image to the range [0, 1].
@@ -269,7 +269,7 @@ class ImgClip(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorFadeWhite(AugmentItems):
     """
     Fade the colors of an image to white.
@@ -286,7 +286,7 @@ class ColorFadeWhite(AugmentItems):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class ColorFadeBlack(AugmentItems):
     """
     Fade the colors of an image to black.

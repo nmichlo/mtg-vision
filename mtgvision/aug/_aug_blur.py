@@ -87,7 +87,7 @@ def _rgb_downscale_upscale(
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class BlurGaussian(Augment):
     """
     Apply a box blur to the image.
@@ -135,7 +135,7 @@ class BlurGaussian(Augment):
 
 
 # @register_dataclass
-# @dataclass(frozen=True)
+# @dataclass()
 # class BlurMedian(Augment):
 #     """
 #     Apply a median blur to the image.
@@ -170,7 +170,7 @@ class BlurGaussian(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class BlurJpegCompression(Augment):
     """
     Apply jpeg compression to the image.
@@ -191,7 +191,7 @@ class BlurJpegCompression(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class BlurDownscale(Augment):
     """
     Downscale the image and then upscale it back to the original size.

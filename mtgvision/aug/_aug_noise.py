@@ -194,7 +194,7 @@ def _rgb_inplace_random_erasing(
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class NoiseMultiplicativeGaussian(Augment):
     """
     Add multiplicative gaussian noise to the image.
@@ -219,7 +219,7 @@ class NoiseMultiplicativeGaussian(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class NoiseAdditiveGaussian(Augment):
     """
     Add additive gaussian noise to the image.
@@ -244,7 +244,7 @@ class NoiseAdditiveGaussian(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class NoisePoison(Augment):
     """
     Add poisson noise to the image.
@@ -276,7 +276,7 @@ class NoisePoison(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class NoiseSaltPepper(Augment):
     """
     Add salt and pepper noise to the image.
@@ -299,7 +299,7 @@ class NoiseSaltPepper(Augment):
 
 
 @register_dataclass
-@dataclass(frozen=True)
+@dataclass()
 class RandomErasing(Augment):
     """
     Randomly erase a rectangular region in the image, leaving mask and points unchanged.
