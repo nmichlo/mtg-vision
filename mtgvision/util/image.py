@@ -91,7 +91,7 @@ def imread_float(path: str | PathLike) -> np.ndarray[np.float32]:
     """
     Read an image from disk, and convert it to a float32 image in range [0, 1].
     """
-    img = cv2.imread(str(path))
+    img = cv2.imread(str(path), cv2.IMREAD_COLOR_RGB)
     if img is None:
         raise Exception("Image not found: {}".format(str(path)))
     return img_float32(img)
@@ -429,4 +429,4 @@ def noise_poisson(
     noise = np.zeros_like(img)
     noise[:, :, :3] = np.random.poisson(img[:, :, :3] * peak) / peak
     ret = img_clip((1 - amount) * img + amount * noise)
-    return ret
+    return ret.astype(np.float32)
