@@ -420,22 +420,23 @@ def timer(name: str):
 
 
 if __name__ == "__main__":
-    ds = SyntheticBgFgMtgImages(
-        ds_mtg=MtgImages(),
-        ds_bg=IlsvrcImages(),
-        default_x_size_hw=(192, 128),
-        default_y_size_hw=(192, 128),
-        half_upsidedown=True,
-    )
+    with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
+        ds = SyntheticBgFgMtgImages(
+            ds_mtg=MtgImages(),
+            ds_bg=IlsvrcImages(),
+            default_x_size_hw=(192, 128),
+            default_y_size_hw=(192, 128),
+            half_upsidedown=True,
+        )
 
-    # for i in tqdm(range(10)):
-    #     x, y = ds.make_synthetic_input_and_target_card_pair()
+        # for i in tqdm(range(10)):
+        #     x, y = ds.make_synthetic_input_and_target_card_pair()
 
-    # 100%|██████████| 1000/1000 [00:16<00:00, 60.01it/s]
-    for i in tqdm(range(10000)):
-        # 300 it/s
-        x = ds._get_card(None)  # 1150 it/s
-        y = ds._get_bg(None)  # 440 it/s
+        # 100%|██████████| 1000/1000 [00:16<00:00, 60.01it/s]
+        for i in tqdm(range(10)):
+            # 300 it/s
+            x = ds._get_card(None)  # 1150 it/s
+            y = ds._get_bg(None)  # 440 it/s
 
-        # 2 it/s
-        x, y = ds.make_synthetic_input_and_target_card_pair(x, y)
+            # 2 it/s
+            x, y = ds.make_synthetic_input_and_target_card_pair(x, y)
