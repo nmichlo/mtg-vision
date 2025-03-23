@@ -177,7 +177,7 @@ class BlurJpegCompression(Augment):
     """
 
     p: float = jax_static_field(default=0.5)
-    quality: int = jax_static_field(default=(10, 100))  # min 1, max 100
+    quality: ArgIntHint = jax_static_field(default=(10, 100))  # min 1, max 100
 
     def _apply(self, key: AugPrngHint, x: AugItems) -> AugItems:
         if x.has_image:

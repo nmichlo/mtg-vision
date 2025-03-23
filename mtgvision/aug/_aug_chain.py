@@ -39,6 +39,7 @@ from jax import lax
 from jax.tree_util import register_dataclass
 
 from mtgvision.aug._base import AugItems, Augment, AugPrngHint, jax_static_field
+from mtgvision.aug._util_args import ArgIntHint, sample_int_defaults
 
 
 # ========================================================================= #
@@ -55,8 +56,7 @@ class _Chain(Augment, abc.ABC):
 @dataclass(frozen=True)
 class _Shuffle(_Chain, abc.ABC):
     p: float = jax_static_field(default=1.0)
-    n_min: int | None = jax_static_field(default=None)
-    n_max: int | None = jax_static_field(default=None)
+    n: ArgIntHint = jax_static_field(default=None)
     replace: bool = jax_static_field(default=False)
 
     def _apply(self, key: AugPrngHint, items: AugItems) -> AugItems:
@@ -64,10 +64,9 @@ class _Shuffle(_Chain, abc.ABC):
         Sample the augments to apply, with or without replacement.
         """
         # 0. get bounds, default is always number of augments
-        m = len(self.augments) if self.n_min is None else self.n_min
-        M = len(self.augments) if self.n_max is None else self.n_max
+        M = len(self.augments)
         # 1. choose number of augments to apply, and apply them
-        n = jrandom.randint(key, (), m, M)
+        n = sample_int_defaults(key, self.n, default=M)
         # 2. get random order of ALL augments, TODO: should be (n,)
         order = jrandom.choice(key, len(self.augments), (M,), replace=self.replace)
         # 3. loop and apply

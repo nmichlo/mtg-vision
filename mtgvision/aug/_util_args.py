@@ -43,12 +43,38 @@ ArgFloatHint = float | tuple[float, float]
 ArgStrLiteralsHint = str | tuple[str, ...]
 
 
+def _get_default(value, default):
+    if value is None:
+        m = M = default
+    else:
+        m, M = value
+        if m is None:
+            m = default
+        if M is None:
+            M = default
+    return m, M
+
+
+def sample_float_defaults(
+    key: AugPrngHint, value: ArgFloatHint, default: float, shape=()
+) -> float:
+    value = _get_default(value, default)
+    return sample_float(key, value, shape)
+
+
 def sample_float(key: AugPrngHint, value: ArgFloatHint, shape=()) -> float:
     if isinstance(value, (tuple, list)):
         m, M = value
         return jrandom.uniform(key, shape, jnp.float32, minval=m, maxval=M)
     else:
         return jnp.full(shape, value)
+
+
+def sample_int_defaults(
+    key: AugPrngHint, value: ArgIntHint, default: int, shape=()
+) -> int:
+    value = _get_default(value, default)
+    return sample_int(key, value, shape)
 
 
 def sample_int(key: AugPrngHint, value: ArgIntHint, shape=()) -> int:

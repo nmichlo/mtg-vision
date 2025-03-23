@@ -250,17 +250,20 @@ class Augment(abc.ABC):
         n: Optional[int] = 1000,
         jit: bool = True,
     ):
+        def _make():
+            img = jrandom.uniform(key, image_size, jnp.float32)
+            mask = jrandom.uniform(key, mask_size, jnp.float32)
+            points = jrandom.uniform(key, points_size, jnp.float32)
+            items = AugItems(image=img, mask=mask, points=points)
+            return items
+
         key = jrandom.key(42)
-        img = jrandom.uniform(key, image_size, jnp.float32)
-        mask = jrandom.uniform(key, mask_size, jnp.float32)
-        points = jrandom.uniform(key, points_size, jnp.float32)
-        items = AugItems(image=img, mask=mask, points=points)
         call = self.jitted_call() if jit else self
         if n is not None:
             for _ in tqdm(range(n), desc=f"{self.__class__.__name__}"):
-                call(key, items)
+                call(key, _make())
         else:
-            call(key, items)
+            call(key, _make())
 
 
 # ========================================================================= #
