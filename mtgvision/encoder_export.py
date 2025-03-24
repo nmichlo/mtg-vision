@@ -1,3 +1,7 @@
+"""
+Export a trained encoder to coreml or other formats.
+"""
+
 import argparse
 import functools
 from pathlib import Path
@@ -6,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-from mtgvision.train_encoder import (
+from mtgvision.encoder_train import (
     get_test_images,
     MtgVisionEncoder,
     RanMtgEncDecDataset,

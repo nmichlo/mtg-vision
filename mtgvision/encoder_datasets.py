@@ -1,3 +1,11 @@
+"""
+Datasets for training a denoising auto-encoder or contrastive learning model
+to embed synthetic wraped and distorted versions of magic cards to produce
+embeddings invariant to their distortions.
+
+Using similar techniques to facial recognition.
+"""
+
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 #  MIT License
 #
@@ -24,14 +32,17 @@
 
 import uuid
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Literal
 
 import cv2
 import numpy as np
 from math import ceil
 import random
 
+from tqdm import tqdm
+
 from mtgdata import ScryfallDataset, ScryfallImageType
+from mtgvision.util.image import ensure_float32
 import mtgvision.util.image as uimg
 import mtgvision.util.random as uran
 import mtgvision.util.files as ufls
@@ -45,8 +56,7 @@ from mtgdata.scryfall import ScryfallCardFace
 
 class Mutate:
     """
-    A collection of image random image transformations.
-    # TODO: replace with random transforms from e.g. albumentations
+    A collection of random image transformations.
     """
 
     @staticmethod
@@ -68,7 +78,7 @@ class Mutate:
         return np.rot90(img, k=2)
 
     @staticmethod
-    def warp(img, warp_ratio=0.15, warp_ratio_min=-0.05):
+    def warp(img, warp_ratio=0.2, warp_ratio_min=-0.15):
         # [top left, top right, bottom left, bottom right]
         (h, w) = (img.shape[0] - 1, img.shape[1] - 1)
         src_pts = np.asarray([(0, 0), (0, w), (h, 0), (h, w)], dtype=np.float32)
@@ -129,6 +139,190 @@ class Mutate:
         ratio = np.random.random() * amount
         img[:, :, :3] = (ratio) * 0 + (1 - ratio) * img[:, :, :3]
         return img
+
+    @staticmethod
+    @ensure_float32
+    def brightness_contrast(img, brightness=0.2, contrast=0.2):
+        alpha = 1.0 + np.random.uniform(-contrast, contrast)
+        beta = np.random.uniform(-brightness, brightness)
+        img = alpha * img + beta
+        return np.clip(img, 0, 1)
+
+    # @staticmethod
+    @ensure_float32
+    # def color_jitter(img, hue=0.1, saturation=0.1, value=0.1):
+    #     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    #     h, s, v = cv2.split(hsv)
+    #     h = h + np.random.uniform(-hue, hue) * 180
+    #     s = s * (1 + np.random.uniform(-saturation, saturation))
+    #     v = v * (1 + np.random.uniform(-value, value))
+    #     hsv = cv2.merge([h, s, v])
+    #     return cv2.cvtColor(np.clip(hsv, 0, 255), cv2.COLOR_HSV2BGR)
+
+    @staticmethod
+    @ensure_float32
+    def gaussian_noise(img, mean=0, sigma=0.25):
+        noise = np.random.normal(mean, sigma, img.shape).astype(np.float32)
+        return np.clip(img + noise, 0, 1)
+
+    @staticmethod
+    @ensure_float32
+    def salt_pepper_noise(img, salt_prob=0.01, pepper_prob=0.01):
+        noisy = img.copy()
+        num_salt = np.ceil(salt_prob * img.size)
+        num_pepper = np.ceil(pepper_prob * img.size)
+        # Add salt
+        coords = [np.random.randint(0, i - 1, int(num_salt)) for i in img.shape]
+        noisy[coords[0], coords[1], :] = 1
+        # Add pepper
+        coords = [np.random.randint(0, i - 1, int(num_pepper)) for i in img.shape]
+        noisy[coords[0], coords[1], :] = 0
+        return noisy
+
+    @staticmethod
+    @ensure_float32
+    def sharpen(img):
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+        return cv2.filter2D(img, -1, kernel)
+
+    # @staticmethod
+    # def elastic_transform(img, alpha=36, sigma=6):
+    #     random_state = np.random.RandomState(None)
+    #     shape = img.shape
+    #     dx = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    #     dy = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    #     x, y, z = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]), np.arange(shape[2]))
+    #     indices = np.reshape(y + dy, (-1, 1)), np.reshape(x + dx, (-1, 1)), np.reshape(z, (-1, 1))
+    #     return map_coordinates(img, indices, order=1).reshape(shape)
+
+    @staticmethod
+    @ensure_float32
+    def cutout(img, num_holes=8, max_h_size=8, max_w_size=8):
+        h, w, _ = img.shape
+        for _ in range(num_holes):
+            y = np.random.randint(h)
+            x = np.random.randint(w)
+            y1 = np.clip(y - max_h_size // 2, 0, h)
+            y2 = np.clip(y + max_h_size // 2, 0, h)
+            x1 = np.clip(x - max_w_size // 2, 0, w)
+            x2 = np.clip(x + max_w_size // 2, 0, w)
+            img[y1:y2, x1:x2, :] = 0
+        return img
+
+    @staticmethod
+    @ensure_float32
+    def random_erasing(
+        img,
+        *,
+        scale_min_max: tuple[float, float] = (0.2, 0.5),  # [0, 1]
+        aspect_min_max: tuple[float, float] = (1, 3),  # [1, inf]
+        color: Literal["random", "uniform_random", "zeros", "ones", "mean"] = (
+            "random",
+            "uniform_random",
+            "zeros",
+            "ones",
+            "mean",
+        ),
+        inside: bool = False,
+    ):
+        h, w = img.shape[:2]
+        # scale
+        scale = np.random.uniform(*scale_min_max)
+        target_area = scale * (h * w)
+        # aspect
+        aspect_ratio = np.random.uniform(*aspect_min_max)
+        if np.random.random() < 0.5:
+            aspect_ratio = 1 / aspect_ratio
+
+        block_w = int((target_area / aspect_ratio) ** 0.5)
+        block_h = int((target_area * aspect_ratio) ** 0.5)
+        # get coords
+        if inside:
+            (mx, Mx), (my, My) = (
+                (block_w // 2, w - block_w // 2),
+                (block_h // 2, h - block_h // 2),
+            )
+        else:
+            (mx, Mx), (my, My) = (
+                (0 - block_w // 2, w + block_w // 2),
+                (0 - block_h // 2, h + block_h // 2),
+            )
+
+        if Mx <= mx:
+            return img
+        if My <= my:
+            return img
+
+        cx = np.random.randint(mx, Mx)
+        cy = np.random.randint(my, My)
+
+        # clamp to valid ranges
+        block_x0 = np.maximum(0, cx - block_w // 2)
+        block_y0 = np.maximum(0, cy - block_h // 2)
+        block_x1 = np.minimum(w, cx + block_w // 2)
+        block_y1 = np.minimum(h, cy + block_h // 2)
+        block_h = block_y1 - block_y0
+        block_w = block_x1 - block_x0
+
+        if isinstance(color, (tuple, list)):
+            color = random.choice(color)
+        if color == "uniform_random":
+            c = np.random.uniform(0, 1, (img.shape[-1],))
+        elif color == "random":
+            c = np.random.uniform(0, 1, (block_h, block_w, img.shape[-1]))
+        elif color == "zeros":
+            c = np.zeros((img.shape[-1],))
+        elif color == "mean":
+            c = img[block_y0:block_y1, block_x0:block_x1, :].mean(axis=(0, 1))
+        elif color == "ones":
+            c = np.ones((img.shape[-1],))
+        else:
+            raise ValueError(f"Invalid color choice: {color}")
+
+        # set
+        img[block_y0:block_y1, block_x0:block_x1, :] = c
+        return img
+
+    @staticmethod
+    @ensure_float32
+    def affine_transform(img, angle=0, translate=(0, 0), scale=1, shear=0):
+        rows, cols, _ = img.shape
+        center = (cols / 2, rows / 2)
+        M = cv2.getRotationMatrix2D(center, angle, scale)
+        M = np.vstack([M, [0, 0, 1]])
+        shear_matrix = np.array([[1, shear, 0], [0, 1, 0], [0, 0, 1]])
+        M = np.dot(shear_matrix, M)
+        M[0, 2] += translate[0]
+        M[1, 2] += translate[1]
+        return cv2.warpAffine(img, M[:2, :], (cols, rows))
+
+    @staticmethod
+    @ensure_float32
+    def perspective_transform(img, strength=0.1):
+        rows, cols, _ = img.shape
+        pts1 = np.float32([[0, 0], [cols, 0], [0, rows], [cols, rows]])
+        pts2 = np.float32(
+            [
+                [
+                    np.random.uniform(-strength, strength) * cols,
+                    np.random.uniform(-strength, strength) * rows,
+                ],
+                [
+                    cols + np.random.uniform(-strength, strength) * cols,
+                    np.random.uniform(-strength, strength) * rows,
+                ],
+                [
+                    np.random.uniform(-strength, strength) * cols,
+                    rows + np.random.uniform(-strength, strength) * rows,
+                ],
+                [
+                    cols + np.random.uniform(-strength, strength) * cols,
+                    rows + np.random.uniform(-strength, strength) * rows,
+                ],
+            ]
+        )
+        M = cv2.getPerspectiveTransform(pts1, pts2)
+        return cv2.warpPerspective(img, M, (cols, rows))
 
 
 # ========================================================================= #
@@ -242,26 +436,61 @@ class SyntheticBgFgMtgImages:
             yield card
 
     def ran(self) -> np.ndarray:
-        return self._load_card_image(random.choice(self._ds))
+        return self._load_card_image(self.ran_card())
+
+    def ran_path(self) -> str:
+        return str(self.ran_card().download())
+
+    def ran_card(self) -> ScryfallCardFace:
+        return random.choice(self._ds)
 
     def get(self, idx) -> np.ndarray:
         return self[idx]
 
     _RAN_BG = uran.ApplyShuffled(
         uran.ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
-        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
+        uran.ApplyChoice(
+            Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
+        ),
+        # uran.ApplyChoice(Mutate.color_jitter, None),
     )
     _RAN_FG = uran.ApplyOrdered(
-        uran.ApplyShuffled(
+        uran.ApplyChoice(
             Mutate.warp,
-            uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
-        )
+            Mutate.affine_transform,
+            Mutate.perspective_transform,
+        ),
+        uran.ApplyChoice(
+            Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
+        ),
     )
     _RAN_VRTL = uran.ApplyShuffled(
         uran.ApplyChoice(Mutate.blur, None),
-        uran.ApplyChoice(Mutate.noise, None),
+        uran.ApplyChoice(Mutate.sharpen, None),
+        uran.ApplyChoice(
+            Mutate.noise,
+            Mutate.gaussian_noise,
+            Mutate.salt_pepper_noise,
+            Mutate.random_erasing,
+            Mutate.cutout,
+            None,
+        ),
+        uran.ApplyChoice(
+            uran.ApplyChoice(
+                Mutate.noise,
+                Mutate.gaussian_noise,
+                Mutate.salt_pepper_noise,
+                Mutate.random_erasing,
+                Mutate.cutout,
+                None,
+            ),
+            None,
+        ),
         uran.ApplyChoice(Mutate.tint, None),
-        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, None),
+        uran.ApplyChoice(
+            Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
+        ),
+        uran.ApplyChoice(Mutate.random_erasing, None),
     )
 
     @staticmethod
@@ -372,7 +601,15 @@ if __name__ == "__main__":
     mtg = SyntheticBgFgMtgImages(img_type="small")
     ilsvrc = IlsvrcImages()
 
-    while True:
+    for i in tqdm(range(10)):
+        _o = mtg.ran()
+        _l = ilsvrc.ran()
+        x, y = SyntheticBgFgMtgImages.make_virtual_pair(
+            _o, _l, (192, 128), (192, 128), True
+        )
+
+    # 100%|██████████| 1000/1000 [00:10<00:00, 94.77it/s]
+    for i in tqdm(range(1000)):
         _o = mtg.ran()
         _l = ilsvrc.ran()
 
@@ -381,4 +618,4 @@ if __name__ == "__main__":
         )
 
         uimg.imshow_loop(x, "asdf")
-        uimg.imshow_loop(y, "asdf")
+        # uimg.imshow_loop(y, "asdf")

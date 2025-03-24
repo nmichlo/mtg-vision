@@ -1,3 +1,7 @@
+"""
+Embed images into qdrant and query them to validate models are working correctly.
+"""
+
 import dataclasses
 import itertools
 import time
@@ -5,10 +9,10 @@ from typing import Any, Iterable
 from tqdm import tqdm
 
 from doorway.x import ProxyDownloader
-from mtgvision.datasets import SyntheticBgFgMtgImages
-from mtgvision.export_encoder import CoreMlEncoder, MODEL_PATH
+from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
+from mtgvision.encoder_export import CoreMlEncoder, MODEL_PATH
 
-from mtgvision.train_encoder import RanMtgEncDecDataset
+from mtgvision.encoder_train import RanMtgEncDecDataset
 from mtgvision.util.image import imread_float
 
 
