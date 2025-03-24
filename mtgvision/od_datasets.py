@@ -2,6 +2,7 @@ import math
 import os
 from typing import Literal, TypedDict
 
+import yaml
 from tqdm import tqdm
 
 from mtgvision.encoder_datasets import IlsvrcImages, SyntheticBgFgMtgImages
@@ -359,37 +360,59 @@ def generate_synthetic_image(
     """
     Generate a synthetic image with cards and their rotated bounding box annotations.
     """
-    # augments
+    # no warps, lighter
     pre_transform_bg = A.RandomOrder(
         [
             A.RandomBrightnessContrast(
-                brightness_limit=(-0.3, 0.5), contrast_limit=(-0.5, -0.5), p=0.3
+                brightness_limit=(-0.2, 0.5),
+                contrast_limit=(-0.3, -0.3),
+                p=0.9,
             ),
             A.HueSaturationValue(
-                hue_shift_limit=(-30, 30),
+                hue_shift_limit=(-50, 50),
                 sat_shift_limit=(-40, 40),
-                val_shift_limit=(0, 20),
-                p=0.3,
+                val_shift_limit=(-20, 20),
+                p=0.9,
             ),
             A.GaussianBlur(sigma_limit=(0, 2), p=0.1),
             A.GaussNoise(std_range=(0.0, 0.1), p=0.1),
         ],
-        n=3,
     )
-    post_transform_bg = A.RandomOrder(
+    # only color / noise, no blur
+    pre_transform_card = A.RandomOrder(
         [
             A.RandomBrightnessContrast(
-                brightness_limit=(-0.3, 0.5), contrast_limit=(-0.5, -0.5), p=0.3
+                brightness_limit=(-0.4, 0.4),
+                contrast_limit=(-0.4, -0.4),
+                p=0.9,
             ),
             A.HueSaturationValue(
                 hue_shift_limit=(-30, 30),
                 sat_shift_limit=(-40, 40),
-                val_shift_limit=(0, 20),
-                p=0.3,
+                val_shift_limit=(-35, 35),
+                p=0.9,
             ),
-            A.GaussianBlur(sigma_limit=(0, 2), p=0.2),
-            A.GaussNoise(std_range=(0.0, 0.3), p=0.2),
-        ]
+        ],
+    )
+    # no warps
+    post_transform_bg = A.RandomOrder(
+        [
+            A.RandomBrightnessContrast(
+                brightness_limit=(-0.3, 0.5),
+                contrast_limit=(-0.3, -0.3),
+                p=0.9,
+            ),
+            A.HueSaturationValue(
+                hue_shift_limit=(-10, 10),
+                sat_shift_limit=(-30, 30),
+                val_shift_limit=(-20, 30),
+                p=0.9,
+            ),
+            A.GaussianBlur(sigma_limit=(0, 2), p=0.7),
+            A.GaussNoise(std_range=(0.0, 0.3), p=0.3),
+            A.Erasing(p=0.2, scale=(0.02, 0.1)),
+            A.ISONoise(p=0.2),
+        ],
     )
 
     # create BG
@@ -415,6 +438,9 @@ def generate_synthetic_image(
         )
         if M is None:
             continue
+        # transform
+        card_sample["image"] = pre_transform_card(image=card_sample["image"])["image"]
+        # done
         card_samples.append(card_sample)
         card_Ms.append(M)
         card_polys.append(apply_transform_2d(card_sample["keypoints"][0], M))
@@ -488,10 +514,23 @@ class Gen:
         return sample
 
     def debug_show_loop(self, n: int = None):
+        colors = [
+            (0, 255, 0),
+            (255, 0, 0),
+            (255, 255, 0),
+        ]
         count = 0
         while n is None or count < n:
             sample = self.random()
-            imshow_loop(sample["image"], "synthetic")
+            # draw keypoints to image
+            img = sample["image"]
+            for bbox, label in zip(sample["keypoints"], sample["keypoints_labels"]):
+                for (x0, y0), (x1, y1) in zip(bbox, np.roll(bbox, 1, axis=0)):
+                    cv2.line(
+                        img, (int(x0), int(y0)), (int(x1), int(y1)), color=colors[label]
+                    )
+            # done
+            imshow_loop(img, "synthetic")
             count += 1
 
 
@@ -500,7 +539,7 @@ class Gen:
 # ========================================================================= #
 
 
-def create_yolo_dataset(
+def create_yolo_obb_dataset(
     generator: Gen,
     *,
     output_dir: str,
@@ -516,38 +555,59 @@ def create_yolo_dataset(
         max_cards: Maximum number of cards per image.
         bg_size: Tuple of (height, width) for the output images.
     """
+    if os.path.exists(output_dir):
+        raise FileExistsError(f"not clean... {output_dir}")
 
     # Create output directories
+    yaml_file = os.path.join(output_dir, "mtg_obb.yaml")
     img_dir = init_dir(output_dir, "images")
     label_dir = init_dir(output_dir, "labels")
+
+    # generate yaml dataset descriptor
+    with open(yaml_file, "w") as fp:
+        yaml.safe_dump(
+            {
+                "path": ".",
+                "train": img_dir,
+                "names": {
+                    0: "card",
+                    1: "card_top",
+                    2: "card_bottom",
+                },
+            },
+            fp,
+        )
 
     # Generate dataset
     for i in tqdm(range(num_images), desc="Generating dataset"):
         sample = generator.random()
+        img = sample["image"]
+        kps = sample["keypoints"]
+        kps_labels = sample["keypoints_labels"]
 
-        # Save image
-        img_path = os.path.join(img_dir, f"image_{i:04d}.png")
-        imwrite(
-            img_path, img
-        )  # Placeholder: assume converts float32 [0, 1] to uint8 [0, 255]
+        # checks
+        assert len(kps) == len(kps_labels)
+        assert img.ndim == 3
+        assert img.shape == (640, 640, 3)
 
-        # make annotations from keypoints and keypoints_labels
-        raise NotImplementedError
+        # make obb annotations from keypoints and keypoints_labels
+        # https://docs.ultralytics.com/datasets/obb/
+        annotations = []
+        for j, (pts, label) in enumerate(zip(kps, kps_labels)):
+            pts /= img.shape[:2][::-1]  # points are (w, h), not (h, w) like shape
+            (x0, y0), (x1, y1), (x2, y2), (x3, y3) = pts
+            annotations.append(f"{label} {x0} {y0} {x1} {y1} {x2} {y2} {x3} {y3}")
 
         # Save annotations
         label_path = os.path.join(label_dir, f"image_{i:04d}.txt")
         with open(label_path, "w") as f:
             for ann in annotations:
-                f.write(" ".join(map(str, ann)) + "\n")
+                f.write(ann + "\n")
 
-
-def corners_to_xyxy(keypoints: np.ndarray) -> np.ndarray:
-    # keypoints shape is (-1, 4, 2)
-    # [[(x0, y0), (x1, y1), (x2, y2), (x3, y3)], ...]
-    mins = np.min(keypoints, axis=-2, keepdims=True)  # -> (-1, 1, 2)
-    maxs = np.max(keypoints, axis=-2, keepdims=True)  # -> (-1, 1, 2)
-    xyxy = np.concatenate([mins, maxs], axis=-2)  # -> (-1, 2, 2)
-    return xyxy.reshape(-1, 4)
+        # Save image
+        # Placeholder: assume converts float32 [0, 1] to uint8 [0, 255]
+        img_path = os.path.join(img_dir, f"image_{i:04d}.png")
+        imwrite(img_path, sample["image"])
 
 
 # ========================================================================= #
@@ -557,6 +617,6 @@ def corners_to_xyxy(keypoints: np.ndarray) -> np.ndarray:
 
 if __name__ == "__main__":
     gen = Gen()
-    gen.debug_show_loop(n=10)
+    # gen.debug_show_loop()
 
-    # create_yolo_dataset("./yolo_mtg_dataset", num_images=10, bg_size=(640, 640))
+    create_yolo_obb_dataset(gen, output_dir="../yolo_mtg_dataset", num_images=10000)
