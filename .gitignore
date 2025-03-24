@@ -148,7 +148,11 @@ mtgvision_encoder/
 *.wal
 
 # datasets
-yolo_mtg_dataset/
+labels.cache
+*dataset*/mtg_obb.yaml
 */images/*.png
 */images/*.jpg
 */labels/*.txt
+*/images/*/*.png
+*/images/*/*.jpg
+*/labels/*/*.txt

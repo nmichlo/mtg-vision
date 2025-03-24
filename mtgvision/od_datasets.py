@@ -1,19 +1,14 @@
 import math
 import os
-from typing import Literal, TypedDict
+from pathlib import Path
+from typing import Literal, Optional, TypedDict
 
 import yaml
 from tqdm import tqdm
 
 from mtgvision.encoder_datasets import IlsvrcImages, SyntheticBgFgMtgImages
 from mtgvision.util.image import imread_float, imshow_loop, imwrite, round_rect_mask
-
-
-def init_dir(base, sub):
-    os.makedirs(os.path.join(base, sub), exist_ok=True)
-    return os.path.join(base, sub)
-
-
+from mtgvision.util.random import seed_all
 import random
 import numpy as np
 import cv2
@@ -215,12 +210,12 @@ def make_card_with_mask(
     Generate a transformed card image with its mask and transformed keypoints.
     """
 
-    def _box(l, t, r, b, m=0, mlr=1, mrr=1, mtr=1, mbr=1):
+    def _box(lft, top, rht, bot, margin=0.0, mlr=1.0, mrr=1.0, mtr=1.0, mbr=1.0):
         return [
-            (l + m * mlr, t + m * mtr),
-            (r - m * mrr, t + m * mtr),
-            (r - m * mrr, b - m * mbr),
-            (l + m * mlr, b - m * mbr),
+            (lft + margin * mlr, top + margin * mtr),
+            (rht - margin * mrr, top + margin * mtr),
+            (rht - margin * mrr, bot - margin * mbr),
+            (lft + margin * mlr, bot - margin * mbr),
         ]
 
     # Load random card image (RGB, not RGBA)
@@ -237,9 +232,9 @@ def make_card_with_mask(
     m = keypoint_margin_ratio * max(w, h)
     keypoints = np.asarray(
         [
-            _box(0, 0, w, h, m=0),  # card
-            _box(0, 0, w, r * h, m=m, mbr=0.5),  # top
-            _box(0, (1 - r) * h, w, h, m=m, mtr=0.5),  # bottom
+            _box(0, 0, w, h, margin=0),  # card
+            _box(0, 0, w, r * h, margin=m, mbr=0.5),  # top
+            _box(0, (1 - r) * h, w, h, margin=m, mtr=0.5),  # bottom
         ]
     )
     return {
@@ -261,13 +256,14 @@ def place_card_on_background_get_transform(
     # bg
     bg: np.ndarray,
     bg_existing_polygons: list[Polygon],
+    *,
     # scaling
     min_area_ratio: float = 0.01,
     max_area_ratio: float = 0.9,
     size_sample_mode: Literal["uniform", "log_uniform"] = "log_uniform",
     # collision
     min_visible: float = 0.5,
-    min_visible_edge: float = None,
+    min_visible_edge: Optional[float] = 1.0,
     no_contains: bool = True,
     jitter_ratio: float = 0.25,
     max_attempts: int = 10,
@@ -353,9 +349,14 @@ def generate_synthetic_image(
     bg_size_hw: tuple[int, int] | int = 640,
     num_cards_min: int = 1,
     num_cards_max: int = 10,
-    min_card_visible: float = 0.5,
-    min_card_visible_edge: float = None,
+    card_min_visible_ratio: float = 0.5,
+    card_min_visible_ratio_edges: Optional[float] = 1.0,
     card_jitter_ratio: float = 0.25,
+    card_min_area_ratio: float = 0.01,
+    card_max_area_ratio: float = 0.9,
+    card_size_sample_mode: Literal["uniform", "log_uniform"] = "log_uniform",
+    card_no_contains: bool = True,
+    card_max_place_attempts: int = 10,
 ):
     """
     Generate a synthetic image with cards and their rotated bounding box annotations.
@@ -382,14 +383,14 @@ def generate_synthetic_image(
     pre_transform_card = A.RandomOrder(
         [
             A.RandomBrightnessContrast(
-                brightness_limit=(-0.4, 0.4),
+                brightness_limit=(-0.3, 0.4),
                 contrast_limit=(-0.4, -0.4),
                 p=0.9,
             ),
             A.HueSaturationValue(
                 hue_shift_limit=(-30, 30),
                 sat_shift_limit=(-40, 40),
-                val_shift_limit=(-35, 35),
+                val_shift_limit=(-25, 35),
                 p=0.9,
             ),
         ],
@@ -432,9 +433,16 @@ def generate_synthetic_image(
             card_sample,
             bg,
             bg_existing_polygons=card_polys,
-            min_visible=min_card_visible,
-            min_visible_edge=min_card_visible_edge,
+            min_visible=card_min_visible_ratio,
+            min_visible_edge=card_min_visible_ratio_edges,
             jitter_ratio=card_jitter_ratio,
+            # scaling
+            min_area_ratio=card_min_area_ratio,
+            max_area_ratio=card_max_area_ratio,
+            size_sample_mode=card_size_sample_mode,
+            # collision
+            no_contains=card_no_contains,
+            max_attempts=card_max_place_attempts,
         )
         if M is None:
             continue
@@ -484,9 +492,14 @@ class Gen:
         bg_size_hw: tuple[int, int] | int = 640,
         num_cards_min: int = 1,
         num_cards_max: int = 10,
-        min_card_visible: float = 0.5,
-        min_card_visible_edge: float = None,
-        card_jitter_ratio: float = 0.25,
+        card_min_visible_ratio: float = 0.5,
+        card_min_visible_ratio_edges: Optional[float] = 1.0,
+        card_jitter_ratio: float = 0.3,
+        card_min_area_ratio: float = 0.02,
+        card_max_area_ratio: float = 0.9,
+        card_size_sample_mode: Literal["uniform", "log_uniform"] = "log_uniform",
+        card_no_contains: bool = True,
+        card_max_place_attempts: int = 10,
     ):
         # Initialize datasets (replace with your actual classes)
         self.mtg_ds = SyntheticBgFgMtgImages(img_type="small")
@@ -496,9 +509,14 @@ class Gen:
         self.bg_size_hw = bg_size_hw
         self.num_cards_min = num_cards_min
         self.num_cards_max = num_cards_max
-        self.min_card_visible = min_card_visible
-        self.min_card_visible_edge = min_card_visible_edge
+        self.card_min_visible_ratio = card_min_visible_ratio
+        self.card_min_visible_ratio_edges = card_min_visible_ratio_edges
         self.card_jitter_ratio = card_jitter_ratio
+        self.card_min_area_ratio = card_min_area_ratio
+        self.card_max_area_ratio = card_max_area_ratio
+        self.card_size_sample_mode = card_size_sample_mode
+        self.card_no_contains = card_no_contains
+        self.card_max_place_attempts = card_max_place_attempts
 
     def random(self):
         sample = generate_synthetic_image(
@@ -507,9 +525,14 @@ class Gen:
             bg_size_hw=self.bg_size_hw,
             num_cards_min=self.num_cards_min,
             num_cards_max=self.num_cards_max,
-            min_card_visible=self.min_card_visible,
-            min_card_visible_edge=self.min_card_visible_edge,
+            card_min_visible_ratio=self.card_min_visible_ratio,
+            card_min_visible_ratio_edges=self.card_min_visible_ratio_edges,
             card_jitter_ratio=self.card_jitter_ratio,
+            card_min_area_ratio=self.card_min_area_ratio,
+            card_max_area_ratio=self.card_max_area_ratio,
+            card_size_sample_mode=self.card_size_sample_mode,
+            card_no_contains=self.card_no_contains,
+            card_max_place_attempts=self.card_max_place_attempts,
         )
         return sample
 
@@ -543,7 +566,10 @@ def create_yolo_obb_dataset(
     generator: Gen,
     *,
     output_dir: str,
-    num_images: int = 1000,
+    num_train: int = 20000,
+    num_val: int = 1000,
+    num_test: int = 1000,
+    ext: Literal["png", "jpg"] = "jpg",
 ):
     """
     Generate a YOLO dataset with synthetic images and annotations.
@@ -555,20 +581,26 @@ def create_yolo_obb_dataset(
         max_cards: Maximum number of cards per image.
         bg_size: Tuple of (height, width) for the output images.
     """
-    if os.path.exists(output_dir):
+    output_dir = Path(output_dir)
+
+    if output_dir.exists() and len(list(output_dir.iterdir())) > 0:
         raise FileExistsError(f"not clean... {output_dir}")
 
     # Create output directories
     yaml_file = os.path.join(output_dir, "mtg_obb.yaml")
-    img_dir = init_dir(output_dir, "images")
-    label_dir = init_dir(output_dir, "labels")
+    img_dir = output_dir / "images"  # / "train" or "val" or "test"
+    label_dir = output_dir / "labels"  # / "train" or "val" or "test"
+    img_dir.mkdir(exist_ok=True, parents=True)
+    label_dir.mkdir(exist_ok=True, parents=True)
 
     # generate yaml dataset descriptor
     with open(yaml_file, "w") as fp:
         yaml.safe_dump(
             {
                 "path": ".",
-                "train": img_dir,
+                "train": str(img_dir / "train"),
+                "val": str(img_dir / "val"),
+                "test": str(img_dir / "test"),
                 "names": {
                     0: "card",
                     1: "card_top",
@@ -578,36 +610,58 @@ def create_yolo_obb_dataset(
             fp,
         )
 
-    # Generate dataset
-    for i in tqdm(range(num_images), desc="Generating dataset"):
-        sample = generator.random()
-        img = sample["image"]
-        kps = sample["keypoints"]
-        kps_labels = sample["keypoints_labels"]
+    # Generate train dataset
+    for name, num in [("train", num_train), ("val", num_val), ("test", num_test)]:
+        # make dirs
+        curr_img_dir = img_dir / name
+        curr_label_dir = label_dir / name
+        curr_img_dir.mkdir(exist_ok=True, parents=True)
+        curr_label_dir.mkdir(exist_ok=True, parents=True)
+        # generate data
+        for i in tqdm(range(num), desc=f"Generating {name} Dataset"):
+            save_sample(
+                generator.random(),
+                i=i,
+                label_dir=curr_label_dir,
+                img_dir=curr_img_dir,
+                ext=ext,
+            )
 
-        # checks
-        assert len(kps) == len(kps_labels)
-        assert img.ndim == 3
-        assert img.shape == (640, 640, 3)
 
-        # make obb annotations from keypoints and keypoints_labels
-        # https://docs.ultralytics.com/datasets/obb/
-        annotations = []
-        for j, (pts, label) in enumerate(zip(kps, kps_labels)):
-            pts /= img.shape[:2][::-1]  # points are (w, h), not (h, w) like shape
-            (x0, y0), (x1, y1), (x2, y2), (x3, y3) = pts
-            annotations.append(f"{label} {x0} {y0} {x1} {y1} {x2} {y2} {x3} {y3}")
+def save_sample(
+    sample: Sample,
+    i: int,
+    label_dir: str | Path,
+    img_dir: str | Path,
+    ext: Literal["png", "jpg"] = "jpg",
+):
+    img = sample["image"]
+    kps = sample["keypoints"]
+    kps_labels = sample["keypoints_labels"]
 
-        # Save annotations
-        label_path = os.path.join(label_dir, f"image_{i:04d}.txt")
-        with open(label_path, "w") as f:
-            for ann in annotations:
-                f.write(ann + "\n")
+    # checks
+    assert len(kps) == len(kps_labels)
+    assert img.ndim == 3
+    assert img.shape == (640, 640, 3)
 
-        # Save image
-        # Placeholder: assume converts float32 [0, 1] to uint8 [0, 255]
-        img_path = os.path.join(img_dir, f"image_{i:04d}.png")
-        imwrite(img_path, sample["image"])
+    # make obb annotations from keypoints and keypoints_labels
+    # https://docs.ultralytics.com/datasets/obb/
+    annotations = []
+    for j, (pts, label) in enumerate(zip(kps, kps_labels)):
+        pts /= img.shape[:2][::-1]  # points are (w, h), not (h, w) like shape
+        (x0, y0), (x1, y1), (x2, y2), (x3, y3) = pts
+        annotations.append(f"{label} {x0} {y0} {x1} {y1} {x2} {y2} {x3} {y3}")
+
+    # Save annotations
+    label_path = os.path.join(label_dir, f"image_{i:04d}.txt")
+    with open(label_path, "w") as f:
+        for ann in annotations:
+            f.write(ann + "\n")
+
+    # Save image
+    # Placeholder: assume converts float32 [0, 1] to uint8 [0, 255]
+    img_path = os.path.join(img_dir, f"image_{i:04d}.{ext}")
+    imwrite(img_path, sample["image"])
 
 
 # ========================================================================= #
@@ -616,7 +670,9 @@ def create_yolo_obb_dataset(
 
 
 if __name__ == "__main__":
+    seed_all(42)
+
     gen = Gen()
     # gen.debug_show_loop()
 
-    create_yolo_obb_dataset(gen, output_dir="../yolo_mtg_dataset", num_images=10000)
+    create_yolo_obb_dataset(gen, output_dir="../yolo_mtg_dataset_v2", ext="jpg")
