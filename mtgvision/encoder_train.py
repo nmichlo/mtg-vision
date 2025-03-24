@@ -1,3 +1,10 @@
+"""
+Train an encoder (and decoder because its pretty) in a contrastive learning style
+to embed the same images with different distortions into the same space.
+
+This is effectively facial recognition techniques.
+"""
+
 import argparse
 import sys
 from pathlib import Path

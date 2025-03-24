@@ -1,3 +1,7 @@
+"""
+Embed images into qdrant and query them to validate models are working correctly.
+"""
+
 import dataclasses
 import itertools
 import time

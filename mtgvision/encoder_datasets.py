@@ -1,3 +1,11 @@
+"""
+Datasets for training a denoising auto-encoder or contrastive learning model
+to embed synthetic wraped and distorted versions of magic cards to produce
+embeddings invariant to their distortions.
+
+Using similar techniques to facial recognition.
+"""
+
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 #  MIT License
 #
@@ -428,7 +436,13 @@ class SyntheticBgFgMtgImages:
             yield card
 
     def ran(self) -> np.ndarray:
-        return self._load_card_image(random.choice(self._ds))
+        return self._load_card_image(self.ran_card())
+
+    def ran_path(self) -> str:
+        return str(self.ran_card().download())
+
+    def ran_card(self) -> ScryfallCardFace:
+        return random.choice(self._ds)
 
     def get(self, idx) -> np.ndarray:
         return self[idx]

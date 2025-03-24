@@ -1,3 +1,7 @@
+"""
+Export a trained encoder to coreml or other formats.
+"""
+
 import argparse
 import functools
 from pathlib import Path

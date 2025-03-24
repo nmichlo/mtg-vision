@@ -84,6 +84,7 @@ def imwrite(path: str | PathLike, img: np.ndarray):
     """
     if img.dtype in [np.float16, np.float32, np.float64]:
         img = (img * 255).astype(np.uint8)
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     cv2.imwrite(str(path), img)
 
 
@@ -104,6 +105,7 @@ def imshow(image, window_name="image", scale=1):
     """
     if scale != 1 and scale is not None:
         image = cv2.resize(image, (0, 0), fx=scale, fy=scale)
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     cv2.imshow(window_name, image)
     cv2.moveWindow(window_name, 100, 100)
 
@@ -224,11 +226,37 @@ def rgba_over_rgb(
     images in range [0, 1] and int or uint images in range [0, 255]. Both must
     be the same type and size.
     """
-    alpha = fg_rgba[:, :, 3]
-    fg = cv2.merge(
-        (fg_rgba[:, :, 0] * alpha, fg_rgba[:, :, 1] * alpha, fg_rgba[:, :, 2] * alpha)
+    assert fg_rgba.ndim == 3 and fg_rgba.shape[-1] == 4
+    assert bg_rgb.ndim == 3 and bg_rgb.shape[-1] == 3
+    return rgb_mask_over_rgb(
+        fg_rgba[:, :, :3],
+        fg_rgba[:, :, 3],
+        bg_rgb,
     )
-    alpha = 1 - alpha
+
+
+@ensure_float32
+def rgb_mask_over_rgb(
+    fg_rgb: np.ndarray[np.float32 | np.uint8],
+    fg_mask: np.ndarray[np.float32 | np.uint8],
+    bg_rgb: np.ndarray[np.float32 | np.uint8],
+):
+    """
+    Merge a foreground RGBA image with a background RGB image, supports float
+    images in range [0, 1] and int or uint images in range [0, 255]. Both must
+    be the same type and size.
+    """
+    assert fg_rgb.ndim == 3 and fg_rgb.shape[-1] == 3
+    assert fg_mask.ndim == 2
+    assert bg_rgb.ndim == 3 and bg_rgb.shape[-1] == 3
+    fg = cv2.merge(
+        (
+            fg_rgb[:, :, 0] * fg_mask,
+            fg_rgb[:, :, 1] * fg_mask,
+            fg_rgb[:, :, 2] * fg_mask,
+        )
+    )
+    alpha = 1 - fg_mask
     bg = cv2.merge(
         (bg_rgb[:, :, 0] * alpha, bg_rgb[:, :, 1] * alpha, bg_rgb[:, :, 2] * alpha)
     )
