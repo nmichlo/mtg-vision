@@ -1,12 +1,16 @@
 import itertools
+import time
 import warnings
 from collections import defaultdict
 
 import cv2
 import numpy as np
+from shapely.geometry.point import Point
 from shapely.geometry.polygon import Polygon
 from ultralytics import YOLO
 from norfair import Detection
+
+from mtgvision.encoder_export import CoreMlEncoder, MODEL_PATH
 from mtgvision.util.image import imwait
 
 
@@ -65,41 +69,46 @@ class CardDetections:
             else:
                 card.top, card.bot = None, None
 
-        # for each card, orient it
+        # Orient each card based on the top half
         for card in self.groups[0]:
-            # sort points clockwise
-            points = card.points
-            # points = points[np.argsort(np.arctan2(points[:, 1], points[:, 0]))]
             # orient
-            if card.top and card.bot:
-                points0 = self._orient(points, card.top.points)
-                points1 = self._orient(points, card.bot.points)
-                if points0 is None and points1 is None:
-                    warnings.warn("Could not orient card")
-                elif points0 is None:
-                    points = points1
-                elif points1 is None:
-                    points = points0
-                else:
-                    if np.all(points0 == points1):
-                        points = points0
-                    else:
-                        warnings.warn("Could not orient card, not the same orientation")
-            # save oriented points
-            card.points = points
+            top_points = None
+            if card.top:
+                closest_side_idx = self.find_closest_side(card.points, card.top.points)
+                top_points = np.roll(card.points, -closest_side_idx, axis=0)
+            bot_points = None
+            if card.bot:
+                closest_side_idx = self.find_closest_side(card.points, card.bot.points)
+                bot_points = np.roll(card.points, -closest_side_idx - 2, axis=0)
+            # apply
+            if top_points is None and bot_points is None:
+                warnings.warn("No top or bottom found for card")
+            elif top_points is None and bot_points is not None:
+                warnings.warn("Top not found for card")
+                card.points = bot_points
+            elif top_points is not None and bot_points is None:
+                warnings.warn("Bot not found for card")
+                card.points = top_points
+            else:
+                if np.all(top_points == bot_points):
+                    warnings.warn("Top and bottom do not match for card, using top")
+                card.points = top_points
 
-    def _orient(self, points: np.ndarray, half_pts: np.ndarray):
+    def find_closest_side(self, card_pts: np.ndarray, half_pts: np.ndarray) -> int:
+        """
+        Find the index of the card's side closest to the half's polygon.
+        Returns the starting point index of that side.
+        """
         half_poly = Polygon(half_pts)
-        # get distances from points to center of top
-        top_dists = np.linalg.norm(points - half_poly.centroid.coords[0], axis=-1)
-        # roll points so that the closest and second closest points are the top left and top right
-        closest = np.argsort(top_dists).tolist()
-        idx0, idx1 = sorted(closest[:2])
-        idx0_alt = idx0 + len(points)
-        if abs(idx0 - idx1) != 1 and abs(idx0_alt - idx1) != 1:
-            return None
-        else:
-            return np.roll(points, -idx0, axis=0)
+        # ave distance from each side to the half
+        best_idx = None
+        best_dist = np.inf
+        for i, (p0, p1) in enumerate(zip(card_pts, np.roll(card_pts, -1, axis=0))):
+            dist = (half_poly.distance(Point(p0)) + half_poly.distance(Point(p1))) / 2
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = i
+        return best_idx
 
     def extract_warped_cards(
         self, frame: np.ndarray, out_size_hw: tuple[int, int] = (192, 128)
@@ -113,20 +122,20 @@ class CardDetections:
                     np.asarray(
                         [
                             [0, 0],
-                            [out_size_hw[0], 0],
-                            [out_size_hw[0], out_size_hw[1]],
-                            [0, out_size_hw[1]],
+                            [out_size_hw[1], 0],
+                            [out_size_hw[1], out_size_hw[0]],
+                            [0, out_size_hw[0]],
                         ]
                     ).astype(np.float32),
                 ),
-                out_size_hw,
+                out_size_hw[::-1],
             )
             card_imgs.append((det, card_img))
         return card_imgs
 
     def draw_on(self, frame: np.ndarray):
         for det in self.detections:
-            if det.label != 0:
+            if det.label not in (0, 1):
                 continue
             # draw bounding box
             cv2.polylines(
@@ -136,6 +145,18 @@ class CardDetections:
                 color=self.COLORS[det.label],
                 thickness=1,
             )
+            if det.label not in (0,):
+                continue
+            for i, point in enumerate(det.points.astype(int)):
+                cv2.putText(
+                    frame,
+                    str(i),
+                    tuple(point),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    1,
+                )
 
 
 class CardDetector:
@@ -159,6 +180,7 @@ class CardDetector:
 def main():
     # Init model
     detector = CardDetector()
+    encoder = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
 
     # Initialize webcam
     cap = cv2.VideoCapture(0)
@@ -176,9 +198,12 @@ def main():
             break
 
         # detect & draw
+        t = time.time()
         detections = detector(frame)
         for i, (det, img) in enumerate(detections.extract_warped_cards(frame)):
             cv2.imshow(f"card{i}", img)
+            result = encoder.predict(img.astype(np.float32) / 255)
+
         detections.draw_on(frame)
 
         # Display the frame and wait
