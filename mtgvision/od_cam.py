@@ -1,16 +1,78 @@
+from collections import defaultdict
+
 import cv2
+import numpy as np
+from shapely.geometry.polygon import Polygon
 from ultralytics import YOLO
 from norfair import Detection
-import threading
-import queue
 from mtgvision.util.image import imwait
 
 
-def detection_thread(frame_queue, detection_queue, model):
-    """Run YOLO detection in a separate thread."""
-    while True:
-        frame = frame_queue.get()  # Blocks until a frame is available
-        results = model(frame)  # Run YOLO detection
+def get_best_iou(poly: Polygon, polygons: list[Polygon]) -> tuple[float, int]:
+    best_iou = 0
+    best_poly = None
+    for i, p in enumerate(polygons):
+        iou = poly.intersection(p).area / poly.union(p).area
+        if iou > best_iou:
+            best_iou = iou
+            best_poly = i
+    return best_iou, best_poly
+
+
+class CardDetections:
+    COLORS = [(0, 255, 0), (0, 255, 255), (0, 0, 255)]
+
+    def __init__(self, dets: list[Detection]):
+        self.detections = dets
+
+        # group detections
+        self.groups: dict[int, list[Detection]] = defaultdict(list)
+        for det in dets:
+            self.groups[det.label].append(det)
+
+    def extract_warped_cards(
+        self, frame: np.ndarray, out_size_hw: tuple[int, int] = (192, 128)
+    ) -> list[tuple[Detection, np.ndarray]]:
+        card_imgs = []
+        for det in self.groups[0]:
+            card_img = cv2.warpPerspective(
+                frame,
+                cv2.getPerspectiveTransform(
+                    det.points.astype(np.float32),
+                    np.asarray(
+                        [
+                            [0, 0],
+                            [out_size_hw[0], 0],
+                            [out_size_hw[0], out_size_hw[1]],
+                            [0, out_size_hw[1]],
+                        ]
+                    ).astype(np.float32),
+                ),
+                out_size_hw,
+            )
+            card_imgs.append((det, card_img))
+        return card_imgs
+
+    def draw_on(self, frame: np.ndarray):
+        for det in self.detections:
+            if det.label != 0:
+                continue
+            # draw bounding box
+            cv2.polylines(
+                frame,
+                [det.points.astype(int)],
+                isClosed=True,
+                color=self.COLORS[det.label],
+                thickness=1,
+            )
+
+
+class CardDetector:
+    def __init__(self):
+        self.model = YOLO("/Users/nathanmichlo/Downloads/best.pt")
+
+    def __call__(self, frame: np.ndarray) -> CardDetections:
+        results = self.model(frame)  # Run YOLO detection
         detections = []
         if results:
             for box in results[0].obb:
@@ -20,29 +82,12 @@ def detection_thread(frame_queue, detection_queue, model):
                     label = int(cls.cpu().numpy())
                     det = Detection(points=points, label=label)
                     detections.append(det)
-        try:
-            detection_queue.put_nowait(detections)
-        except queue.Full:
-            pass  # Skip if queue is full, keeping only the latest detections
+        return CardDetections(detections)
 
 
 def main():
-    # Load YOLO model
-    model = YOLO("/Users/nathanmichlo/Downloads/best.pt")
-
-    # Initialize norfair tracker with IoU distance
-    # tracker = Tracker(
-    #     distance_function=norfair.distances.mean_euclidean,
-    #     distance_threshold=500,
-    # )
-
-    # Start detection thread
-    # Queues for thread communication
-    frame_queue = queue.Queue(maxsize=1)
-    detection_queue = queue.Queue(maxsize=1)
-    threading.Thread(
-        target=detection_thread, args=(frame_queue, detection_queue, model), daemon=True
-    ).start()
+    # Init model
+    detector = CardDetector()
 
     # Initialize webcam
     cap = cv2.VideoCapture(0)
@@ -52,51 +97,22 @@ def main():
         print("Error: Could not open webcam.")
         return
 
+    # loop!
     while True:
         ret, frame = cap.read()
         if not ret:
             print("Error: Could not read frame.")
             break
 
-        # Send the latest frame to the detection thread
-        try:
-            frame_queue.put_nowait(frame)
-        except queue.Full:
-            pass  # Skip if queue is full
+        # detect & draw
+        detections = detector(frame)
+        for i, (det, img) in enumerate(detections.extract_warped_cards(frame)):
+            cv2.imshow(f"card{i}", img)
+        detections.draw_on(frame)
 
-        # Get the latest detections if available
-        detections: list[Detection] = []
-        try:
-            detections = detection_queue.get_nowait()
-            # tracked_objects = tracker.update(detections=detections)
-        except queue.Empty:
-            # tracked_objects = tracker.update()  # Predict without new detections
-            pass
-
-        # Draw tracked objects on the frame
-        for obj in detections:
-            points = obj.points
-            # points = obj.estimate.astype(int)
-            # Draw bounding box
-            cv2.polylines(
-                frame,
-                [points.astype(int)],
-                isClosed=True,
-                color=[(0, 255, 0), (0, 255, 255), (0, 0, 255)][obj.label],
-                thickness=2,
-            )
-            # Draw label and track ID if available
-            # if obj.last_detection:
-            #     label = str(obj.last_detection.label)
-            #     cv2.putText(frame, label, (points[0, 0], points[0, 1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            #     track_id = f"ID: {obj.id}"
-            #     cv2.putText(frame, track_id, (points[0, 0], points[0, 1] - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-        # Display the frame
+        # Display the frame and wait
         cv2.imshow("frame", frame)
-
-        # Check for exit condition using imwait
-        if imwait(delay=0, window_name="frame"):
+        if imwait(delay=1, window_name="frame"):
             break
 
     # Cleanup

@@ -124,7 +124,7 @@ def imshow_loop(
 
 
 def imwait(delay: int = 100, window_name: str = None):
-    k = cv2.waitKey(100)
+    k = cv2.waitKey(delay)
     if (k == 27) or (
         window_name and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1
     ):
