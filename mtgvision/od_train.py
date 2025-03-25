@@ -11,7 +11,7 @@ from ultralytics import settings
 def main():
     settings.update({"wandb": True})
 
-    data_dir = Path(mtgvision.__file__).parent.parent / "yolo_mtg_dataset"
+    data_dir = Path(mtgvision.__file__).parent.parent / "yolo_mtg_dataset_v2"
     img_dir = data_dir / "images"
     yaml_file = data_dir / "temp_mtg_obb.yaml"
     model_dir = data_dir / "models"
@@ -22,8 +22,8 @@ def main():
     with open(yaml_file, "w") as fp:
         data = {
             "path": ".",
-            "train": str(img_dir),
-            "val": str(img_dir),
+            "train": str(img_dir / "train"),
+            "val": str(img_dir / "val"),
             "names": {
                 0: "card",
                 1: "card_top",
@@ -37,7 +37,7 @@ def main():
     model = YOLO(f"{model_name}.yaml")
 
     # Train the model on the DOTAv1 dataset
-    results = model.train(data=yaml_file, epochs=100, imgsz=640, val=False)
+    results = model.train(data=yaml_file, epochs=200, imgsz=640, val=False)
     print(results)
 
     # save the model

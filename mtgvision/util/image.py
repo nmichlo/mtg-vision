@@ -110,17 +110,27 @@ def imshow(image, window_name="image", scale=1):
     cv2.moveWindow(window_name, 100, 100)
 
 
-def imshow_loop(image, window_name="image", scale=1):
+def imshow_loop(
+    image: np.ndarray, window_name: str = "image", scale: float = 1, delay: int = 100
+):
     """
     Display an image in a window, the window will stay open until the user
     presses the escape key or closes the window.
     """
     imshow(image, window_name, scale)
     while True:
-        k = cv2.waitKey(100)
-        if (k == 27) or (cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1):
-            cv2.destroyAllWindows()
+        if imwait(delay=delay, window_name=window_name):
             break
+
+
+def imwait(delay: int = 100, window_name: str = None):
+    k = cv2.waitKey(100)
+    if (k == 27) or (
+        window_name and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1
+    ):
+        cv2.destroyAllWindows()
+        return True
+    return False
 
 
 @ensure_float32
