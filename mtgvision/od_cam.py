@@ -1,3 +1,5 @@
+import itertools
+import warnings
 from collections import defaultdict
 
 import cv2
@@ -29,6 +31,75 @@ class CardDetections:
         self.groups: dict[int, list[Detection]] = defaultdict(list)
         for det in dets:
             self.groups[det.label].append(det)
+
+        # for each card
+        for card in self.groups[0]:
+            poly = Polygon(card.points)
+            # get overlapping tops and bots
+            tops = [
+                d
+                for d in self.groups[1]
+                if not getattr(d, "used", False) and Polygon(d.points).intersects(poly)
+            ]
+            bots = [
+                d
+                for d in self.groups[2]
+                if not getattr(d, "used", False) and Polygon(d.points).intersects(poly)
+            ]
+            # get the best pair of top and bot that overlaps with the card
+            best_iou, best_pair = 0, None
+            for top, bot in itertools.product(tops, bots):
+                top_poly = Polygon(top.points)
+                bot_poly = Polygon(bot.points)
+                merged_poly = top_poly.union(bot_poly)
+                iou = poly.intersection(merged_poly).area / poly.union(merged_poly).area
+                if iou > best_iou:
+                    best_iou = iou
+                    best_pair = (top, bot)
+            # store the best pair
+            if best_pair:
+                card.top, card.bot = best_pair
+                # mark used
+                card.top.used = True
+                card.bot.used = True
+            else:
+                card.top, card.bot = None, None
+
+        # for each card, orient it
+        for card in self.groups[0]:
+            # sort points clockwise
+            points = card.points
+            # points = points[np.argsort(np.arctan2(points[:, 1], points[:, 0]))]
+            # orient
+            if card.top and card.bot:
+                points0 = self._orient(points, card.top.points)
+                points1 = self._orient(points, card.bot.points)
+                if points0 is None and points1 is None:
+                    warnings.warn("Could not orient card")
+                elif points0 is None:
+                    points = points1
+                elif points1 is None:
+                    points = points0
+                else:
+                    if np.all(points0 == points1):
+                        points = points0
+                    else:
+                        warnings.warn("Could not orient card, not the same orientation")
+            # save oriented points
+            card.points = points
+
+    def _orient(self, points: np.ndarray, half_pts: np.ndarray):
+        half_poly = Polygon(half_pts)
+        # get distances from points to center of top
+        top_dists = np.linalg.norm(points - half_poly.centroid.coords[0], axis=-1)
+        # roll points so that the closest and second closest points are the top left and top right
+        closest = np.argsort(top_dists).tolist()
+        idx0, idx1 = sorted(closest[:2])
+        idx0_alt = idx0 + len(points)
+        if abs(idx0 - idx1) != 1 and abs(idx0_alt - idx1) != 1:
+            return None
+        else:
+            return np.roll(points, -idx0, axis=0)
 
     def extract_warped_cards(
         self, frame: np.ndarray, out_size_hw: tuple[int, int] = (192, 128)
