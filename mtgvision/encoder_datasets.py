@@ -347,20 +347,30 @@ class IlsvrcImages:
     the MTG Dataset.
     """
 
-    ILSVRC_SET_TYPES = ["val", "test", "train"]
+    def _get_download_message(self, root: Path, subdir: Path) -> str:
+        return (
+            f"MAKE SURE YOU HAVE DOWNLOADED THE ILSVRC 2010 TEST DATASET TO: {root}\n"
+            f" - The images must all be located within: {subdir}\n"
+            f" - For example: {subdir / 'ILSVRC2010_val_00000001.JPEG'}\n"
+            f"The image versions of the ILSVRC Datasets are for educational purposes only, and cannot be redistributed.\n"
+            f"Please visit: www.image-net.org to obtain the download links.\n"
+        )
 
-    def __init__(self):
-        root = DATASETS_ROOT / "ilsvrc" / "2010"
-        val = root / "val"
-
+    def __init__(
+        self,
+        root: str | Path = DATASETS_ROOT / "ilsvrc" / "2010",
+        subdir: str | Path = "val",
+    ):
+        root = Path(root)
+        if subdir is not None:
+            subdir = Path(subdir)
+            if subdir.is_absolute():
+                raise ValueError("subdir must be a relative path")
+            subdir = root / subdir
+        else:
+            subdir = root
         if not root.is_dir():
-            print(
-                f"MAKE SURE YOU HAVE DOWNLOADED THE ILSVRC 2010 TEST DATASET TO: {root}\n"
-                f" - The images must all be located within: {val}\n"
-                f" - For example: {val / 'ILSVRC2010_val_00000001.JPEG'}\n"
-                f"The image versions of the ILSVRC Datasets are for educational purposes only, and cannot be redistributed.\n"
-                f"Please visit: www.image-net.org to obtain the download links.\n",
-            )
+            print(self._get_download_message(root, subdir))
         self._paths: "list[str]" = sorted(ufls.get_image_paths(root, prefixed=True))
 
     def _load_image(self, path):
@@ -384,6 +394,23 @@ class IlsvrcImages:
 
     def get(self, idx) -> np.ndarray:
         return self[idx]
+
+
+class CocoValImages(IlsvrcImages):
+    def _get_download_message(self, root: Path, subdir: Path) -> str:
+        return (
+            f"MAKE SURE YOU HAVE DOWNLOADED THE COCO 2017 VAL DATASET TO: {root}\n"
+            f" - The images must all be located within: {subdir}\n"
+            f" - For example: {subdir / '000000000139.jpg'}\n"
+            f"Please visit: `cocodataset.org` to obtain the download links.\n"
+        )
+
+    def __init__(
+        self,
+        root: str | Path = DATASETS_ROOT / "coco" / "2017",
+        subdir: str | Path = "val2017",
+    ):
+        super().__init__(root=root, subdir=subdir)
 
 
 # ========================================================================= #

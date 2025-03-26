@@ -1,7 +1,7 @@
 import itertools
-import time
 import warnings
 from collections import defaultdict
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -10,19 +10,7 @@ from shapely.geometry.polygon import Polygon
 from ultralytics import YOLO
 from norfair import Detection
 
-from mtgvision.encoder_export import CoreMlEncoder, MODEL_PATH
 from mtgvision.util.image import imwait
-
-
-def get_best_iou(poly: Polygon, polygons: list[Polygon]) -> tuple[float, int]:
-    best_iou = 0
-    best_poly = None
-    for i, p in enumerate(polygons):
-        iou = poly.intersection(p).area / poly.union(p).area
-        if iou > best_iou:
-            best_iou = iou
-            best_poly = i
-    return best_iou, best_poly
 
 
 class CardDetections:
@@ -74,11 +62,11 @@ class CardDetections:
             # orient
             top_points = None
             if card.top:
-                closest_side_idx = self.find_closest_side(card.points, card.top.points)
+                closest_side_idx = self._find_closest_side(card.points, card.top.points)
                 top_points = np.roll(card.points, -closest_side_idx, axis=0)
             bot_points = None
             if card.bot:
-                closest_side_idx = self.find_closest_side(card.points, card.bot.points)
+                closest_side_idx = self._find_closest_side(card.points, card.bot.points)
                 bot_points = np.roll(card.points, -closest_side_idx - 2, axis=0)
             # apply
             if top_points is None and bot_points is None:
@@ -94,7 +82,8 @@ class CardDetections:
                     warnings.warn("Top and bottom do not match for card, using top")
                 card.points = top_points
 
-    def find_closest_side(self, card_pts: np.ndarray, half_pts: np.ndarray) -> int:
+    @classmethod
+    def _find_closest_side(cls, card_pts: np.ndarray, half_pts: np.ndarray) -> int:
         """
         Find the index of the card's side closest to the half's polygon.
         Returns the starting point index of that side.
@@ -111,7 +100,9 @@ class CardDetections:
         return best_idx
 
     def extract_warped_cards(
-        self, frame: np.ndarray, out_size_hw: tuple[int, int] = (192, 128)
+        self,
+        frame: np.ndarray,
+        out_size_hw: tuple[int, int] = (192, 128),
     ) -> list[tuple[Detection, np.ndarray]]:
         card_imgs = []
         for det in self.groups[0]:
@@ -160,17 +151,17 @@ class CardDetections:
 
 
 class CardDetector:
-    def __init__(self):
-        self.model = YOLO("/Users/nathanmichlo/Downloads/best.pt")
+    def __init__(self, model_path: str | Path):
+        self.yolo = YOLO(model_path)
 
     def __call__(self, frame: np.ndarray) -> CardDetections:
-        results = self.model(frame)  # Run YOLO detection
+        results = self.yolo(frame)  # Run YOLO detection
         detections = []
         if results:
             for box in results[0].obb:
                 for xyxyxyxy, cls, conf in zip(box.xyxyxyxy, box.cls, box.conf):
                     points = xyxyxyxy.cpu().numpy()
-                    scores = float(conf.cpu().numpy())
+                    _scores = float(conf.cpu().numpy())
                     label = int(cls.cpu().numpy())
                     det = Detection(points=points, label=label)
                     detections.append(det)
@@ -179,8 +170,19 @@ class CardDetector:
 
 def main():
     # Init model
-    detector = CardDetector()
-    encoder = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
+    detector_tuneB = CardDetector(
+        "/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/yolo_mtg_dataset_v2_tune_B/models/861evuqv_best.pt"
+    )
+    detector_tune = CardDetector(
+        "/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/yolo_mtg_dataset_v2_tune/models/um2w5i7m_best.pt"
+    )
+    detector = CardDetector(
+        "/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/yolo_mtg_dataset_v2/models/hnqxzc96_best.pt"
+    )
+    detector_old = CardDetector(
+        "/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/yolo_mtg_dataset/models/as9zo50r_best.pt"
+    )
+    # encoder = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
 
     # Initialize webcam
     cap = cv2.VideoCapture(0)
@@ -198,13 +200,25 @@ def main():
             break
 
         # detect & draw
-        t = time.time()
-        detections = detector(frame)
-        for i, (det, img) in enumerate(detections.extract_warped_cards(frame)):
-            cv2.imshow(f"card{i}", img)
-            result = encoder.predict(img.astype(np.float32) / 255)
+        # t = time.time()
 
-        detections.draw_on(frame)
+        detectionss = [
+            detector_tuneB(frame),
+            detector_tune(frame),
+            detector(frame),
+            detector_old(frame),
+        ]
+
+        # detections_old = detector_old(frame)
+        # for i, (det, img) in enumerate(detections.extract_warped_cards(frame)):
+        #     cv2.imshow(f"card{i}", img)
+        #     result = encoder.predict(img.astype(np.float32) / 255)
+
+        for detections, c in zip(
+            detectionss, [(0, 0, 255), (0, 128, 255), (0, 255, 255), (255, 0, 0)]
+        ):
+            detections.COLORS = [c, c, c]
+            detections.draw_on(frame)
 
         # Display the frame and wait
         cv2.imshow("frame", frame)
