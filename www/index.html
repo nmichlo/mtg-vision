@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Card Detection in Browser</title>
+    <style>
+        #video, #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 640px;
+            height: 480px;
+        }
+        #overlay {
+            pointer-events: none; /* Prevents SVG from intercepting mouse events */
+        }
+    </style>
+</head>
+<body>
+    <video id="video" width="640" height="480" autoplay></video>
+    <svg id="overlay" width="640" height="480"></svg>
+    <select id="select"></select>
+    <div id="status">Loading...</div>
+    <!-- SCRIPTS -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<!--    <script src="https://cdn.jsdelivr.net/npm/ndarray@1.0.19/ndarray.min.js"></script>-->
+<!--    <script src="https://cdn.jsdelivr.net/npm/ndarray-ops@1.2.2/ndarray-ops.min.js"></script>-->
+<!--    <script src="https://cdn.jsdelivr.net/npm/ndarray-transpose@0.1.0/index.min.js"></script>-->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <script src="app.js"></script>
+    <script>
+        main();
+    </script>
+</body>
+</html>

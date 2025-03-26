@@ -123,12 +123,19 @@ if __name__ == "__main__":
     #     "--epochs", "200",
     # ])
 
+    # yolo_mtg_dataset_v3
+    # sys.argv.extend([
+    #     "--data", "data/yolo_mtg_dataset_v3",
+    #     "--weights", "data/yolo_mtg_dataset/models/as9zo50r_best.pt",
+    #     "--epochs", "100",
+    # ])
+
     sys.argv.extend(
         [
             "--data",
             "data/yolo_mtg_dataset_v3",
-            "--weights",
-            "data/yolo_mtg_dataset/models/as9zo50r_best.pt",
+            "--size",
+            "s",
             "--epochs",
             "100",
         ]

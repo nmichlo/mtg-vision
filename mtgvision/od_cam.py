@@ -2,14 +2,17 @@ import itertools
 import warnings
 from collections import defaultdict
 from pathlib import Path
+from typing import Sequence
 
 import cv2
 import numpy as np
+from shapely.geometry.linestring import LineString
 from shapely.geometry.point import Point
 from shapely.geometry.polygon import Polygon
 from ultralytics import YOLO
 from norfair import Detection
 
+from mtgvision.encoder_export import CoreMlEncoder, MODEL_PATH
 from mtgvision.util.image import imwait
 
 
@@ -124,30 +127,69 @@ class CardDetections:
             card_imgs.append((det, card_img))
         return card_imgs
 
-    def draw_on(self, frame: np.ndarray):
-        for det in self.detections:
-            if det.label not in (0, 1):
-                continue
-            # draw bounding box
-            cv2.polylines(
+    def draw_all_on(
+        self,
+        frame: np.ndarray,
+        idx: int = None,
+        classes: Sequence = (0,),
+        threshold: float = 0.7,
+    ):
+        for det in self.get_detections(classes=classes, threshold=threshold):
+            self.draw_on(frame, det, color=self.COLORS[det.label], idx=idx)
+
+    @classmethod
+    def draw_on(
+        cls,
+        frame: np.ndarray,
+        det,
+        idx: int = None,
+        color: tuple[int, int, int] = (255, 255, 255),
+    ):
+        # draw bounding box
+        s = np.mean(det.scores)
+        c = ((1 - s) * 0 + s * np.asarray(color)).astype(int).tolist()
+        cv2.polylines(
+            frame,
+            [det.points.astype(int)],
+            isClosed=True,
+            color=c,
+            thickness=1,
+        )
+        # draw card number
+        if idx is not None:
+            center = det.points.mean(axis=0).astype(int)
+            center[1] += 10 * idx
+            cv2.putText(
                 frame,
-                [det.points.astype(int)],
-                isClosed=True,
-                color=self.COLORS[det.label],
-                thickness=1,
+                f"{idx}: {s:.2f}",
+                tuple(center),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.25,
+                c,
+                1,
             )
-            if det.label not in (0,):
-                continue
-            for i, point in enumerate(det.points.astype(int)):
-                cv2.putText(
-                    frame,
-                    str(i),
-                    tuple(point),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 255, 255),
-                    1,
-                )
+        # get line pointing from top to bottom and draw the arrow
+        center_edge_1 = det.points[:2].mean(axis=0).astype(int)
+        center_edge_2 = det.points[2:4].mean(axis=0).astype(int)
+        line = LineString([center_edge_1, center_edge_2])
+        point_25: Point = line.interpolate(0.25, normalized=True)
+        point_75: Point = line.interpolate(0.75, normalized=True)
+        cv2.arrowedLine(
+            frame,
+            (int(point_75.x), int(point_75.y)),
+            (int(point_25.x), int(point_25.y)),
+            color=c,
+            thickness=1,
+        )
+
+    def get_detections(
+        self, threshold: float = 0.7, classes: Sequence = (0,)
+    ) -> list[Detection]:
+        return [
+            det
+            for det in self.detections
+            if det.label in classes and np.mean(det.scores) >= threshold
+        ]
 
 
 class CardDetector:
@@ -163,26 +205,32 @@ class CardDetector:
                     points = xyxyxyxy.cpu().numpy()
                     _scores = float(conf.cpu().numpy())
                     label = int(cls.cpu().numpy())
-                    det = Detection(points=points, label=label)
+                    det = Detection(
+                        points=points,
+                        label=label,
+                        scores=np.full_like(points[:, 0], _scores),
+                    )
                     detections.append(det)
         return CardDetections(detections)
 
 
 def main():
     # Init model
-    detector_tuneB = CardDetector(
-        "/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/yolo_mtg_dataset_v2_tune_B/models/861evuqv_best.pt"
-    )
-    detector_tune = CardDetector(
-        "/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/yolo_mtg_dataset_v2_tune/models/um2w5i7m_best.pt"
-    )
-    detector = CardDetector(
-        "/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/yolo_mtg_dataset_v2/models/hnqxzc96_best.pt"
-    )
-    detector_old = CardDetector(
-        "/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/yolo_mtg_dataset/models/as9zo50r_best.pt"
-    )
-    # encoder = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
+
+    root = Path("/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/data")
+
+    # This one is quite good, seems more robust to objects in the world that look similar to cards, like bright box or dark box.
+    # probably need to add more augments / random erasing to fix this.
+    detector_tune3 = CardDetector(root / "yolo_mtg_dataset_v3/models/1ipho2mn_best.pt")
+    # These models are not idea, they don't really handle warping that well, and they
+    # produce a lot of false positives. V3 tries to improve this slightly, but doesn't
+    # always work
+    # detector_tuneB = CardDetector(root / "yolo_mtg_dataset_v2_tune_B/models/861evuqv_best.pt")
+    # detector_tune = CardDetector(root / "yolo_mtg_dataset_v2_tune/models/um2w5i7m_best.pt")
+    # detector = CardDetector(root / "yolo_mtg_dataset_v2/models/hnqxzc96_best.pt")
+    # detector_old = CardDetector(root / "yolo_mtg_dataset/models/as9zo50r_best.pt")
+
+    encoder = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
 
     # Initialize webcam
     cap = cv2.VideoCapture(0)
@@ -199,26 +247,12 @@ def main():
             print("Error: Could not read frame.")
             break
 
-        # detect & draw
-        # t = time.time()
-
         detectionss = [
-            detector_tuneB(frame),
-            detector_tune(frame),
-            detector(frame),
-            detector_old(frame),
+            (detector_tune3(frame), (0, 0, 255)),
         ]
-
-        # detections_old = detector_old(frame)
-        # for i, (det, img) in enumerate(detections.extract_warped_cards(frame)):
-        #     cv2.imshow(f"card{i}", img)
-        #     result = encoder.predict(img.astype(np.float32) / 255)
-
-        for detections, c in zip(
-            detectionss, [(0, 0, 255), (0, 128, 255), (0, 255, 255), (255, 0, 0)]
-        ):
+        for i, (detections, c) in enumerate(detectionss):
             detections.COLORS = [c, c, c]
-            detections.draw_on(frame)
+            detections.draw_all_on(frame, i)
 
         # Display the frame and wait
         cv2.imshow("frame", frame)
