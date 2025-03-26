@@ -2,6 +2,7 @@ import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
@@ -15,6 +16,7 @@ def _main(
     weights: str | Path = None,
     size: str = "n",
     epochs: int = 100,
+    kind: Literal["obb", "seg"] = "obb",
 ):
     settings.update({"wandb": True})
 
@@ -39,7 +41,7 @@ def _main(
         data = {
             "path": ".",
             "train": str(img_dir / "train"),
-            "val": str(img_dir / "val"),
+            "val": str(img_dir / "train"),  # str(img_dir / "val"),
             "names": {
                 0: "card",
                 1: "card_top",
@@ -49,7 +51,7 @@ def _main(
         yaml.safe_dump(data, fp)
 
     # Create the model & load weights if needed
-    model_name = f"yolo11{size}-obb"
+    model_name = f"yolo11{size}-{kind}"
     model = YOLO(f"{model_name}.yaml")
     if weights is not None:
         weights = Path(weights)
@@ -92,6 +94,12 @@ def cli():
         default=100,
         help="Number of epochs to train the model.",
     )
+    parser.add_argument(
+        "--kind",
+        type=str,
+        default="obb",
+        help="model kind: obb, seg",
+    )
     args = parser.parse_args()
 
     _main(
@@ -99,6 +107,7 @@ def cli():
         weights=args.weights,
         size=args.size,
         epochs=args.epochs,
+        kind=args.kind,
     )
 
 
@@ -133,12 +142,13 @@ if __name__ == "__main__":
     sys.argv.extend(
         [
             "--data",
-            "data/yolo_mtg_dataset_v3",
+            "data/yolo_mtg_dataset_seg",
             "--size",
-            "s",
+            "n",
             "--epochs",
             "100",
+            "--kind",
+            "seg",
         ]
     )
-
     cli()

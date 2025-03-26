@@ -1,6 +1,7 @@
 import functools
 import math
 import os
+import warnings
 from pathlib import Path
 from typing import Literal, Optional, TypedDict
 
@@ -219,7 +220,7 @@ def make_card_with_mask(
     keypoint_margin_ratio: float = 0.03,
     keypoint_size_ratio: float = 0.5,
     corner_radius_ratio: float = 0.046,
-    kind: Literal["obb", "segment"] = "obb",
+    kind: Literal["obb", "seg"] = "obb",
 ) -> Sample:
     """
     Generate a transformed card image with its mask and transformed keypoints.
@@ -253,7 +254,7 @@ def make_card_with_mask(
                 _box(0, (1 - r) * h, w, h, margin=m, mtr=0.5),  # bottom
             ]
         )
-    elif kind == "segment":
+    elif kind == "seg":
         # make polygon with cutout from the bottom so we can figure out orientation
         card_box = _box(0, 0, w, h)
         bottom_indent = _box(w * 0.4, h * 0.5, w * 0.6, h * 1.1)
@@ -529,7 +530,7 @@ def generate_synthetic_image(
     card_size_sample_mode: Literal["uniform", "log_uniform"] = "log_uniform",
     card_no_contains: bool = True,
     card_max_place_attempts: int = 10,
-    kind: Literal["obb", "segment"] = "obb",
+    kind: Literal["obb", "seg"] = "obb",
 ):
     """
     Generate a synthetic image with cards and their rotated bounding box annotations.
@@ -632,7 +633,7 @@ class Gen:
         # 50000 vs 5000
         ilsvrc_vs_coco_sample_weights: tuple[float, float] | None = (1.0, 1.0),
         # segment
-        kind: Literal["obb", "segment"] = "obb",
+        kind: Literal["obb", "seg"] = "obb",
     ):
         # Initialize datasets (replace with your actual classes)
         self.mtg_ds = SyntheticBgFgMtgImages(img_type="small")
@@ -809,6 +810,10 @@ def save_sample(
     annotations = []
     for j, (pts, label) in enumerate(zip(kps, kps_labels)):
         pts /= img.shape[:2][::-1]  # points are (w, h), not (h, w) like shape
+        if np.any(pts < 0) or np.any(pts > 1):
+            warnings.warn(
+                f"points for image {i} are out of bounds, yolo will consider these invalid... other libs might not. Set `card_min_visible_ratio_edges=0` and use mosaic/translation during training instead."
+            )
         annotations.append(f"{label} {' '.join(map(str, pts.flatten()))}")
 
     # Save annotations
@@ -852,11 +857,11 @@ if __name__ == "__main__":
     seed_all(42)
     gen = Gen(
         card_min_visible_ratio=0.5,
-        card_min_visible_ratio_edges=0.75,
+        card_min_visible_ratio_edges=0.0,
         card_jitter_ratio=0.7,
         ratio_bg=0.1,
-        kind="segment",
+        kind="seg",
     )
     create_yolo_obb_dataset(
-        gen, output_dir="../data/yolo_mtg_dataset_segment", num_train=10000, ext="jpg"
+        gen, output_dir="../data/yolo_mtg_dataset_seg", num_train=10000, ext="jpg"
     )
