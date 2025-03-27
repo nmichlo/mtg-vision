@@ -52,8 +52,9 @@ function processOutput(outputTensor) {
     // h: Height of the bounding box (normalized).
     // theta: Rotation angle (in radians, representing the orientation of the box).
     // confidence: Objectness score (indicating the likelihood of an object being present). 7+. class_scores: One score per class (e.g., if there are nc classes, there will be nc additional values).
+    // classId
     for (let i = 0; i < numBoxes; i++) {
-        const offset = i * 6;
+        const offset = i * 7;
         const cx = data[offset];
         const cy = data[offset + 1];
         const w = data[offset + 2];
@@ -66,91 +67,6 @@ function processOutput(outputTensor) {
         }
     }
     return detections;
-}
-
-// Process the ONNX model output
-function processOutput(outputTensor) {
-    const data = outputTensor.data;
-    const detections = [];
-    const numBoxes = outputTensor.dims[1];
-    for (let i = 0; i < numBoxes; i++) {
-        const offset = i * 7;
-        const cx = data[offset];
-        const cy = data[offset + 1];
-        const w = data[offset + 2];
-        const h = data[offset + 3];
-        const theta = data[offset + 4];
-        const confidence = data[offset + 5]; // Objectness score
-        const classScore = data[offset + 6]; // Class score for single class
-        const finalConfidence = confidence * classScore;
-        if (finalConfidence > 0.5) {
-            detections.push({ cx, cy, w, h, theta, confidence: finalConfidence, classId: 0 });
-        }
-    }
-    return detections;
-}
-
-// NMS Helper Functions
-function getPolygon(det) {
-    const cx = det.cx;
-    const cy = det.cy;
-    const w = det.w;
-    const h = det.h;
-    const theta = det.theta;
-    const cosTheta = Math.cos(theta);
-    const sinTheta = Math.sin(theta);
-    const dx = w / 2;
-    const dy = h / 2;
-    const points = [
-        [-dx, -dy],
-        [dx, -dy],
-        [dx, dy],
-        [-dx, dy]
-    ];
-    const rotatedPoints = points.map(([x, y]) => [
-        cx + x * cosTheta - y * sinTheta,
-        cy + x * sinTheta + y * cosTheta
-    ]);
-    rotatedPoints.push(rotatedPoints[0]); // Close the polygon
-    return [rotatedPoints];
-}
-
-function computeArea(polygon) {
-    let area = 0;
-    const n = polygon.length;
-    for (let i = 0; i < n; i++) {
-        const [x1, y1] = polygon[i];
-        const [x2, y2] = polygon[(i + 1) % n];
-        area += x1 * y2 - x2 * y1;
-    }
-    return Math.abs(area) / 2;
-}
-
-function computeIoU(det1, det2) {
-    const poly1 = getPolygon(det1);
-    const poly2 = getPolygon(det2);
-    const intersection = martinez.intersection(poly1, poly2);
-    let interArea = 0;
-    if (intersection) {
-        intersection.forEach(poly => {
-            interArea += computeArea(poly[0]);
-        });
-    }
-    const area1 = det1.w * det1.h;
-    const area2 = det2.w * det2.h;
-    const unionArea = area1 + area2 - interArea;
-    return interArea / unionArea;
-}
-
-function applyNMS(detections, iouThreshold = 0.5) {
-    detections.sort((a, b) => b.confidence - a.confidence);
-    const selected = [];
-    while (detections.length > 0) {
-        const best = detections.shift();
-        selected.push(best);
-        detections = detections.filter(det => computeIoU(best, det) < iouThreshold);
-    }
-    return selected;
 }
 
 function fillArray(data, imageData) {
@@ -190,12 +106,11 @@ async function detect(session, video) {
 
     // Run inference
     const outputMap = await session.run({ images: inputTensor });
-    const outputTensor = outputMap.output0;  // outputMap.output0.dims == [1, 300, 7]
+    const outputTensor = outputMap.output0;
 
     // Process detections and apply NMS
     const detections = processOutput(outputTensor);
 
-    // const filteredDetections = applyNMS(detections);
     console.log(detections)
     return detections;
 }
