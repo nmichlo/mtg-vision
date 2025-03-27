@@ -17,6 +17,7 @@ def _main(
     size: str = "n",
     epochs: int = 100,
     kind: Literal["obb", "seg"] = "obb",
+    arch: Literal["11", "12"] = "11",
 ):
     settings.update({"wandb": True})
 
@@ -51,7 +52,7 @@ def _main(
         yaml.safe_dump(data, fp)
 
     # Create the model & load weights if needed
-    model_name = f"yolo11{size}-{kind}"
+    model_name = f"yolo{arch}{size}-{kind}"
     model = YOLO(f"{model_name}.yaml")
     if weights is not None:
         weights = Path(weights)
@@ -100,6 +101,12 @@ def cli():
         default="obb",
         help="model kind: obb, seg",
     )
+    parser.add_argument(
+        "--arch",
+        type=str,
+        default="11",
+        help="model arch: 11, 12, etc",
+    )
     args = parser.parse_args()
 
     _main(
@@ -108,47 +115,39 @@ def cli():
         size=args.size,
         epochs=args.epochs,
         kind=args.kind,
+        arch=args.arch,
     )
 
 
 if __name__ == "__main__":
     # yolo_mtg_dataset_v2
-    # | sys.argv.extend([
-    # |     "--data", "data/yolo_mtg_dataset_v2",
-    # |     "--epochs", "200",
-    # | ])
+    # | sys.argv.extend(["--data", "data/yolo_mtg_dataset_v2", "--epochs", "200"])
 
     # yolo_mtg_dataset_v2_tune
-    # sys.argv.extend([
-    #     "--data", "data/yolo_mtg_dataset_v2_tune",
-    #     "--weights", "data/yolo_mtg_dataset_v2/models/hnqxzc96_best.pt",
-    #     "--epochs", "150",
-    # ])
+    # sys.argv.extend(["--data", "data/yolo_mtg_dataset_v2_tune", "--weights", "data/yolo_mtg_dataset_v2/models/hnqxzc96_best.pt", "--epochs", "150"])
 
     # yolo_mtg_dataset_v2_tune_B
-    # sys.argv.extend([
-    #     "--data", "data/yolo_mtg_dataset_v2_tune_B",
-    #     "--weights", "data/yolo_mtg_dataset_v2/models/hnqxzc96_best.pt",
-    #     "--epochs", "200",
-    # ])
+    # sys.argv.extend(["--data", "data/yolo_mtg_dataset_v2_tune_B", "--weights", "data/yolo_mtg_dataset_v2/models/hnqxzc96_best.pt", "--epochs", "200"])
 
     # yolo_mtg_dataset_v3
-    # sys.argv.extend([
-    #     "--data", "data/yolo_mtg_dataset_v3",
-    #     "--weights", "data/yolo_mtg_dataset/models/as9zo50r_best.pt",
-    #     "--epochs", "100",
-    # ])
+    # sys.argv.extend(["--data", "data/yolo_mtg_dataset_v3", "--weights", "data/yolo_mtg_dataset/models/as9zo50r_best.pt", "--epochs", "100"])
 
+    # yolo_mtg_dataset_seg
+    # sys.argv.extend(["--data", "data/yolo_mtg_dataset_seg", "--size", "n", "--epochs", "100", "--kind", "seg", "--arch", "11"])
+    # sys.argv.extend(["--data", "data/yolo_mtg_dataset_seg", "--size", "n", "--epochs", "100", "--kind", "seg", "--arch", "12"])  # slower training
     sys.argv.extend(
         [
             "--data",
             "data/yolo_mtg_dataset_seg",
             "--size",
-            "n",
+            "s",
             "--epochs",
-            "100",
+            "50",
             "--kind",
             "seg",
+            "--arch",
+            "11",
         ]
     )
+
     cli()

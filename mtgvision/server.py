@@ -36,7 +36,7 @@ async def detect_websocket(websocket: WebSocket):
 
             # extract cards
             dets = []
-            for card in detections.groups[0]:
+            for card in detections.detection_groups[0]:
                 det = {
                     "points": det.points.tolist(),
                     "score": float(np.mean(det.scores)),
