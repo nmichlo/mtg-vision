@@ -5,20 +5,22 @@ inputCanvas.width = 640;
 inputCanvas.height = 640;
 const inputCtx = inputCanvas.getContext('2d');
 
+// ======================================================================== //
+// START STREAM                                                             //
+// ======================================================================== //
+
 // Start video stream with the specified device ID
 async function startStream(deviceId) {
     if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
     }
-    const constraints = {
-        video: { deviceId: { exact: deviceId } }
-    };
+    const constraints = { video: { deviceId: { exact: deviceId } } };
     currentStream = await navigator.mediaDevices.getUserMedia(constraints);
     document.getElementById('video').srcObject = currentStream;
 }
 
 // Populate the device selector dropdown
-async function populateDevices() {
+async function populateDevices(currentDeviceId) {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter(device => device.kind === 'videoinput');
     const select = document.getElementById('select');
@@ -27,65 +29,137 @@ async function populateDevices() {
         const option = document.createElement('option');
         option.value = device.deviceId;
         option.text = device.label || `Camera ${index + 1}`;
+        if (device.deviceId === currentDeviceId) {
+            option.selected = true;
+        }
         select.appendChild(option);
     });
-    if (videoDevices.length > 0) {
-        await startStream(videoDevices[0].deviceId);
-    }
 }
+
+// ======================================================================== //
+// INFERENCE                                                                //
+// ======================================================================== //
 
 // Process the ONNX model output (assuming [1, num_boxes, 6] format: [x1, y1, x2, y2, confidence, class])
 function processOutput(outputTensor) {
     const data = outputTensor.data;
     const detections = [];
     const numBoxes = outputTensor.dims[1];
+
+    // cx: Center x-coordinate (normalized).
+    // cy: Center y-coordinate (normalized).
+    // w: Width of the bounding box (normalized).
+    // h: Height of the bounding box (normalized).
+    // theta: Rotation angle (in radians, representing the orientation of the box).
+    // confidence: Objectness score (indicating the likelihood of an object being present). 7+. class_scores: One score per class (e.g., if there are nc classes, there will be nc additional values).
     for (let i = 0; i < numBoxes; i++) {
         const offset = i * 6;
-        const x1 = data[offset];
-        const y1 = data[offset + 1];
-        const x2 = data[offset + 2];
-        const y2 = data[offset + 3];
-        const confidence = data[offset + 4];
-        const classId = data[offset + 5];
+        const cx = data[offset];
+        const cy = data[offset + 1];
+        const w = data[offset + 2];
+        const h = data[offset + 3];
+        const theta = data[offset + 4];
+        const confidence = data[offset + 5];
+        const classId = data[offset + 6];
         if (confidence > 0.5) { // Confidence threshold
-            detections.push({ x1, y1, x2, y2, confidence, classId });
+            detections.push({ cx, cy, w, h, theta, confidence, classId });
         }
     }
     return detections;
 }
 
-// Draw bounding boxes on the SVG overlay
-function drawBoundingBoxes(detections) {
-    const svg = document.getElementById('overlay');
-    svg.innerHTML = ''; // Clear previous boxes
-    const padding = (640 - 480) / 2; // Padding added to make 640x480 into 640x640
-    detections.forEach(det => {
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        const x = det.x1;
-        const y = det.y1 - padding; // Adjust for padding
-        const width = det.x2 - det.x1;
-        const height = (det.y2 - padding) - y;
-        // Skip if box is outside video area
-        if (y < 0 || y + height > 480) return;
-        rect.setAttribute('x', x);
-        rect.setAttribute('y', y);
-        rect.setAttribute('width', width);
-        rect.setAttribute('height', height);
-        rect.setAttribute('stroke', 'red');
-        rect.setAttribute('stroke-width', '2');
-        rect.setAttribute('fill', 'none');
-        svg.appendChild(rect);
-    });
+// Process the ONNX model output
+function processOutput(outputTensor) {
+    const data = outputTensor.data;
+    const detections = [];
+    const numBoxes = outputTensor.dims[1];
+    for (let i = 0; i < numBoxes; i++) {
+        const offset = i * 7;
+        const cx = data[offset];
+        const cy = data[offset + 1];
+        const w = data[offset + 2];
+        const h = data[offset + 3];
+        const theta = data[offset + 4];
+        const confidence = data[offset + 5]; // Objectness score
+        const classScore = data[offset + 6]; // Class score for single class
+        const finalConfidence = confidence * classScore;
+        if (finalConfidence > 0.5) {
+            detections.push({ cx, cy, w, h, theta, confidence: finalConfidence, classId: 0 });
+        }
+    }
+    return detections;
+}
+
+// NMS Helper Functions
+function getPolygon(det) {
+    const cx = det.cx;
+    const cy = det.cy;
+    const w = det.w;
+    const h = det.h;
+    const theta = det.theta;
+    const cosTheta = Math.cos(theta);
+    const sinTheta = Math.sin(theta);
+    const dx = w / 2;
+    const dy = h / 2;
+    const points = [
+        [-dx, -dy],
+        [dx, -dy],
+        [dx, dy],
+        [-dx, dy]
+    ];
+    const rotatedPoints = points.map(([x, y]) => [
+        cx + x * cosTheta - y * sinTheta,
+        cy + x * sinTheta + y * cosTheta
+    ]);
+    rotatedPoints.push(rotatedPoints[0]); // Close the polygon
+    return [rotatedPoints];
+}
+
+function computeArea(polygon) {
+    let area = 0;
+    const n = polygon.length;
+    for (let i = 0; i < n; i++) {
+        const [x1, y1] = polygon[i];
+        const [x2, y2] = polygon[(i + 1) % n];
+        area += x1 * y2 - x2 * y1;
+    }
+    return Math.abs(area) / 2;
+}
+
+function computeIoU(det1, det2) {
+    const poly1 = getPolygon(det1);
+    const poly2 = getPolygon(det2);
+    const intersection = martinez.intersection(poly1, poly2);
+    let interArea = 0;
+    if (intersection) {
+        intersection.forEach(poly => {
+            interArea += computeArea(poly[0]);
+        });
+    }
+    const area1 = det1.w * det1.h;
+    const area2 = det2.w * det2.h;
+    const unionArea = area1 + area2 - interArea;
+    return interArea / unionArea;
+}
+
+function applyNMS(detections, iouThreshold = 0.5) {
+    detections.sort((a, b) => b.confidence - a.confidence);
+    const selected = [];
+    while (detections.length > 0) {
+        const best = detections.shift();
+        selected.push(best);
+        detections = detections.filter(det => computeIoU(best, det) < iouThreshold);
+    }
+    return selected;
 }
 
 function fillArray(data, imageData) {
-    const w = imageData.width
-    const h = imageData.height
+    const w = imageData.width;
+    const h = imageData.height;
     const c = imageData.data.length / w / h;
-    const mx = 1
+    const mx = 1;
     const my = mx * w;
     const mc = my * h;
-    console.log(w, h, c, mx, my, mc)
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
             const idx = (y * w + x) * c;
@@ -99,12 +173,10 @@ function fillArray(data, imageData) {
 async function detect(session, video) {
     const VIDEO_H = 480;
     const VIDEO_W = 640;
-
     const MODEL_H = 640;
     const MODEL_W = 640;
     const MODEL_C = 3;
 
-    // TODO get video size instead of using magix vars
     // Prepare 640x640 input with padding
     inputCtx.fillStyle = 'black';
     inputCtx.fillRect(0, 0, MODEL_W, MODEL_H);
@@ -113,23 +185,48 @@ async function detect(session, video) {
     // Convert to tensor
     const imageData = inputCtx.getImageData(0, 0, MODEL_W, MODEL_H);
     const data = new Float32Array(MODEL_C * MODEL_W * MODEL_H);
-    fillArray(data, imageData)
+    fillArray(data, imageData);
     const inputTensor = new ort.Tensor('float32', data, [1, MODEL_C, MODEL_H, MODEL_W]);
 
     // Run inference
-    console.log(inputTensor)
-    console.log(session)
     const outputMap = await session.run({ images: inputTensor });
-    console.log(outputMap)
-    const outputTensor = outputMap.output0.cpuData;  // outputMap.output0.dims == [1, 300, 7]
+    const outputTensor = outputMap.output0;  // outputMap.output0.dims == [1, 300, 7]
 
-    // TODO: nms doesn't seem to be supported....
-
-
-    // Process and display results
+    // Process detections and apply NMS
     const detections = processOutput(outputTensor);
+
+    // const filteredDetections = applyNMS(detections);
+    console.log(detections)
     return detections;
 }
+
+
+// ======================================================================== //
+// DRAW                                                                     //
+// ======================================================================== //
+
+// Draw bounding boxes on the SVG overlay
+function drawBoundingBoxes(detections) {
+    const svg = document.getElementById('overlay');
+    svg.innerHTML = ''; // Clear previous boxes
+    const padding = (640 - 480) / 2; // 80
+    detections.forEach(det => {
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', -det.w / 2);
+        rect.setAttribute('y', -det.h / 2);
+        rect.setAttribute('width', det.w);
+        rect.setAttribute('height', det.h);
+        rect.setAttribute('transform', `translate(${det.cx}, ${det.cy - padding}) rotate(${det.theta * 180 / Math.PI})`);
+        rect.setAttribute('stroke', 'red');
+        rect.setAttribute('stroke-width', '2');
+        rect.setAttribute('fill', 'none');
+        svg.appendChild(rect);
+    });
+}
+
+// ======================================================================== //
+// MAIN                                                                     //
+// ======================================================================== //
 
 // Inference loop to process video frames
 async function inferenceLoop(session) {
@@ -146,24 +243,40 @@ async function main() {
     const video = document.getElementById('video');
     const select = document.getElementById('select');
     const status = document.getElementById('status');
+    const startCameraButton = document.getElementById('startCamera');
 
-    // Load the ONNX model
+    // Load the ONNX model (assuming this is part of your original code)
     status.textContent = 'Loading model...';
     const session = await ort.InferenceSession.create('1ipho2mn_best.onnx');
-    status.textContent = 'Model loaded.';
+    status.textContent = 'Model loaded. Click "Start Camera" to begin.';
 
-    // Populate devices and start the stream
-    await populateDevices();
+    // Start camera on button click
+    startCameraButton.addEventListener('click', async () => {
+        startCameraButton.disabled = true;
+        status.textContent = 'Requesting camera access...';
+        try {
+            const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = initialStream;
+            currentStream = initialStream;
+            const deviceId = initialStream.getVideoTracks()[0].getSettings().deviceId;
+            status.textContent = 'Camera access granted. Populating devices...';
+            await populateDevices(deviceId);
+            status.textContent = 'Running detection...';
+            inferenceLoop(session); // Assume this is defined elsewhere
+        } catch (error) {
+            console.error('Error accessing camera:', error);
+            status.textContent = 'Error: Could not access camera.';
+            startCameraButton.disabled = false;
+        }
+    });
 
     // Handle device selection changes
     select.addEventListener('change', async () => {
         const deviceId = select.value;
         await startStream(deviceId);
     });
-
-    // Update devices when new ones are plugged in
-    navigator.mediaDevices.addEventListener('devicechange', populateDevices);
-
-    // Start the inference loop
-    inferenceLoop(session);
 }
+
+// ======================================================================== //
+// END                                                                      //
+// ======================================================================== //

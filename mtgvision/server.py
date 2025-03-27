@@ -8,7 +8,7 @@ app = FastAPI()
 # Serve static files (HTML/JS) from a 'static' directory
 app.mount(
     "/",
-    StaticFiles(directory=Path(__file__).parent.parent / "www", html=False),
+    StaticFiles(directory=Path(__file__).parent.parent / "www", html=True),
     name="static",
 )
 
