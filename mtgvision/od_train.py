@@ -142,7 +142,7 @@ if __name__ == "__main__":
             "--size",
             "s",
             "--epochs",
-            "50",
+            "100",
             "--kind",
             "seg",
             "--arch",

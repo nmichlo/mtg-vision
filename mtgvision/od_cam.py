@@ -1,9 +1,6 @@
-import itertools
 import warnings
 from collections import defaultdict
 from copy import deepcopy
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Sequence
 
 import cv2
@@ -11,19 +8,8 @@ import numpy as np
 from shapely.geometry.linestring import LineString
 from shapely.geometry.point import Point
 from shapely.geometry.polygon import Polygon
-from ultralytics import YOLO
-# from norfair import Detection
-
+from mtgvision.od_export import InstanceSeg, CardSegmenter, MODEL_PATH_SEG
 from mtgvision.util.image import imwait
-
-
-@dataclass
-class Detection:
-    points: np.ndarray
-    label: int
-    scores: np.ndarray
-    top: "Detection" = None
-    bot: "Detection" = None
 
 
 class CardDetections:
@@ -31,23 +17,22 @@ class CardDetections:
 
     def __init__(
         self,
-        dets: list[Detection] = (),
-        segs: list[Detection] = (),
+        dets: list[InstanceSeg] = (),
+        segs: list[InstanceSeg] = (),
     ):
         # shape 4,2
         self.detections = list(dets)
-        self.detection_groups: dict[int, list[Detection]] = defaultdict(list)
+        self.detection_groups: dict[int, list[InstanceSeg]] = defaultdict(list)
         for det in dets:
             self.detection_groups[det.label].append(det)
-        self._dets_orient(self.detection_groups)
 
         # shape M,2
         self.segments = list(segs)
         self._process_segments(self.segments)
 
-    def _process_segments(self, segments: list[Detection]):
+    def _process_segments(self, segments: list[InstanceSeg]):
         # filter
-        segs: list[Detection] = []
+        segs: list[InstanceSeg] = []
         for seg in segments:
             if seg.label != 0:
                 warnings.warn("Segment label is not 0")
@@ -116,96 +101,11 @@ class CardDetections:
             self.detections.append(det)
             self.detection_groups[det.label].append(det)
 
-    @classmethod
-    def _dets_orient(cls, det_groups: dict[int, list[Detection]]):
-        """
-        Orient the detections based on the top half of the card.
-        Do this in-place, modifying the input detections.
-        """
-        # for each card
-        for card in det_groups[0]:
-            poly = Polygon(card.points)
-            # get overlapping tops and bots
-            tops = [
-                d
-                for d in det_groups[1]
-                if not getattr(d, "used", False) and Polygon(d.points).intersects(poly)
-            ]
-            bots = [
-                d
-                for d in det_groups[2]
-                if not getattr(d, "used", False) and Polygon(d.points).intersects(poly)
-            ]
-            # get the best pair of top and bot that overlaps with the card
-            best_iou, best_pair = 0, None
-            for top, bot in itertools.product(tops, bots):
-                top_poly = Polygon(top.points)
-                bot_poly = Polygon(bot.points)
-                merged_poly = top_poly.union(bot_poly)
-                iou = poly.intersection(merged_poly).area / poly.union(merged_poly).area
-                if iou > best_iou:
-                    best_iou = iou
-                    best_pair = (top, bot)
-            # store the best pair
-            if best_pair:
-                card.top, card.bot = best_pair
-                # mark used
-                card.top.used = True
-                card.bot.used = True
-            else:
-                card.top, card.bot = None, None
-
-        # Orient each card based on the top half
-        for card in det_groups[0]:
-            # orient
-            top_points = None
-            if card.top:
-                closest_side_idx = cls._dets_find_closest_side(
-                    card.points, card.top.points
-                )
-                top_points = np.roll(card.points, -closest_side_idx, axis=0)
-            bot_points = None
-            if card.bot:
-                closest_side_idx = cls._dets_find_closest_side(
-                    card.points, card.bot.points
-                )
-                bot_points = np.roll(card.points, -closest_side_idx - 2, axis=0)
-            # apply
-            if top_points is None and bot_points is None:
-                warnings.warn("No top or bottom found for card")
-            elif top_points is None and bot_points is not None:
-                warnings.warn("Top not found for card")
-                card.points = bot_points
-            elif top_points is not None and bot_points is None:
-                warnings.warn("Bot not found for card")
-                card.points = top_points
-            else:
-                if np.all(top_points == bot_points):
-                    warnings.warn("Top and bottom do not match for card, using top")
-                card.points = top_points
-
-    @classmethod
-    def _dets_find_closest_side(cls, card_pts: np.ndarray, half_pts: np.ndarray) -> int:
-        """
-        Find the index of the card's side closest to the half's polygon.
-        Returns the starting point index of that side.
-        """
-        half_poly = Polygon(half_pts)
-        # ave distance from each side to the half
-        best_idx = None
-        best_dist = np.inf
-        for i, (p0, p1) in enumerate(zip(card_pts, np.roll(card_pts, -1, axis=0))):
-            dist = (half_poly.distance(Point(p0)) + half_poly.distance(Point(p1))) / 2
-            if dist < best_dist:
-                best_dist = dist
-                best_idx = i
-        return best_idx
-
     def extract_warped_cards(
         self,
         frame: np.ndarray,
         out_size_hw: tuple[int, int] = (192, 128),
-    ) -> list[tuple[Detection, np.ndarray]]:
+    ) -> list[tuple[InstanceSeg, np.ndarray]]:
         card_imgs = []
         for det in self.detection_groups[0]:
             card_img = cv2.warpPerspective(
@@ -315,7 +215,7 @@ class CardDetections:
 
     def get_detections(
         self, threshold: float = 0.7, classes: Sequence = (0,)
-    ) -> list[Detection]:
+    ) -> list[InstanceSeg]:
         return [
             det
             for det in self.detections
@@ -330,43 +230,10 @@ class CardDetections:
         ]
 
 
-class CardDetector:
-    def __init__(self, model_path: str | Path):
-        self.yolo = YOLO(model_path, verbose=False)
-
-    def __call__(self, frame: np.ndarray) -> CardDetections:
-        results = self.yolo([frame])[0]  # Run YOLO detection
-        detections = []
-        if results.obb:
-            for box in results.obb:
-                for xyxyxyxy, cls, conf in zip(box.xyxyxyxy, box.cls, box.conf):
-                    points = xyxyxyxy.cpu().numpy()
-                    conf = float(conf.cpu().numpy())
-                    label = int(cls.cpu().numpy())
-                    det = Detection(
-                        points=points,
-                        label=label,
-                        scores=np.full_like(points[:, 0], conf),
-                    )
-                    detections.append(det)
-        elif results.masks:
-            for points, conf in zip(results.masks.xy, results.boxes.conf):
-                det = Detection(
-                    points=points,
-                    label=0,
-                    scores=np.full_like(points[:, 0], conf),
-                )
-                detections.append(det)
-        return CardDetections(
-            segs=detections,
-        )
-
-
 def main():
     # Init model
 
-    root = Path("/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/data")
-    segmenter = CardDetector(root / "yolo_mtg_dataset_seg/models/9ss000i6_best_seg.pt")
+    segmenter = CardSegmenter(MODEL_PATH_SEG.with_suffix(".mlpackage"))
 
     # This one is quite good, seems more robust to objects in the world that look similar to cards, like bright box or dark box.
     # probably need to add more augments / random erasing to fix this.
@@ -398,7 +265,7 @@ def main():
             break
 
         detectionss = [
-            (segmenter(frame), (0, 0, 255)),
+            (CardDetections(segmenter(frame)), (0, 0, 255)),
         ]
         for i, (detections, _) in enumerate(detectionss):
             for j, (det, img) in enumerate(detections.extract_warped_cards(frame)):
