@@ -1,20 +1,13 @@
 // Global variables
 let currentStream;
-const inputCanvas = document.createElement('canvas');
-inputCanvas.width = 640;
-inputCanvas.height = 640;
-const inputCtx = inputCanvas.getContext('2d');
-
-// ======================================================================== //
-// START STREAM                                                             //
-// ======================================================================== //
+let ws;
 
 // Start video stream with the specified device ID
 async function startStream(deviceId) {
     if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
     }
-    const constraints = { video: { deviceId: { exact: deviceId } } };
+    const constraints = { video: { deviceId: { exact: deviceId }, width: 640, height: 480 } };
     currentStream = await navigator.mediaDevices.getUserMedia(constraints);
     document.getElementById('video').srcObject = currentStream;
 }
@@ -36,121 +29,37 @@ async function populateDevices(currentDeviceId) {
     });
 }
 
-// ======================================================================== //
-// INFERENCE                                                                //
-// ======================================================================== //
-
-// Process the ONNX model output (assuming [1, num_boxes, 6] format: [x1, y1, x2, y2, confidence, class])
-function processOutput(outputTensor) {
-    const data = outputTensor.data;
-    const detections = [];
-    const numBoxes = outputTensor.dims[1];
-
-    // cx: Center x-coordinate (normalized).
-    // cy: Center y-coordinate (normalized).
-    // w: Width of the bounding box (normalized).
-    // h: Height of the bounding box (normalized).
-    // theta: Rotation angle (in radians, representing the orientation of the box).
-    // confidence: Objectness score (indicating the likelihood of an object being present). 7+. class_scores: One score per class (e.g., if there are nc classes, there will be nc additional values).
-    // classId
-    for (let i = 0; i < numBoxes; i++) {
-        const offset = i * 7;
-        const cx = data[offset];
-        const cy = data[offset + 1];
-        const w = data[offset + 2];
-        const h = data[offset + 3];
-        const theta = data[offset + 4];
-        const confidence = data[offset + 5];
-        const classId = data[offset + 6];
-        if (confidence > 0.5) { // Confidence threshold
-            detections.push({ cx, cy, w, h, theta, confidence, classId });
-        }
-    }
-    return detections;
-}
-
-function fillArray(data, imageData) {
-    const w = imageData.width;
-    const h = imageData.height;
-    const c = imageData.data.length / w / h;
-    const mx = 1;
-    const my = mx * w;
-    const mc = my * h;
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            const idx = (y * w + x) * c;
-            data[0 * mc + y * my + x] = imageData.data[idx + 0] / 255; // R
-            data[1 * mc + y * my + x] = imageData.data[idx + 1] / 255; // G
-            data[2 * mc + y * my + x] = imageData.data[idx + 2] / 255; // B
-        }
-    }
-}
-
-async function detect(session, video) {
-    const VIDEO_H = 480;
-    const VIDEO_W = 640;
-    const MODEL_H = 640;
-    const MODEL_W = 640;
-    const MODEL_C = 3;
-
-    // Prepare 640x640 input with padding
-    inputCtx.fillStyle = 'black';
-    inputCtx.fillRect(0, 0, MODEL_W, MODEL_H);
-    inputCtx.drawImage(video, 0, (640 - 480) / 2, 640, 480);
-
-    // Convert to tensor
-    const imageData = inputCtx.getImageData(0, 0, MODEL_W, MODEL_H);
-    const data = new Float32Array(MODEL_C * MODEL_W * MODEL_H);
-    fillArray(data, imageData);
-    const inputTensor = new ort.Tensor('float32', data, [1, MODEL_C, MODEL_H, MODEL_W]);
-
-    // Run inference
-    const outputMap = await session.run({ images: inputTensor });
-    const outputTensor = outputMap.output0;
-
-    // Process detections and apply NMS
-    const detections = processOutput(outputTensor);
-
-    console.log(detections)
-    return detections;
-}
-
-
-// ======================================================================== //
-// DRAW                                                                     //
-// ======================================================================== //
-
 // Draw bounding boxes on the SVG overlay
 function drawBoundingBoxes(detections) {
     const svg = document.getElementById('overlay');
     svg.innerHTML = ''; // Clear previous boxes
-    const padding = (640 - 480) / 2; // 80
     detections.forEach(det => {
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', -det.w / 2);
-        rect.setAttribute('y', -det.h / 2);
-        rect.setAttribute('width', det.w);
-        rect.setAttribute('height', det.h);
-        rect.setAttribute('transform', `translate(${det.cx}, ${det.cy - padding}) rotate(${det.theta * 180 / Math.PI})`);
-        rect.setAttribute('stroke', 'red');
-        rect.setAttribute('stroke-width', '2');
-        rect.setAttribute('fill', 'none');
-        svg.appendChild(rect);
+        // Convert points array to SVG points string (e.g., "x1,y1 x2,y2 x3,y3 x4,y4")
+        const pointsStr = det.points.map(p => p.join(',')).join(' ');
+        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        polygon.setAttribute('points', pointsStr);
+        polygon.setAttribute('stroke', 'red');
+        polygon.setAttribute('stroke-width', '2');
+        polygon.setAttribute('fill', 'none');
+        svg.appendChild(polygon);
     });
 }
 
-// ======================================================================== //
-// MAIN                                                                     //
-// ======================================================================== //
+// Send video frames to the backend over WebSocket
+function startSendingFrames(video) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 480;
+    const ctx = canvas.getContext('2d');
 
-// Inference loop to process video frames
-async function inferenceLoop(session) {
-    const video = document.getElementById('video');
-    if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        const detections = await detect(session, video);
-        drawBoundingBoxes(detections);
-    }
-    requestAnimationFrame(() => inferenceLoop(session));
+    setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ctx.drawImage(video, 0, 0, 640, 480);
+            canvas.toBlob(blob => {
+                ws.send(blob);
+            }, 'image/jpeg', 0.5); // 50% quality to reduce bandwidth
+        }
+    }, 100); // Send at 10 FPS (every 100ms)
 }
 
 // Main function
@@ -160,24 +69,38 @@ async function main() {
     const status = document.getElementById('status');
     const startCameraButton = document.getElementById('startCamera');
 
-    // Load the ONNX model (assuming this is part of your original code)
-    status.textContent = 'Loading model...';
-    const session = await ort.InferenceSession.create('1ipho2mn_best.onnx');
-    status.textContent = 'Model loaded. Click "Start Camera" to begin.';
+    // Initialize WebSocket connection
+    ws = new WebSocket('ws://localhost:8000/detect');
+    ws.onopen = () => {
+        console.log('WebSocket connection established');
+        status.textContent = 'Connected to server. Select a camera to start.';
+    };
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        drawBoundingBoxes(data.detections);
+    };
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        status.textContent = 'WebSocket error occurred.';
+    };
+    ws.onclose = () => {
+        console.log('WebSocket connection closed');
+        status.textContent = 'Disconnected from server.';
+    };
 
     // Start camera on button click
     startCameraButton.addEventListener('click', async () => {
         startCameraButton.disabled = true;
         status.textContent = 'Requesting camera access...';
         try {
-            const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const initialStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
             video.srcObject = initialStream;
             currentStream = initialStream;
             const deviceId = initialStream.getVideoTracks()[0].getSettings().deviceId;
             status.textContent = 'Camera access granted. Populating devices...';
             await populateDevices(deviceId);
-            status.textContent = 'Running detection...';
-            inferenceLoop(session); // Assume this is defined elsewhere
+            status.textContent = 'Streaming to server...';
+            startSendingFrames(video); // Start sending frames to the backend
         } catch (error) {
             console.error('Error accessing camera:', error);
             status.textContent = 'Error: Could not access camera.';
@@ -191,7 +114,3 @@ async function main() {
         await startStream(deviceId);
     });
 }
-
-// ======================================================================== //
-// END                                                                      //
-// ======================================================================== //
