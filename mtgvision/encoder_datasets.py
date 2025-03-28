@@ -330,7 +330,7 @@ class Mutate:
 # ========================================================================= #
 
 
-DATASETS_ROOT = Path(__file__).parent.parent.parent / "mtg-dataset/mtgdata/data"
+DATASETS_ROOT = Path(__file__).parent.parent.parent / "data/ds"
 
 print(f"DATASETS_ROOT={DATASETS_ROOT}")
 
@@ -433,7 +433,7 @@ class SyntheticBgFgMtgImages:
     def __init__(self, img_type=ScryfallImageType.small, predownload=False):
         self._ds = ScryfallDataset(
             img_type=img_type,
-            data_root=Path(__file__).parent.parent.parent / "mtg-dataset/mtgdata/data",
+            data_root=Path(__file__).parent.parent.parent / "data/ds",
             force_update=False,
             download_mode="now" if predownload else "none",
         )

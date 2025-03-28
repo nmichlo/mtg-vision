@@ -6,19 +6,21 @@ import argparse
 import functools
 from pathlib import Path
 
+import coremltools as ct
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
 from mtgvision.encoder_train import (
-    get_test_images,
     MtgVisionEncoder,
     RanMtgEncDecDataset,
+    get_test_images,
 )
-import coremltools as ct
+from mtgvision.util.image import img_float32
 
 MODEL_PATH = Path(
-    "/Users/nathanmichlo/Downloads/cnvnxt2ae-tiny9x128-ssim5l1-lr0.001-bs32__odcpoea5_265000.ckpt"
+    "/Users/nathanmichlo/Desktop/active/mtg/data/gen/embeddings"
+    "/cnvnxt2ae-tiny9x128-ssim5l1-lr0.001-bs32__odcpoea5_265000.ckpt"
 )
 
 
@@ -45,16 +47,16 @@ def _export(path: Path, debug: bool = True):
 
     # CONVERT
     coreml_encoder_path = path.with_suffix(".encoder.mlpackage")
-    if model.model.encoder is not None:
-        print("Exporting encoder to", coreml_encoder_path)
-        encoder = model.model.encoder.to_coreml()
-        encoder.save(coreml_encoder_path)
+    # if model.model.encoder is not None:
+    #     print("Exporting encoder to", coreml_encoder_path)
+    #     encoder = model.model.encoder.to_coreml()
+    #     encoder.save(coreml_encoder_path)
 
     coreml_decoder_path = path.with_suffix(".decoder.mlpackage")
-    if model.model.decoder is not None:
-        print("Encoder exported to", coreml_decoder_path)
-        decoder = model.model.decoder.to_coreml()
-        decoder.save(coreml_decoder_path)
+    # if model.model.decoder is not None:
+    #     print("Encoder exported to", coreml_decoder_path)
+    #     decoder = model.model.decoder.to_coreml()
+    #     decoder.save(coreml_decoder_path)
 
     # DEBUG
     if debug:
@@ -68,26 +70,37 @@ def _export(path: Path, debug: bool = True):
 
 
 class CoreMlEncoder:
-    def __init__(self, model_path: Path):
+    def __init__(self, model_path: Path = None):
+        if model_path is None:
+            model_path = MODEL_PATH.with_suffix(".encoder.mlpackage")
         self.model = ct.models.MLModel(str(model_path))
 
     def predict(self, img: np.ndarray):
-        assert img.ndim == 3
-        assert img.shape[-1] == 3
+        img = img_float32(img)
+        assert img.ndim == 3, f"{img.shape}"
+        assert img.shape[-1] == 3, f"{img.shape}"
+        assert img.dtype == np.float32, f"{img.dtype}"
         img = img.transpose(2, 0, 1)[None, ...]
-        z = self.model.predict({"x": img})["z"]
+        # print(img.dtype, img.shape)
+        z = self.model.predict({"x": np.array(img)})["z"]
         assert z.ndim == 2
         assert z.shape[0] == 1
         return z[0]
 
-    def ran_forward(self):
+    @property
+    def input_hwc(self) -> tuple[int, int, int]:
         [x] = self.model.input_description._fd_spec
         [_, c, h, w] = x.type.multiArrayType.shape
-        return self.predict(np.random.rand(h, w, c))
+        return h, w, c
+
+    def ran_forward(self):
+        return self.predict(np.random.rand(*self.input_hwc))
 
 
 class CoreMlDecoder:
     def __init__(self, model_path: Path):
+        if model_path is None:
+            model_path = MODEL_PATH.with_suffix(".encoder.mlpackage")
         self.model = ct.models.MLModel(str(model_path))
 
     def predict(self, z: np.ndarray):
@@ -115,8 +128,8 @@ def _cli():
     parser.add_argument("--no-test", dest="test", action="store_false")
     args = parser.parse_args()
 
-    # if args.export:
-    #     _export(args.path)
+    if args.export:
+        _export(args.path)
     if args.test:
         _test_infer(args.path)
 

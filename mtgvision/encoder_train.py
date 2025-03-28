@@ -202,6 +202,7 @@ class MtgVisionEncoder(pl.LightningModule):
             self.hparams.x_size_hw,
             encoder_enabled=True,
             decoder_enabled=self.hparams.loss_recon is not None,
+            head_type=self.hparams.head_type,
         )
         self.model = model
 
@@ -676,18 +677,19 @@ class Config(pydantic.BaseModel):
     force_download: bool = False
     half_upsidedown: bool = False
     # model
-    model_name: str = "cnvnxt2ae_base_12"
+    model_name: str = "cnvnxt2ae_nano"
+    head_type: str = "conv+linear"  # conv, conv+linear, pool+linear
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
-    optimizer: Literal["adam", "radam"] = "adam"
-    learning_rate: float = 5e-4
+    optimizer: Literal["adam", "radam"] = "radam"
+    learning_rate: float = 1e-3
     weight_decay: float = 1e-9  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
-    batch_size: int = 12
+    batch_size: int = 32
     gradient_clip_val: float = 0.5
-    accumulate_grad_batches: int = 4
+    accumulate_grad_batches: int = 2
     # loss
-    loss_recon: Optional[str] = "ssim5+l1"  # 'ssim5+l1'
+    loss_recon: Optional[str] = "l1"  # 'ssim5+l1'
     loss_contrastive: Optional[str] = "ntxent"  # ntxent
     loss_contrastive_batched: bool = False
     scale_loss_recon: float = 1
@@ -713,10 +715,10 @@ class Config(pydantic.BaseModel):
 if __name__ == "__main__":
     sys.argv.extend(
         [
-            "--prefix=cnxt2",
+            "--prefix=2_cnxt2",
             # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6__dvea3b14/checkpoints/epoch=0-step=67500.ckpt",
             # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.2__o0yxl20m/checkpoints/epoch=0-step=125000.ckpt",
-            "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.2__5u5qqmvz/checkpoints/epoch=0-step=217500.ckpt",
+            # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.2__5u5qqmvz/checkpoints/epoch=0-step=217500.ckpt",
             # "--checkpoint=/home/nmichlo/workspace/mtg/mtg-vision/mtgvision_encoder/6.3__81rawzyz/checkpoints/epoch=0-step=365000.ckpt",
         ]
     )
