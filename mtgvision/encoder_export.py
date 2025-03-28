@@ -14,7 +14,7 @@ from tqdm import tqdm
 from mtgvision.encoder_train import (
     MtgVisionEncoder,
     RanMtgEncDecDataset,
-    get_test_images,
+    get_test_image_batches,
 )
 from mtgvision.util.image import img_float32
 
@@ -26,7 +26,7 @@ MODEL_PATH = Path(
 
 @functools.lru_cache(maxsize=1)
 def _get_data():
-    return get_test_images(
+    return get_test_image_batches(
         RanMtgEncDecDataset(default_batch_size=1),
         seed=42,
     )
@@ -40,9 +40,9 @@ def _export(path: Path, debug: bool = True):
     # DEBUG
     if debug:
         for img in _get_data()[:1]:
-            plt.imshow(img["x"])
+            plt.imshow(img["x"][0])
             plt.show()
-            plt.imshow(model.forward_img(img["x"]))
+            plt.imshow(model.forward_img(img["x"][0]))
             plt.show()
 
     # CONVERT
@@ -63,9 +63,9 @@ def _export(path: Path, debug: bool = True):
         encoder = CoreMlEncoder(coreml_encoder_path)
         decoder = CoreMlDecoder(coreml_decoder_path)
         for img in _get_data()[:1]:
-            plt.imshow(img["x"])
+            plt.imshow(img["x"][0])
             plt.show()
-            plt.imshow(decoder.predict(encoder.predict(img["x"])))
+            plt.imshow(decoder.predict(encoder.predict(img["x"][0])))
             plt.show()
 
 

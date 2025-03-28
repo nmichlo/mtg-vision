@@ -42,25 +42,41 @@ from PIL import Image
 T = TypeVar("T")
 
 
-def ensure_float32(fn: T) -> T:
+def ensure_float32(fn: T = None, *, strict: bool = False, disable: bool = True) -> T:
     """
     Decorator to ensure that a function returns a numpy array of type np.float32.
     """
 
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        result = fn(*args, **kwargs)
-        if not isinstance(result, np.ndarray):
-            raise Exception(
-                f"Function {fn.__name__} did not return a numpy array, got: {type(result)}"
-            )
-        if result.dtype != np.float32:
-            raise Exception(
-                f"Function {fn.__name__} did not return a numpy array of type {np.float32}, got: {result.dtype}"
-            )
-        return result
+    def wrap(fn: T) -> T:
+        if disable:
+            return fn
 
-    return wrapper
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            if not isinstance(result, np.ndarray):
+                raise Exception(
+                    f"Function {fn.__name__} did not return a numpy array, got: {type(result)}"
+                )
+            if result.dtype != np.float32:
+                raise Exception(
+                    f"Function {fn.__name__} did not return a numpy array of type {np.float32}, got: {result.dtype}"
+                )
+            if strict:
+                if np.min(result) < 0:
+                    msg = f"Function {fn.__name__} returned a numpy array with negative values, got: {np.min(result)}"
+                    raise RuntimeError(msg)
+                if np.max(result) > 1:
+                    msg = f"Function {fn.__name__} returned a numpy array with values greater than 1, got: {np.max(result)}"
+                    raise RuntimeError(msg)
+            return result
+
+        return wrapper
+
+    if fn is not None:
+        return wrap(fn)
+    else:
+        return wrap
 
 
 def asrt_float(x):
@@ -309,11 +325,13 @@ def resize(
     """Resize an image to a new size."""
     h, w = size_hw
     # OpenCV is W*H not H*W
-    return cv2.resize(
+    img = cv2.resize(
         img,
         (w, h),
         interpolation=cv2.INTER_AREA if shrink else cv2.INTER_CUBIC,
     )
+    # can result in values > 1 ?????????
+    return img_clip(img)
 
 
 @ensure_float32

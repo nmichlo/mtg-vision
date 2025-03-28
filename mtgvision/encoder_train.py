@@ -7,8 +7,10 @@ This is effectively facial recognition techniques.
 
 import argparse
 import sys
+import uuid
+import warnings
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional, Tuple, TypedDict
+from typing import Any, Literal, Mapping, Optional, Sequence, Tuple, TypedDict
 import matplotlib.pyplot as plt
 import pydantic
 import torch
@@ -20,7 +22,7 @@ import random
 import wandb
 import kornia as K
 import pytorch_lightning as pl
-from pytorch_metric_learning.losses import NTXentLoss, SelfSupervisedLoss
+from pytorch_metric_learning.losses import NTXentLoss
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import (
     Callback,
@@ -29,7 +31,9 @@ from pytorch_lightning.callbacks import (
 
 from mtgdata import ScryfallBulkType, ScryfallImageType
 import mtgvision.models.convnextv2ae as cnv2ae
+from mtgdata.scryfall import ScryfallCardFace
 from mtgvision.encoder_datasets import IlsvrcImages, SyntheticBgFgMtgImages
+from mtgvision.util.image import img_clip
 from mtgvision.util.random import seed_all
 
 
@@ -66,27 +70,31 @@ _MODELS = {
 class BatchHintNumpy(TypedDict, total=False):
     x: np.ndarray
     y: np.ndarray
-    x2: np.ndarray
+    labels: np.ndarray
 
 
 class BatchHintTensor(TypedDict, total=False):
     x: torch.Tensor
     y: torch.Tensor
-    x2: torch.Tensor
+    labels: torch.Tensor
 
 
 class RanMtgEncDecDataset(IterableDataset):
     def __init__(
         self,
         default_batch_size: int,
+        *,
         predownload: bool = False,
-        paired: bool = False,  # for contrastive loss, two random aug of same cards
-        targets: bool = False,
+        paired: bool,  # for contrastive loss, two random aug of same cards
+        targets: bool,
         x_size_hw: Tuple[int, int] = (192, 128),
         y_size_hw: Tuple[int, int] = (192, 128),
-        half_upsidedown: bool = False,
+        half_upsidedown: bool,
+        target_is_input_prob: float,
+        similar_neg_prob: float,
+        check_data: bool,
     ):
-        assert default_batch_size >= 0
+        assert default_batch_size > 0
         self.default_batch_size = default_batch_size
         self.paired = paired
         self.targets = targets
@@ -95,73 +103,156 @@ class RanMtgEncDecDataset(IterableDataset):
         self.mtg = SyntheticBgFgMtgImages(img_type="small", predownload=predownload)
         self.ilsvrc = IlsvrcImages()
         self.half_upsidedown = half_upsidedown
+        self.target_is_input_prob = target_is_input_prob
+        self.similar_neg_prob = similar_neg_prob
+        self.check_data = check_data
 
     def __iter__(self):
         while True:
-            if self.default_batch_size == 0:
-                yield self.random_tensor()
-            else:
-                yield self.random_tensor_batch()
+            yield self.random_tensor_batch()
 
-    def get_img_by_id(self, id_: str) -> BatchHintNumpy:
-        x = self.mtg.get_image_by_id(id_)
-        y = self.ilsvrc.ran()
-        batch = self.make_image_batch([(x, y)])
-        return {k: v[0] for k, v in batch.items()}
+    def image_batch_by_ids(
+        self,
+        ids: str | uuid.UUID | Sequence[str | uuid.UUID],
+        *,
+        force_target_input: bool = False,
+        force_similar_neg: bool = False,
+    ) -> BatchHintNumpy:
+        if isinstance(ids, (str, uuid.UUID)):
+            ids = [ids]
+        x, y, labels = self._make_image_batch(
+            cards=[self.mtg.get_card_by_id(id_) for id_ in ids],
+            bg_imgs=[self.ilsvrc.ran() for id_ in ids],
+            target_is_input_prob=1.0
+            if force_target_input
+            else (None if force_target_input is None else 0.0),
+            similar_neg_prob=1.0
+            if force_similar_neg
+            else (None if force_similar_neg is None else 0.0),
+        )
+        return self._get_dict(x, y, labels)
 
-    def random_img(self) -> BatchHintNumpy:
-        batch = self.random_image_batch(1)
-        return {k: v[0] for k, v in batch.items()}
-
-    def random_tensor(self) -> BatchHintTensor:
-        batch = self.random_tensor_batch(1)  # already floats
-        return {k: v[0] for k, v in batch.items()}
+    def random_tensor_batch(self, n: Optional[int] = None) -> BatchHintTensor:
+        x, y, labels = self._random_image_batch(n)
+        return self._get_dict(x, y, labels, K.image_to_tensor, torch.tensor)
 
     def random_image_batch(self, n: Optional[int] = None) -> BatchHintNumpy:
+        x, y, labels = self._random_image_batch(n)
+        return self._get_dict(x, y, labels)
+
+    def _random_image_batch(self, n: Optional[int] = None) -> tuple[Any, Any, Any]:
         if n is None:
             n = self.default_batch_size
         # get random images
-        img_pairs = [(self.mtg.ran(), self.ilsvrc.ran()) for _ in range(n)]
-        return self.make_image_batch(img_pairs)
+        return self._make_image_batch(
+            cards=[self.mtg.ran_card() for _ in range(n)],
+            bg_imgs=[self.ilsvrc.ran() for _ in range(n)],
+        )
 
-    def random_tensor_batch(self, n: Optional[int] = None) -> BatchHintTensor:
-        batch = self.random_image_batch(n)
-        return {k: K.image_to_tensor(v) for k, v in batch.items()}
+    @classmethod
+    def _get_dict(
+        cls, x, y, labels, apply_imgs=lambda v: v, apply_labels=lambda v: v
+    ) -> dict:
+        batch = {}
+        if x is not None:
+            batch["x"] = apply_imgs(x)
+        if y is not None:
+            batch["y"] = apply_imgs(y)
+        if labels is not None:
+            batch["labels"] = apply_labels(labels)
+        return batch
 
-    def make_image_batch(
-        self, img_pairs: list[tuple[np.ndarray, np.ndarray]]
-    ) -> BatchHintNumpy:
+    def _make_image_batch(
+        self,
+        cards: list[ScryfallCardFace],
+        bg_imgs: list[np.ndarray],
+        *,
+        target_is_input_prob: float = None,
+        similar_neg_prob: float = None,
+    ) -> tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+        assert len(cards) == len(bg_imgs), f"{len(cards)} != {len(bg_imgs)}"
+
         # generate random samples
-        xs0, xs1, ys = [], [], []
-        for card, bg0 in img_pairs:
-            _, bg1 = random.choice(img_pairs)
+        xs, ys, x_cls = [], [], []
+        for i, (card, bg0) in enumerate(zip(cards, bg_imgs)):
+            card_img = SyntheticBgFgMtgImages._load_card_image(card)
+            # make the target card, this is a slightly cropped version of the original.
             if self.targets:
                 ys.append(
-                    SyntheticBgFgMtgImages.make_cropped(card, size_hw=self.y_size_hw)
+                    SyntheticBgFgMtgImages.make_cropped(
+                        card_img, size_hw=self.y_size_hw
+                    )
                 )
-            xs0.append(
-                SyntheticBgFgMtgImages.make_virtual(
-                    card,
+
+            # make the 1st input with card + random background and augment
+            # sometimes we swap this out with the target so that we learn everything
+            # correctly
+            if random.random() < (target_is_input_prob or self.target_is_input_prob):
+                x0 = SyntheticBgFgMtgImages.make_cropped(
+                    card_img, size_hw=self.x_size_hw
+                )
+            else:
+                x0 = SyntheticBgFgMtgImages.make_virtual(
+                    card_img,
                     bg0,
                     size_hw=self.x_size_hw,
                     half_upsidedown=self.half_upsidedown,
                 )
-            )
+            xs.append(x0)
+            x_cls.append(i)
+
+            # make the contrastive learning example
             if self.paired:
-                xs1.append(
-                    SyntheticBgFgMtgImages.make_virtual(
-                        card,
+                xc = i
+                # try convert the positive example to a negative with the same name
+                if random.random() < (similar_neg_prob or self.similar_neg_prob):
+                    sim_card = self.mtg.get_similar_card(card.id)
+                    if sim_card is not None:
+                        # offset, must not be same, chance of hitting other card in this group is low
+                        # ideally should check if the same
+                        xc = 10000 + i
+                        card_img = SyntheticBgFgMtgImages._load_card_image(sim_card)
+                # make 2nd input with SAME (if above not applied) card but different
+                # augment and background for contrastive learning
+                bg1 = random.choice(bg_imgs)
+                if random.random() < (
+                    target_is_input_prob or self.target_is_input_prob
+                ):
+                    x1 = SyntheticBgFgMtgImages.make_cropped(
+                        card_img, size_hw=self.x_size_hw
+                    )
+                else:
+                    x1 = SyntheticBgFgMtgImages.make_virtual(
+                        card_img,
                         bg1,
                         size_hw=self.x_size_hw,
                         half_upsidedown=self.half_upsidedown,
                     )
-                )
+                xs.append(x1)
+                x_cls.append(xc)
+
         # stack
-        return {
-            "x": np.stack(xs0, axis=0),
-            **({"y": np.stack(ys, axis=0)} if self.targets else {}),
-            **({"x2": np.stack(xs1, axis=0)} if self.paired else {}),
-        }
+        x = np.stack(xs, axis=0)
+        y = np.stack(ys, axis=0) if self.targets else None
+        labels = np.asarray(x_cls) if self.paired else None
+
+        if self.check_data:
+
+            def _check(v, name):
+                stat_str = (
+                    lambda v: f"min: {np.min(v)}, max: {np.max(v)}, mean: {np.mean(v)}, std: {np.std(v)}"
+                )
+                if v is not None and np.any(v < 0):
+                    raise ValueError(f"x < 0: {stat_str(v)}")
+                if v is not None and np.any(v > 1):
+                    raise ValueError(f"x > 1: {stat_str(v)}")
+                if v is not None and np.any(np.isnan(v)):
+                    raise ValueError(f"x NaN: {stat_str(v)}")
+
+            _check(x, "x")
+            _check(y, "y")
+
+        return x, y, labels
 
     def set_batch_size(self, batch_size):
         self.default_batch_size = batch_size
@@ -176,6 +267,9 @@ class RanMtgEncDecDataset(IterableDataset):
             x_size_hw=hparams.x_size_hw,
             y_size_hw=hparams.y_size_hw,
             half_upsidedown=hparams.half_upsidedown,
+            target_is_input_prob=hparams.target_is_input_prob,
+            similar_neg_prob=hparams.similar_neg_prob,
+            check_data=hparams.check_data,
         )
 
 
@@ -287,38 +381,28 @@ class MtgVisionEncoder(pl.LightningModule):
         logs, loss = {}, 0
         # recon loss
         if self.hparams.loss_recon is None:
-            if not self.hparams.loss_contrastive_batched:
-                z = self.encode(batch["x"])
+            z = self.encode(batch["x"])
         else:
             z, y_recon = self.forward(batch["x"])
             y_recon = torch.clamp(y_recon, -0.25, 1.25)  # help with gradient explosion
             # recon loss
             recon_loss_fn = self._get_loss_recon()
-            loss_recon = recon_loss_fn(y_recon, batch["y"])
+            # input x size might have more elems than y, but y always corresponds to
+            # starting elements in x, so slice array
+            loss_recon = recon_loss_fn(y_recon[: len(batch["y"])], batch["y"])
             loss_recon *= self.hparams.scale_loss_recon
             loss += loss_recon
             logs["loss_recon"] = loss_recon
 
         # contrastive loss
         if self.hparams.loss_contrastive is not None:
-            if not self.hparams.loss_contrastive_batched:
-                z2 = self.encode(batch["x2"])
-            else:
-                _zs = self.encode(torch.concatenate([batch["x"], batch["x2"]], dim=0))
-                z, z2 = _zs[: len(_zs) // 2], _zs[len(_zs) // 2 :]
-            # shape (B, C, H, W) --> (B, C*H*W)
-            z_flat = z.reshape(z.size(0), -1)
-            z2_flat = z2.reshape(z2.size(0), -1)
-            # normalize, may help with gradient explosion?
-            z_flat = F.normalize(z_flat, dim=1)
-            z2_flat = F.normalize(z2_flat, dim=1)
-            # self-supervised loss
             assert self.hparams.loss_contrastive == "ntxent"
-            loss_func = SelfSupervisedLoss(NTXentLoss(temperature=0.07), symmetric=True)
-            loss_cont = loss_func(z_flat, z2_flat) * self.hparams.scale_loss_contrastive
+            metric = NTXentLoss(temperature=0.07)
+            labels = batch["labels"]
+            loss_cont = metric(z, labels) * self.hparams.scale_loss_contrastive
             # scale
             loss += loss_cont
-            logs["loss_contrastive"] = loss_cont
+            logs["loss_metric"] = loss_cont
 
         # loss is required key
         logs["loss"] = loss
@@ -407,8 +491,8 @@ class MtgDataModule(pl.LightningDataModule):
 
 
 class ImageLoggingCallback(Callback):
-    def __init__(self, vis_batch, log_every_n_steps=1000):
-        self.vis_batch = vis_batch
+    def __init__(self, vis_batches_np, log_every_n_steps=1000):
+        self.vis_batches_np = vis_batches_np
         self.log_every_n_steps = log_every_n_steps
         self.last_steps = -(log_every_n_steps * 10)
         self._first_log = True
@@ -416,11 +500,11 @@ class ImageLoggingCallback(Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         current_steps = trainer.global_step
         if current_steps - self.last_steps >= self.log_every_n_steps:
-            self.log_images(pl_module, self.vis_batch)
+            self.log_images(pl_module)
             self.last_steps = current_steps
 
     @staticmethod
-    def join_images_into_row(images, padding=5):
+    def join_images_into_row(images: Sequence[np.ndarray], padding=5):
         const = 127
         if images[0].dtype in [np.float16, np.float32, np.float64]:
             const = 0.5
@@ -435,35 +519,72 @@ class ImageLoggingCallback(Callback):
         ]
         return np.concatenate(images, axis=1)
 
-    def log_images(self, model, vis_batch_np):
-        print("Logging images...")
-        if model.hparams.loss_recon is None:
-            print("No reconstruction loss, skipping image logging.")
-            return
+    @staticmethod
+    def _wandb_img(image: np.ndarray, caption: str):
+        if image.dtype == np.uint8:
+            pass
+        elif image.dtype == np.float32:
+            m, M = image.min(), image.max()
+            if m < 0 or 1 < M:
+                warnings.warn(
+                    f"{caption} image must be in range [0, 1], but got [{m}, {M}], clipping"
+                )
+            image = img_clip(image)
+        else:
+            raise ValueError(f"{caption} image dtype unsupported: {image.dtype}")
+        return wandb.Image(image, caption=caption)
+
+    def log_images(self, model: MtgVisionEncoder):
+        vis_batches_np: list[dict] = self.vis_batches_np
         logs = {}
         model.eval()
+
+        def take_imgs(
+            batches: list[dict],
+            bkey: str,
+            bidx: int,
+        ) -> np.ndarray | None:
+            if self._first_log and bkey in batches[0]:
+                images = [batch[bkey][bidx] for batch in batches]
+                images = np.stack(images, axis=0)
+                return images
+            return None
+
+        def _log_images(images, logs_key: str, caption: str):
+            if images is not None:
+                image = self.join_images_into_row(images)
+                logs[logs_key] = self._wandb_img(image, caption)
+
+        def _forward_imgs(images: np.ndarray | None):
+            if model.hparams.loss_recon and images is not None:
+                inputs = torch.from_numpy(images).float().permute(0, 3, 1, 2)
+                inputs = inputs.to(model.device)
+                _, outputs = model(inputs)
+                out_images = np.clip(K.tensor_to_image(outputs), 0, 1)
+                return out_images
+            return None
+
         with torch.no_grad():
-            x_np = np.stack([batch["x"] for batch in vis_batch_np], axis=0)
-            y_np = np.stack([batch["y"] for batch in vis_batch_np], axis=0)
-            x = torch.from_numpy(x_np).float().permute(0, 3, 1, 2).to(model.device)
-            _, y = model(x)
-            mout_np = []
-            for out in [y]:
-                mout_np.append(np.clip(K.tensor_to_image(out), 0, 1))
+            contrastive = model.hparams.loss_contrastive
+            recon = model.hparams.loss_recon
+            # INPUT/TARGETS
+            y_np = take_imgs(vis_batches_np, "y", 0)
+            x_np = take_imgs(vis_batches_np, "x", 0)
+            x2_np = take_imgs(vis_batches_np, "x", -1) if contrastive else None
             # log images
-            if self._first_log:
-                logs["images_x"] = wandb.Image(
-                    self.join_images_into_row(x_np), caption="Input"
-                )
-            if self._first_log:
-                logs["images_y"] = wandb.Image(
-                    self.join_images_into_row(y_np), caption="Target"
-                )
-            for i, out_np in enumerate(mout_np):
-                name = "images_out" if i == 0 else f"images_out_{i + 1}"
-                logs[name] = wandb.Image(
-                    self.join_images_into_row(out_np), caption=f"Output {i}"
-                )
+            _log_images(y_np, "images_y", "Target")
+            _log_images(x_np, "images_x", "Input")
+            _log_images(x2_np, "images_x2", "Paired Inputs")
+            # FORWARD
+            if recon:
+                out_y_np = _forward_imgs(y_np)
+                out_x_np = _forward_imgs(x_np)
+                out_x2_np = _forward_imgs(x2_np) if contrastive else None
+                # log images
+                _log_images(out_y_np, "images_out_y", "Target Output")
+                _log_images(out_x_np, "images_out_x", "Input Output")
+                _log_images(out_x2_np, "images_out_x2", "Paired Inputs Output")
+
         # stop logging after the first time
         self._first_log = False
         wandb.log(logs)
@@ -474,7 +595,7 @@ class ImageLoggingCallback(Callback):
 # ========================================================================= #
 
 
-def get_test_images(
+def get_test_image_batches(
     train_dataset: RanMtgEncDecDataset,
     seed: int = None,
 ):
@@ -482,22 +603,31 @@ def get_test_images(
         seed_all(seed)
 
     # Initial batch for visualization
-    vis_batch = [
+    vis_batches = [
         # https://scryfall.com/card/e02/35/rancor
-        train_dataset.get_img_by_id("38e281ab-3437-4a2c-a668-9a148bc3eaf7"),
-        # https://scryfall.com/card/2x2/156/rancor
-        train_dataset.get_img_by_id("86d6b411-4a31-4bfc-8dd6-e19f553bb29b"),
+        train_dataset.image_batch_by_ids(
+            "38e281ab-3437-4a2c-a668-9a148bc3eaf7",
+            force_similar_neg=True,
+            force_target_input=True,
+        ),
+        train_dataset.image_batch_by_ids(
+            "38e281ab-3437-4a2c-a668-9a148bc3eaf7",
+            force_similar_neg=False,
+            force_target_input=False,
+        ),
+        # # https://scryfall.com/card/2x2/156/rancor
+        # train_dataset.image_batch_by_ids("86d6b411-4a31-4bfc-8dd6-e19f553bb29b"),
         # https://scryfall.com/card/bro/238b/urza-planeswalker
-        train_dataset.get_img_by_id("40a01679-3224-427e-bd1d-b797b0ab68b7"),
+        train_dataset.image_batch_by_ids("40a01679-3224-427e-bd1d-b797b0ab68b7"),
         # https://scryfall.com/card/ugl/70/blacker-lotus
-        train_dataset.get_img_by_id("4a2e428c-dd25-484c-bbc8-2d6ce10ef42c"),
+        train_dataset.image_batch_by_ids("4a2e428c-dd25-484c-bbc8-2d6ce10ef42c"),
         # https://scryfall.com/card/zen/249/forest
-        train_dataset.get_img_by_id("341b05e6-93bb-4071-b8c6-1644f56e026d"),
+        train_dataset.image_batch_by_ids("341b05e6-93bb-4071-b8c6-1644f56e026d"),
         # https://scryfall.com/card/mh3/132/ral-and-the-implicit-maze
-        train_dataset.get_img_by_id("ebadb7dc-69a4-43c9-a2f8-d846b231c71c"),
+        train_dataset.image_batch_by_ids("ebadb7dc-69a4-43c9-a2f8-d846b231c71c"),
     ]
 
-    return vis_batch
+    return vis_batches
 
 
 def train(config: "Config"):
@@ -511,7 +641,7 @@ def train(config: "Config"):
     )
 
     # Initial batch for visualization
-    vis_batch = get_test_images(data_module.train_dataset, seed=config.seed)
+    vis_batches = get_test_image_batches(data_module.train_dataset, seed=config.seed)
 
     # Initialize wandb
     parts = [
@@ -559,7 +689,9 @@ def train(config: "Config"):
         max_epochs=config.max_steps,
         logger=wandb_logger,
         callbacks=[
-            ImageLoggingCallback(vis_batch, log_every_n_steps=config.log_every_n_steps),
+            ImageLoggingCallback(
+                vis_batches, log_every_n_steps=config.log_every_n_steps
+            ),
             ModelCheckpoint(
                 monitor="loss_recon",
                 save_top_k=3,
@@ -676,20 +808,23 @@ class Config(pydantic.BaseModel):
     bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards
     force_download: bool = False
     half_upsidedown: bool = False
+    target_is_input_prob: float = 0.05
+    similar_neg_prob: float = 0.2
+    check_data: bool = False  # ensure data is in the right range!
     # model
     model_name: str = "cnvnxt2ae_nano"
-    head_type: str = "conv+linear"  # conv, conv+linear, pool+linear
+    head_type: str = "pool+linear"  # conv, conv+linear, pool+linear
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
     optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 1e-3
-    weight_decay: float = 1e-9  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
-    batch_size: int = 32
+    weight_decay: float = 1e-7  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
+    batch_size: int = 64
     gradient_clip_val: float = 0.5
-    accumulate_grad_batches: int = 2
+    accumulate_grad_batches: int = 1
     # loss
-    loss_recon: Optional[str] = "l1"  # 'ssim5+l1'
+    loss_recon: Optional[str] = None  # 'ssim5+l1'
     loss_contrastive: Optional[str] = "ntxent"  # ntxent
     loss_contrastive_batched: bool = False
     scale_loss_recon: float = 1
@@ -701,7 +836,7 @@ class Config(pydantic.BaseModel):
     # logging
     prefix: Optional[str] = None
     checkpoint: Optional[str] = None
-    log_every_n_steps: int = 5000
+    log_every_n_steps: int = 2500
     ckpt_every_n_steps: int = 2500
     # needed if model architecture changes or optimizer changes
     skip_first_optimizer_load_state: bool = True

@@ -31,8 +31,9 @@ Using similar techniques to facial recognition.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 import uuid
+from collections import defaultdict
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import DefaultDict, Iterator, Literal, Optional
 
 import cv2
 import numpy as np
@@ -60,6 +61,7 @@ class Mutate:
     """
 
     @staticmethod
+    @ensure_float32
     def flip(img, horr=True, vert=True):
         return uimg.flip(
             img,
@@ -68,16 +70,19 @@ class Mutate:
         )
 
     @staticmethod
+    @ensure_float32
     def rotate_bounded(img, deg_min=0, deg_max=360):
         return uimg.rotate_bounded(
             img, deg_min + np.random.random() * (deg_max - deg_min)
         )
 
     @staticmethod
+    @ensure_float32
     def upsidedown(img):
         return np.rot90(img, k=2)
 
     @staticmethod
+    @ensure_float32
     def warp(img, warp_ratio=0.2, warp_ratio_min=-0.15):
         # [top left, top right, bottom left, bottom right]
         (h, w) = (img.shape[0] - 1, img.shape[1] - 1)
@@ -96,10 +101,12 @@ class Mutate:
         return cv2.warpPerspective(img, transform, (img.shape[1], img.shape[0]))
 
     @staticmethod
+    @ensure_float32
     def warp_inv(img, warp_ratio=0.5, warp_ratio_min=0.25):
         return Mutate.warp(img, warp_ratio=-warp_ratio, warp_ratio_min=-warp_ratio_min)
 
     @staticmethod
+    @ensure_float32
     def noise(img, amount=0.75):
         noise_type = random.choice(["speckle", "gaussian", "pepper", "poisson"])
         if noise_type == "speckle":
@@ -117,11 +124,13 @@ class Mutate:
         return img
 
     @staticmethod
+    @ensure_float32
     def blur(img, n_max=3):
         n = np.random.randint(0, (n_max - 1) // 2 + 1) * 2 + 1
         return cv2.GaussianBlur(img, (n, n), 0)
 
     @staticmethod
+    @ensure_float32
     def tint(img, amount=0.15):
         for i in range(3):
             r = 1 + amount * (2 * np.random.random() - 1)
@@ -129,12 +138,14 @@ class Mutate:
         return img
 
     @staticmethod
+    @ensure_float32
     def fade_white(img, amount=0.33):
         ratio = np.random.random() * amount
         img[:, :, :3] = (ratio) * 1 + (1 - ratio) * img[:, :, :3]
         return img
 
     @staticmethod
+    @ensure_float32
     def fade_black(img, amount=0.5):
         ratio = np.random.random() * amount
         img[:, :, :3] = (ratio) * 0 + (1 - ratio) * img[:, :, :3]
@@ -146,10 +157,10 @@ class Mutate:
         alpha = 1.0 + np.random.uniform(-contrast, contrast)
         beta = np.random.uniform(-brightness, brightness)
         img = alpha * img + beta
-        return np.clip(img, 0, 1)
+        return uimg.img_clip(img)
 
     # @staticmethod
-    @ensure_float32
+    # @ensure_float32
     # def color_jitter(img, hue=0.1, saturation=0.1, value=0.1):
     #     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     #     h, s, v = cv2.split(hsv)
@@ -163,7 +174,7 @@ class Mutate:
     @ensure_float32
     def gaussian_noise(img, mean=0, sigma=0.25):
         noise = np.random.normal(mean, sigma, img.shape).astype(np.float32)
-        return np.clip(img + noise, 0, 1)
+        return uimg.img_clip(img + noise)
 
     @staticmethod
     @ensure_float32
@@ -183,7 +194,8 @@ class Mutate:
     @ensure_float32
     def sharpen(img):
         kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        return cv2.filter2D(img, -1, kernel)
+        img = cv2.filter2D(img, -1, kernel)
+        return uimg.img_clip(img)
 
     # @staticmethod
     # def elastic_transform(img, alpha=36, sigma=6):
@@ -263,6 +275,12 @@ class Mutate:
         block_y1 = np.minimum(h, cy + block_h // 2)
         block_h = block_y1 - block_y0
         block_w = block_x1 - block_x0
+
+        # can sometimes be empty...
+        if block_y1 <= block_y0:
+            return img
+        if block_x1 <= block_x0:
+            return img
 
         if isinstance(color, (tuple, list)):
             color = random.choice(color)
@@ -437,12 +455,53 @@ class SyntheticBgFgMtgImages:
             force_update=False,
             download_mode="now" if predownload else "none",
         )
+        # group cards by names so we can find adversarial ones
+        self._cards_by_name: DefaultDict[str, dict[str, ScryfallCardFace]] = (
+            defaultdict(dict)
+        )
+        self._cards_by_set: DefaultDict[str, dict[str, ScryfallCardFace]] = defaultdict(
+            dict
+        )
+        for card in tqdm(self._ds):
+            self._cards_by_name[card.name][card.id] = card
+            self._cards_by_set[card.set_code][card.id] = card
+        print(
+            f"Grouped {len(self._ds)} cards with unique names: {len(self._cards_by_name)} and unique sets: {len(self._cards_by_set)}"
+        )
 
     def get_card_by_id(self, id_: uuid.UUID | str) -> ScryfallCardFace:
         return self._ds.get_card_by_id(id_)
 
-    def get_image_by_id(self, id_: uuid.UUID | str):
-        return self._load_card_image(self.get_card_by_id(id_))
+    def get_image_by_id(self, id_: uuid.UUID | str) -> np.ndarray:
+        _, img = self.get_card_and_image_by_id(id_)
+        return img
+
+    def get_card_and_image_by_id(
+        self, id_: uuid.UUID | str
+    ) -> tuple[ScryfallCardFace, np.ndarray]:
+        card = self._ds.get_card_by_id(id_)
+        return card, self._load_card_image(card)
+
+    def _get_group(self, card, mode) -> dict[str, ScryfallCardFace]:
+        if mode == "name":
+            return self._cards_by_name[card.name]
+        elif mode == "set":
+            return self._cards_by_name[card.set_code]
+        else:
+            raise KeyError
+
+    def get_similar_card(
+        self, id_: uuid.UUID | str, mode: Literal["name", "set"] = "name"
+    ) -> Optional[ScryfallCardFace]:
+        card = self.get_card_by_id(id_)
+        group = self._get_group(card, mode=mode)
+        assert card.id in group
+        # get similar card with non-same ID
+        group = dict(group)
+        group.pop(card.id)
+        if group:
+            return random.choice(list(group.values()))
+        return None
 
     @classmethod
     def _load_card_image(cls, card: ScryfallCardFace):
@@ -463,7 +522,13 @@ class SyntheticBgFgMtgImages:
             yield card
 
     def ran(self) -> np.ndarray:
-        return self._load_card_image(self.ran_card())
+        _, img = self.ran_card_and_image()
+        return img
+
+    def ran_card_and_image(self) -> tuple[ScryfallCardFace, np.ndarray]:
+        card = self.ran_card()
+        img = self._load_card_image(card)
+        return card, img
 
     def ran_path(self) -> str:
         return str(self.ran_card().download())
@@ -492,40 +557,41 @@ class SyntheticBgFgMtgImages:
         ),
     )
     _RAN_VRTL = uran.ApplyShuffled(
-        uran.ApplyChoice(Mutate.blur, None),
+        # uran.ApplyChoice(Mutate.blur, None),
         uran.ApplyChoice(Mutate.sharpen, None),
-        uran.ApplyChoice(
-            Mutate.noise,
-            Mutate.gaussian_noise,
-            Mutate.salt_pepper_noise,
-            Mutate.random_erasing,
-            Mutate.cutout,
-            None,
-        ),
-        uran.ApplyChoice(
-            uran.ApplyChoice(
-                Mutate.noise,
-                Mutate.gaussian_noise,
-                Mutate.salt_pepper_noise,
-                Mutate.random_erasing,
-                Mutate.cutout,
-                None,
-            ),
-            None,
-        ),
-        uran.ApplyChoice(Mutate.tint, None),
+        # uran.ApplyChoice(
+        #     Mutate.noise,
+        #     Mutate.gaussian_noise,
+        #     Mutate.salt_pepper_noise,
+        #     Mutate.random_erasing,
+        #     Mutate.cutout,
+        #     None,
+        # ),
+        # uran.ApplyChoice(
+        #     uran.ApplyChoice(
+        #         Mutate.noise,
+        #         Mutate.gaussian_noise,
+        #         Mutate.salt_pepper_noise,
+        #         Mutate.random_erasing,
+        #         Mutate.cutout,
+        #         None,
+        #     ),
+        #     None,
+        # ),
+        # uran.ApplyChoice(Mutate.tint, None),
         uran.ApplyChoice(
             Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
         ),
-        uran.ApplyChoice(Mutate.random_erasing, None),
+        # uran.ApplyChoice(Mutate.random_erasing, None),
     )
 
     @staticmethod
+    @ensure_float32
     def make_cropped(
         path_or_img: PathOrImg,
         size_hw: SizeHW | None = None,
         half_upsidedown: bool = False,
-    ):
+    ) -> np.ndarray:
         card = (
             uimg.imread_float(path_or_img)
             if isinstance(path_or_img, str)
@@ -536,11 +602,13 @@ class SyntheticBgFgMtgImages:
             border_width=ceil(max(0.02 * card.shape[0], 0.02 * card.shape[1])),
             size_hw=size_hw,
         )
-        return (
+        cropped = (
             uran.ApplyChoice(Mutate.upsidedown, None)(ret) if half_upsidedown else ret
         )
+        return cropped
 
     @classmethod
+    @ensure_float32
     def make_masked(cls, path_or_img: PathOrImg) -> np.ndarray:
         card = (
             uimg.imread_float(path_or_img)
@@ -559,17 +627,19 @@ class SyntheticBgFgMtgImages:
         return ret
 
     @classmethod
+    @ensure_float32
     def make_bg(cls, bg_path_or_img: PathOrImg, size_hw: SizeHW) -> np.ndarray:
         bg = (
             uimg.imread_float(bg_path_or_img)
             if isinstance(bg_path_or_img, str)
             else bg_path_or_img
         )
-        bg = cls._RAN_BG(bg)
+        bg = cls._RAN_BG(bg)  # augments may gen values out of range
         bg = uimg.crop_to_size(bg, size_hw)
         return bg
 
     @classmethod
+    @ensure_float32
     def make_virtual(
         cls,
         card_path_or_img: PathOrImg,
@@ -588,11 +658,11 @@ class SyntheticBgFgMtgImages:
         # fg - card
         fg = cls.make_masked(card)
         fg = uimg.crop_to_size(fg, size_hw, pad=True)
-        fg = cls._RAN_FG(fg)
+        fg = cls._RAN_FG(fg)  # augments may gen values out of range
         # bg
-        bg = cls.make_bg(bg_path_or_img, size_hw)
+        bg = cls.make_bg(bg_path_or_img, size_hw)  # preserve dynamic range
         # merge
-        virtual = uimg.rgba_over_rgb(fg, bg)
+        virtual = uimg.rgba_over_rgb(fg, bg)  # augments may gen values out of range
         virtual = cls._RAN_VRTL(virtual)
         assert virtual.shape[:2] == size_hw
         return virtual
@@ -644,5 +714,5 @@ if __name__ == "__main__":
             _o, _l, (192, 128), (192, 128), True
         )
 
-        uimg.imshow_loop(x, "asdf")
+        # uimg.imshow_loop(x, "asdf")
         # uimg.imshow_loop(y, "asdf")
