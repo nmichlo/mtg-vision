@@ -33,7 +33,7 @@ Using similar techniques to facial recognition.
 import uuid
 from collections import defaultdict
 from pathlib import Path
-from typing import DefaultDict, Iterator, Literal, Optional
+from typing import DefaultDict, Hashable, Iterable, Iterator, Literal, Optional, TypeVar
 
 import cv2
 import numpy as np
@@ -157,6 +157,22 @@ class Mutate:
         alpha = 1.0 + np.random.uniform(-contrast, contrast)
         beta = np.random.uniform(-brightness, brightness)
         img = alpha * img + beta
+        return uimg.img_clip(img)
+
+    @staticmethod
+    @ensure_float32
+    def rgb_jitter_add(img, brightness=0.3):
+        # Randomly change the brightness of the image
+        rgb = np.random.uniform(-brightness, brightness, size=(1, 1, 3))
+        img[:, :, :3] *= rgb
+        return uimg.img_clip(img)
+
+    @staticmethod
+    @ensure_float32
+    def rgb_jitter_mul(img, brightness=0.3):
+        # Randomly change the brightness of the image
+        rgb = np.random.uniform(1 - brightness, 1 + brightness, size=(1, 1, 3))
+        img[:, :, :3] *= rgb
         return uimg.img_clip(img)
 
     # @staticmethod
@@ -438,6 +454,16 @@ class CocoValImages(IlsvrcImages):
 SizeHW = tuple[int, int]
 PathOrImg = str | np.ndarray
 
+H = TypeVar("H", bound=Hashable)
+
+
+def idx_map(items: Iterable[H]) -> dict[H, int]:
+    """Generate labels for a sequence of items."""
+    labels = {}
+    for i, item in enumerate(sorted(set(items))):
+        labels[item] = i
+    return labels
+
 
 class SyntheticBgFgMtgImages:
     """
@@ -456,18 +482,32 @@ class SyntheticBgFgMtgImages:
             download_mode="now" if predownload else "none",
         )
         # group cards by names so we can find adversarial ones
-        self._cards_by_name: DefaultDict[str, dict[str, ScryfallCardFace]] = (
-            defaultdict(dict)
-        )
-        self._cards_by_set: DefaultDict[str, dict[str, ScryfallCardFace]] = defaultdict(
-            dict
-        )
+        GroupHint = DefaultDict[str, dict[str, ScryfallCardFace]]
+        self._cards_by_name: GroupHint = defaultdict(dict)
+        self._cards_by_set: GroupHint = defaultdict(dict)
+        ids, names, sets = [], [], []
         for card in tqdm(self._ds):
             self._cards_by_name[card.name][card.id] = card
             self._cards_by_set[card.set_code][card.id] = card
+            ids.append(card.id)
+            names.append(card.name)
+            sets.append(card.set_code)
+        self._idx_by_id = idx_map(ids)
+        self._idx_by_name = idx_map(names)
+        self._idx_by_set = idx_map(sets)
         print(
             f"Grouped {len(self._ds)} cards with unique names: {len(self._cards_by_name)} and unique sets: {len(self._cards_by_set)}"
         )
+
+    def card_get_labels(self, card: ScryfallCardFace) -> tuple[int, int, int]:
+        id_idx = self._idx_by_id[card.id]
+        name_idx = self._idx_by_name[card.name]
+        set_idx = self._idx_by_set[card.set_code]
+        return id_idx, name_idx, set_idx
+
+    def card_get_labels_by_id(self, id_: uuid.UUID | str) -> tuple[int, int, int]:
+        card = self.get_card_by_id(id_)
+        return self.card_get_labels(card)
 
     def get_card_by_id(self, id_: uuid.UUID | str) -> ScryfallCardFace:
         return self._ds.get_card_by_id(id_)
@@ -542,6 +582,9 @@ class SyntheticBgFgMtgImages:
     _RAN_BG = uran.ApplyShuffled(
         uran.ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
         uran.ApplyChoice(
+            Mutate.tint, Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul, None
+        ),
+        uran.ApplyChoice(
             Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
         ),
         # uran.ApplyChoice(Mutate.color_jitter, None),
@@ -553,36 +596,41 @@ class SyntheticBgFgMtgImages:
             Mutate.perspective_transform,
         ),
         uran.ApplyChoice(
+            Mutate.tint, Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul, None
+        ),
+        uran.ApplyChoice(
             Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
         ),
     )
     _RAN_VRTL = uran.ApplyShuffled(
-        # uran.ApplyChoice(Mutate.blur, None),
+        uran.ApplyChoice(Mutate.blur, None),
         uran.ApplyChoice(Mutate.sharpen, None),
-        # uran.ApplyChoice(
-        #     Mutate.noise,
-        #     Mutate.gaussian_noise,
-        #     Mutate.salt_pepper_noise,
-        #     Mutate.random_erasing,
-        #     Mutate.cutout,
-        #     None,
-        # ),
-        # uran.ApplyChoice(
-        #     uran.ApplyChoice(
-        #         Mutate.noise,
-        #         Mutate.gaussian_noise,
-        #         Mutate.salt_pepper_noise,
-        #         Mutate.random_erasing,
-        #         Mutate.cutout,
-        #         None,
-        #     ),
-        #     None,
-        # ),
-        # uran.ApplyChoice(Mutate.tint, None),
+        uran.ApplyChoice(
+            Mutate.noise,
+            Mutate.gaussian_noise,
+            Mutate.salt_pepper_noise,
+            Mutate.random_erasing,
+            Mutate.cutout,
+            None,
+        ),
+        uran.ApplyChoice(
+            uran.ApplyChoice(
+                Mutate.noise,
+                Mutate.gaussian_noise,
+                Mutate.salt_pepper_noise,
+                Mutate.random_erasing,
+                Mutate.cutout,
+                None,
+            ),
+            None,
+        ),
+        uran.ApplyChoice(
+            Mutate.tint, Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul, None
+        ),
         uran.ApplyChoice(
             Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
         ),
-        # uran.ApplyChoice(Mutate.random_erasing, None),
+        uran.ApplyChoice(Mutate.random_erasing, None),
     )
 
     @staticmethod
