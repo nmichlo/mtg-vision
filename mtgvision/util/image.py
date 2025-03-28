@@ -42,25 +42,41 @@ from PIL import Image
 T = TypeVar("T")
 
 
-def ensure_float32(fn: T) -> T:
+def ensure_float32(fn: T = None, *, strict: bool = False, disable: bool = True) -> T:
     """
     Decorator to ensure that a function returns a numpy array of type np.float32.
     """
 
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        result = fn(*args, **kwargs)
-        if not isinstance(result, np.ndarray):
-            raise Exception(
-                f"Function {fn.__name__} did not return a numpy array, got: {type(result)}"
-            )
-        if result.dtype != np.float32:
-            raise Exception(
-                f"Function {fn.__name__} did not return a numpy array of type {np.float32}, got: {result.dtype}"
-            )
-        return result
+    def wrap(fn: T) -> T:
+        if disable:
+            return fn
 
-    return wrapper
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            if not isinstance(result, np.ndarray):
+                raise Exception(
+                    f"Function {fn.__name__} did not return a numpy array, got: {type(result)}"
+                )
+            if result.dtype != np.float32:
+                raise Exception(
+                    f"Function {fn.__name__} did not return a numpy array of type {np.float32}, got: {result.dtype}"
+                )
+            if strict:
+                if np.min(result) < 0:
+                    msg = f"Function {fn.__name__} returned a numpy array with negative values, got: {np.min(result)}"
+                    raise RuntimeError(msg)
+                if np.max(result) > 1:
+                    msg = f"Function {fn.__name__} returned a numpy array with values greater than 1, got: {np.max(result)}"
+                    raise RuntimeError(msg)
+            return result
+
+        return wrapper
+
+    if fn is not None:
+        return wrap(fn)
+    else:
+        return wrap
 
 
 def asrt_float(x):
@@ -110,17 +126,27 @@ def imshow(image, window_name="image", scale=1):
     cv2.moveWindow(window_name, 100, 100)
 
 
-def imshow_loop(image, window_name="image", scale=1):
+def imshow_loop(
+    image: np.ndarray, window_name: str = "image", scale: float = 1, delay: int = 100
+):
     """
     Display an image in a window, the window will stay open until the user
     presses the escape key or closes the window.
     """
     imshow(image, window_name, scale)
     while True:
-        k = cv2.waitKey(100)
-        if (k == 27) or (cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1):
-            cv2.destroyAllWindows()
+        if imwait(delay=delay, window_name=window_name):
             break
+
+
+def imwait(delay: int = 100, window_name: str = None):
+    k = cv2.waitKey(delay)
+    if (k == 27) or (
+        window_name and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1
+    ):
+        cv2.destroyAllWindows()
+        return True
+    return False
 
 
 @ensure_float32
@@ -299,11 +325,13 @@ def resize(
     """Resize an image to a new size."""
     h, w = size_hw
     # OpenCV is W*H not H*W
-    return cv2.resize(
+    img = cv2.resize(
         img,
         (w, h),
         interpolation=cv2.INTER_AREA if shrink else cv2.INTER_CUBIC,
     )
+    # can result in values > 1 ?????????
+    return img_clip(img)
 
 
 @ensure_float32

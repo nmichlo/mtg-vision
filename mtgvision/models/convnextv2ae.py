@@ -28,6 +28,13 @@ def Act():
 #             pass
 #     return Norm(*args, **kwargs)
 
+class Reshape(nn.Module):
+    def __init__(self, shape):
+        super().__init__()
+        self.shape = shape
+    def forward(self, x):
+        return x.reshape(self.shape)
+
 
 def Norm2d(*args, **kwargs):
     return LayerNorm(*args, **kwargs)
@@ -61,8 +68,9 @@ class _Base(nn.Module):
         self.head_init_scale = head_init_scale
 
         assert len(depths) == len(dims)
-        iw, ih = self.get_internal_wh(image_wh)
+        iw, ih = self._get_internal_wh(image_wh)
         self.internal_wh = (iw, ih)
+        self.internal_hw = (ih, iw)  # usually (6, 4)
         self.internal_num = iw * ih
 
         assert z_size % self.internal_num == 0
@@ -75,7 +83,7 @@ class _Base(nn.Module):
     def internal_scale(self) -> int:
         return 4 * 2 * 2 * 2
 
-    def get_internal_wh(self, in_wh: tuple[int, int]) -> tuple[int, int]:
+    def _get_internal_wh(self, in_wh: tuple[int, int]) -> tuple[int, int]:
         assert len(in_wh) == 2
         assert in_wh[0] % self.internal_scale == 0
         assert in_wh[1] % self.internal_scale == 0
@@ -109,10 +117,9 @@ class ConvNeXtV2Encoder(_Base):
         z_size: int = 1000,
         depths: tuple[int, int, int, int] = (3, 3, 9, 3),
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
-        head_type: Literal["conv", "pool+linear"] = "conv",
+        head_type: Literal["conv", "pool+linear", "conv+linear"] = "conv",
         head_init_scale: Optional[float] = None,
         scale_io: bool = True,
-        reshape_z: bool = True,
     ):
         super().__init__(
             image_wh=image_wh,
@@ -124,7 +131,6 @@ class ConvNeXtV2Encoder(_Base):
         )
         self.head_type = head_type
         self.scale_io = scale_io
-        self.reshape_z = reshape_z
 
         # **DOWNSAMPLE LAYERS**
         # + stem and 3 intermediate downsampling conv layers
@@ -158,10 +164,17 @@ class ConvNeXtV2Encoder(_Base):
         # --> Bx[3]x6x4
         if head_type == "conv":
             self.pool = nn.Sequential(
-                nn.Conv2d(dims[3], z_size // (6 * 4), kernel_size=1, stride=1),
+                nn.Conv2d(dims[3], z_size // self.internal_num, kernel_size=1, stride=1),
                 # View((-1, z_size)),
             )
             self.head = nn.Identity()
+        elif head_type == "conv+linear":
+            self.pool = nn.Sequential(
+                nn.Conv2d(dims[3], z_size // self.internal_num, kernel_size=1, stride=1),
+                Norm2d(z_size // self.internal_num, eps=1e-6, data_format="channels_first"),
+                Reshape((-1, z_size)),
+            )
+            self.head = nn.Linear(z_size, z_size)
         elif head_type == "pool+linear":
             self.pool = nn.Sequential(
                 GlobalAveragePooling(),
@@ -176,7 +189,7 @@ class ConvNeXtV2Encoder(_Base):
         # initialize weights
         self.apply(self._init_weights)
         if self.head_init_scale is not None:
-            if head_type == "pool+linear":
+            if head_type == "pool+linear" or head_type == "conv+linear":
                 self.head.weight.data.mul_(head_init_scale)
                 self.head.bias.data.mul_(head_init_scale)
 
@@ -189,8 +202,7 @@ class ConvNeXtV2Encoder(_Base):
         x = self.block3(x)
         x = self.pool(x)
         x = self.head(x)
-        if self.reshape_z:
-            x = x.reshape(x.size(0), -1)
+        x = x.reshape(x.size(0), self.z_size)
         return x
 
     def to_coreml(self):
@@ -239,10 +251,9 @@ class ConvNeXtV2Decoder(_Base):
         z_size: int = 768,
         depths: tuple[int, int, int, int] = (3, 3, 9, 3),
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
-        head_type: Literal["conv", "pool+linear"] = "conv",
+        head_type: Literal["conv", "pool+linear", "conv+linear"] = "conv",
         head_init_scale: Optional[float] = None,
         scale_io: bool = True,
-        reshape_z: bool = True,
     ):
         super().__init__(
             image_wh=image_wh,
@@ -254,14 +265,22 @@ class ConvNeXtV2Decoder(_Base):
         )
         self.head_type = head_type
         self.scale_io = scale_io
-        self.reshape_z = reshape_z
 
         # **HEAD**
         # --> Bx<z_size>
         if head_type == "conv":
             self.head = nn.Identity()
             self.pool = nn.Sequential(
-                # View((-1, z_size // self.internal_num, *self.internal_wh[::-1])),
+                # View((-1, z_size // self.internal_num, *self.internal_hw)),
+                nn.ConvTranspose2d(
+                    z_size // self.internal_num, dims[-1], kernel_size=1, stride=1
+                ),
+            )
+        elif head_type == "conv+linear":
+            self.head = nn.Linear(z_size, z_size)
+            self.pool = nn.Sequential(
+                Reshape((-1, z_size // self.internal_num, *self.internal_hw)),
+                Norm2d(z_size // self.internal_num, eps=1e-6, data_format="channels_first"),
                 nn.ConvTranspose2d(
                     z_size // self.internal_num, dims[-1], kernel_size=1, stride=1
                 ),
@@ -272,13 +291,13 @@ class ConvNeXtV2Decoder(_Base):
             self.pool = nn.Sequential(
                 Norm2d(dims[-1], eps=1e-6),
                 # --> Bx[3]
-                Index((slice(None), slice(None), None, None)),
+                Index((slice(None), slice(None), None, None)),  # arr[:, :, None, None]
                 # --> Bx[3]x1x1
                 nn.ConvTranspose2d(
-                    dims[-1], dims[-1], kernel_size=self.internal_wh[::-1], stride=1
+                    dims[-1], dims[-1], kernel_size=self.internal_hw, stride=1
                 ),
                 # --> Bz[3]x6x4
-                Norm2d(dims[-1], eps=1e-6),  # extra, not in encoder
+                Norm2d(dims[-1], eps=1e-6, data_format="channels_first"),  # extra, not in encoder
             )
         else:
             raise KeyError(f"head_type={head_type} not recognized")
@@ -316,19 +335,18 @@ class ConvNeXtV2Decoder(_Base):
         # initialize weights
         self.apply(self._init_weights)
         if self.head_init_scale is not None:
-            if head_type == "pool+linear":
+            if head_type == "pool+linear" or head_type == "conv+linear":
                 self.head.weight.data.mul_(head_init_scale)
                 self.head.bias.data.mul_(head_init_scale)
 
-    def forward(self, x):
-        if self.reshape_z:
-            x = x.reshape(x.size(0), -1, *self.get_internal_wh(self.image_wh)[::-1])
+    def _get_reshape(self, x: torch.Tensor) -> tuple[int, ...]:
+        if self.head_type == "conv":
+            return (x.size(0), self.z_size // self.internal_num, *self.internal_hw)
         else:
-            if x.ndim == 2 and self.head_type == "conv":
-                x = x.reshape(
-                    -1, self.z_size // self.internal_num, *self.internal_wh[::-1]
-                )
-                warnings.warn("reshaping z to (B, C, H, W) for head_type='conv'")
+            return (x.size(0), self.z_size)
+
+    def forward(self, x):
+        x = x.reshape(*self._get_reshape(x))
         x = self.head(x)
         x = self.pool(x)
         x = self.block3(x)
@@ -344,21 +362,10 @@ class ConvNeXtV2Decoder(_Base):
 
         i = torch.randn((1, self.z_size)).to("cpu")
         m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
+        input_shape = (self.z_size,)
         c = convert(
             m_jit,
-            inputs=[
-                TensorType(
-                    name="z",
-                    shape=(
-                        1,
-                        *(
-                            (self.z_size,)
-                            if self.reshape_z
-                            else self.get_internal_wh(self.image_wh)[::-1]
-                        ),
-                    ),
-                )
-            ],
+            inputs=[TensorType(name="z", shape=(1, *input_shape))],
             outputs=[TensorType(name="x_hat")],
         )
         return c  # coremltools.models.MLModel
@@ -376,10 +383,10 @@ class ConvNeXtV2Ae(_Base, AeBase):
         depths: tuple[int, int, int, int] = (3, 3, 9, 3),
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
         head_init_scale: Optional[float] = None,
+        head_type: Literal["conv", "pool+linear", "conv+linear"] = "conv",
         encoder_enabled: bool = True,
         decoder_enabled: bool = True,
         scale_io: bool = True,
-        reshape_z: bool = True,
     ):
         super().__init__(
             image_wh=image_wh,
@@ -388,6 +395,7 @@ class ConvNeXtV2Ae(_Base, AeBase):
             depths=depths,
             dims=dims,
             head_init_scale=head_init_scale,
+
         )
 
         if encoder_enabled:
@@ -398,8 +406,8 @@ class ConvNeXtV2Ae(_Base, AeBase):
                 depths=depths,
                 dims=dims,
                 head_init_scale=head_init_scale,
+                head_type=head_type,
                 scale_io=scale_io,
-                reshape_z=reshape_z,
             )
         else:
             self.encoder = None
@@ -412,8 +420,8 @@ class ConvNeXtV2Ae(_Base, AeBase):
                 depths=depths,
                 dims=dims,
                 head_init_scale=head_init_scale,
+                head_type=head_type,
                 scale_io=scale_io,
-                reshape_z=reshape_z,
             )
         else:
             self.decoder = None

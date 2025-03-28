@@ -1,20 +1,25 @@
+import functools
 import math
 import os
+import random
+import warnings
 from pathlib import Path
 from typing import Literal, Optional, TypedDict
 
+import albumentations as A
+import cv2
+import numpy as np
 import yaml
+from shapely.geometry import Polygon
 from tqdm import tqdm
 
-from mtgvision.encoder_datasets import IlsvrcImages, SyntheticBgFgMtgImages
+from mtgvision.encoder_datasets import (
+    CocoValImages,
+    IlsvrcImages,
+    SyntheticBgFgMtgImages,
+)
 from mtgvision.util.image import imread_float, imshow_loop, imwrite, round_rect_mask
 from mtgvision.util.random import seed_all
-import random
-import numpy as np
-import cv2
-from shapely.geometry import Polygon
-import albumentations as A
-
 
 # ========================================================================= #
 # CV2 helper                                                                #
@@ -88,10 +93,12 @@ def get_rotate_over_output_transform(
     oh, ow = get_hw(out_size_hw)
     # get scale
     if mode == "cover":
-        # scale the image to always exactly cover the entire background no matter the rotation
+        # scale the image to always exactly cover the entire background no matter the
+        # rotation
         scale = math.hypot(oh / max(ow, oh), ow / max(ow, oh)) * max(oh, ow) / min(h, w)
     elif mode == "inside":
-        # scale the image to always exactly be inside the entire background no matter the rotation
+        # scale the image to always exactly be inside the entire background no matter
+        # the rotation
         scale = min(oh, ow) / math.hypot(w, h)
     else:
         raise ValueError(f"Invalid mode: {mode}")
@@ -122,8 +129,10 @@ class Sample(TypedDict, total=False):
     # shape (h, w), float32, [0, 1]
     mask: np.ndarray
     # shape (-1, 2), float32, [0, 1]
-    # * usually 4 corners so shape (N*4, 2) which can be reshaped to (N, 4, 2)
+    # * usually 4 corners so shape (N, 4, 2), can also be segment masks (N, M, 2)
     keypoints: np.ndarray
+    # shape (N,)
+    keypoints_labels: np.ndarray
 
 
 def get_hw(hw: tuple[int, int] | int | Sample) -> tuple[int, int]:
@@ -194,6 +203,13 @@ def make_background(bg: np.ndarray, bg_size: tuple[int, int]) -> np.ndarray:
     return bg["image"]
 
 
+def make_aug_background(bg: np.ndarray, bg_size: tuple[int, int]) -> np.ndarray:
+    bg = make_background(bg, bg_size)
+    bg = get_bg_transform_light()(image=bg)["image"]
+    bg = get_bg_transform(extra=True)(image=bg)["image"]
+    return bg
+
+
 # ========================================================================= #
 # Make - Card                                                               #
 # ========================================================================= #
@@ -205,10 +221,17 @@ def make_card_with_mask(
     keypoint_margin_ratio: float = 0.03,
     keypoint_size_ratio: float = 0.5,
     corner_radius_ratio: float = 0.046,
+    kind: Literal["obb", "seg"] = "obb",
 ) -> Sample:
     """
     Generate a transformed card image with its mask and transformed keypoints.
     """
+
+    # Load random card image (RGB, not RGBA)
+    h, w = card.shape[:2]
+
+    # Generate rounded rectangle mask
+    mask = round_rect_mask((h, w), radius_ratio=corner_radius_ratio)
 
     def _box(lft, top, rht, bot, margin=0.0, mlr=1.0, mrr=1.0, mtr=1.0, mbr=1.0):
         return [
@@ -218,30 +241,41 @@ def make_card_with_mask(
             (lft + margin * mlr, bot - margin * mbr),
         ]
 
-    # Load random card image (RGB, not RGBA)
-    h, w = card.shape[:2]
+    if kind == "obb":
+        # Define initial corner keypoints
+        # - we can't get exact orientation, even with rotated bounding box
+        #   so we specify top and bottom regions with different classes
+        #   so we can compute this later.
+        r = keypoint_size_ratio
+        m = keypoint_margin_ratio * max(w, h)
+        keypoints = np.asarray(
+            [
+                _box(0, 0, w, h, margin=0),  # card
+                _box(0, 0, w, r * h, margin=m, mbr=0.5),  # top
+                _box(0, (1 - r) * h, w, h, margin=m, mtr=0.5),  # bottom
+            ]
+        )
+    elif kind == "seg":
+        # make polygon with cutout from the bottom so we can figure out orientation
+        card_box = _box(0, 0, w, h)
+        bottom_indent = _box(w * 0.4, h * 0.5, w * 0.6, h * 1.1)
+        card_box = Polygon(card_box).difference(Polygon(bottom_indent))
+        # remove last point
+        segment_points = np.asarray(card_box.exterior.coords)
+        assert np.allclose(segment_points[0], segment_points[-1])
+        segment_points = segment_points[:-1]
+        # round polygons, e.g. make corners less sharp. This can be done with
+        keypoints = np.asarray([segment_points])
+    else:
+        raise KeyError(f"invalid: {kind}")
 
-    # Generate rounded rectangle mask
-    mask = round_rect_mask((h, w), radius_ratio=corner_radius_ratio)
-
-    # Define initial corner keypoints
-    # - we can't get exact orientation, even with rotated bounding box
-    #   so we specify top and bottom regions with different classes
-    #   so we can compute this later.
-    r = keypoint_size_ratio
-    m = keypoint_margin_ratio * max(w, h)
-    keypoints = np.asarray(
-        [
-            _box(0, 0, w, h, margin=0),  # card
-            _box(0, 0, w, r * h, margin=m, mbr=0.5),  # top
-            _box(0, (1 - r) * h, w, h, margin=m, mtr=0.5),  # bottom
-        ]
-    )
+    # done!
     return {
         "image": card,
         "mask": mask,
         "keypoints": keypoints,
         "keypoints_labels": np.arange(len(keypoints)),
+        "bbox": np.asarray(_box(0, 0, w, h)),  # used for colision later
     }
 
 
@@ -281,7 +315,8 @@ def place_card_on_background_get_transform(
 
     # try place card on image
     for _ in range(max_attempts):
-        # random card center somewhere in bg, allow some edge overlap considering rotating
+        # random card center somewhere in bg, allow some edge overlap considering
+        # rotating
         edge_pad = card_diag // 2
         edge_ovr = int(card_diag * (1 - min_visible_edge))
         cx = random.randint(0 + edge_pad - edge_ovr, bw - edge_pad + edge_ovr)
@@ -342,6 +377,146 @@ def place_card_on_background_get_transform(
     return None
 
 
+# ========================================================================= #
+# Transform Helper                                                          #
+# ========================================================================= #
+
+
+def compose(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        return A.Compose([fn(*args, **kwargs)], p=1)
+
+    return wrapper
+
+
+def random_order(*transforms, n=None, replace=False, p=1.0):
+    # random order force applies, so need wrapper component to actually do probabilities
+    return A.RandomOrder(
+        transforms=[A.Sequential([t]) for t in transforms],
+        n=len(transforms) if n is None else n,
+        replace=replace,
+        p=p,
+    )
+
+
+def one_of(*transforms, p=1.0):
+    # one of force applies, so need wrapper component to actually do probabilities
+    return A.OneOf(
+        transforms=[A.Sequential([t]) for t in transforms],
+        p=p,
+    )
+
+
+def seq(*transforms, p=1.0):
+    return A.Sequential([t for t in transforms], p=p)
+
+
+# ========================================================================= #
+# Transform Makers                                                          #
+# ========================================================================= #
+
+
+@compose
+def get_bg_transform_light():
+    return random_order(
+        A.RandomBrightnessContrast(
+            brightness_limit=(-0.4, 0.4),
+            contrast_limit=(-0.4, 0.4),
+            p=0.5,
+        ),
+        A.GaussianBlur(sigma_limit=(0, 2), p=0.2),
+        A.GaussNoise(std_range=(0.0, 0.1), p=0.2),
+        A.Erasing(
+            scale=(0.02, 0.2),
+            fill=np.random.choice(
+                ["random", "random_uniform", 1, 0], p=[0.1, 0.5, 0.2, 0.2]
+            ),
+            p=0.4,
+        ),
+        n=3,
+    )
+
+
+@compose
+def get_bg_transform(extra: bool = False):
+    def _noise_blur(p: float):
+        return [
+            one_of(
+                A.GaussNoise(std_range=(0.0, 0.2), p=p),
+                A.ISONoise(color_shift=(0.01, 0.4), p=p),
+                A.ShotNoise(scale_range=(0.1, 0.3), p=p),
+            ),
+            one_of(
+                A.GaussianBlur(sigma_limit=(0, 3), p=p),
+                A.MedianBlur(blur_limit=(3, 7), p=p),
+                A.MotionBlur(blur_limit=(3, 11), p=p),
+                A.MotionBlur(blur_limit=(3, 11), p=p),
+                A.GlassBlur(sigma=0.5, max_delta=4, iterations=2, p=p / 3 * 2),
+            ),
+        ]
+
+    return random_order(
+        A.RandomBrightnessContrast(
+            brightness_limit=(-0.4, 0.4) if not extra else (-0.7, 0.7),
+            contrast_limit=(-0.5, 0.5),
+            p=0.5,
+        ),
+        A.HueSaturationValue(
+            hue_shift_limit=(-30, 30),
+            sat_shift_limit=(-40, 40),
+            val_shift_limit=(0, 0) if not extra else (-30, 30),
+            p=0.5,
+        ),
+        *_noise_blur(p=0.5),
+        *_noise_blur(p=0.1),
+        *(
+            []
+            if not extra
+            else [
+                A.Erasing(
+                    scale=(0.02, 0.4),
+                    fill=np.random.choice(
+                        ["random", "random_uniform", 1, 0], p=[0.1, 0.1, 0.4, 0.4]
+                    ),
+                    p=0.4,
+                ),
+            ]
+        ),
+        n=4,
+    )
+
+
+@compose
+def get_card_transform():
+    return random_order(
+        A.RandomBrightnessContrast(
+            brightness_limit=(-0.2, 0.2),
+            contrast_limit=(-0.4, -0.4),
+            p=0.8,
+        ),
+        A.HueSaturationValue(
+            hue_shift_limit=(-30, 30),
+            sat_shift_limit=(-40, 40),
+            val_shift_limit=(0, 0),
+            p=0.8,
+        ),
+        A.Erasing(
+            scale=(0.02, 0.2),
+            fill=np.random.choice(
+                ["random", "random_uniform", 1, 0], p=[0.1, 0.5, 0.2, 0.2]
+            ),
+            p=0.3,
+        ),
+        n=2,
+    )
+
+
+# ========================================================================= #
+# Make - Composite Card                                                     #
+# ========================================================================= #
+
+
 def generate_synthetic_image(
     mtg_ds: SyntheticBgFgMtgImages,
     bg_ds: IlsvrcImages,
@@ -357,64 +532,17 @@ def generate_synthetic_image(
     card_size_sample_mode: Literal["uniform", "log_uniform"] = "log_uniform",
     card_no_contains: bool = True,
     card_max_place_attempts: int = 10,
+    kind: Literal["obb", "seg"] = "obb",
 ):
     """
     Generate a synthetic image with cards and their rotated bounding box annotations.
     """
     # no warps, lighter
-    pre_transform_bg = A.RandomOrder(
-        [
-            A.RandomBrightnessContrast(
-                brightness_limit=(-0.2, 0.5),
-                contrast_limit=(-0.3, -0.3),
-                p=0.9,
-            ),
-            A.HueSaturationValue(
-                hue_shift_limit=(-50, 50),
-                sat_shift_limit=(-40, 40),
-                val_shift_limit=(-20, 20),
-                p=0.9,
-            ),
-            A.GaussianBlur(sigma_limit=(0, 2), p=0.1),
-            A.GaussNoise(std_range=(0.0, 0.1), p=0.1),
-        ],
-    )
+    pre_transform_bg = get_bg_transform_light()
     # only color / noise, no blur
-    pre_transform_card = A.RandomOrder(
-        [
-            A.RandomBrightnessContrast(
-                brightness_limit=(-0.3, 0.4),
-                contrast_limit=(-0.4, -0.4),
-                p=0.9,
-            ),
-            A.HueSaturationValue(
-                hue_shift_limit=(-30, 30),
-                sat_shift_limit=(-40, 40),
-                val_shift_limit=(-25, 35),
-                p=0.9,
-            ),
-        ],
-    )
+    pre_transform_card = get_card_transform()
     # no warps
-    post_transform_bg = A.RandomOrder(
-        [
-            A.RandomBrightnessContrast(
-                brightness_limit=(-0.3, 0.5),
-                contrast_limit=(-0.3, -0.3),
-                p=0.9,
-            ),
-            A.HueSaturationValue(
-                hue_shift_limit=(-10, 10),
-                sat_shift_limit=(-30, 30),
-                val_shift_limit=(-20, 30),
-                p=0.9,
-            ),
-            A.GaussianBlur(sigma_limit=(0, 2), p=0.7),
-            A.GaussNoise(std_range=(0.0, 0.3), p=0.3),
-            A.Erasing(p=0.2, scale=(0.02, 0.1)),
-            A.ISONoise(p=0.2),
-        ],
-    )
+    post_transform_bg = get_bg_transform()
 
     # create BG
     bg = imread_float(bg_ds.ran_path())
@@ -426,13 +554,16 @@ def generate_synthetic_image(
     # place cards
     card_samples: list[Sample] = []
     card_Ms: list[np.ndarray] = []
-    card_polys: list[np.ndarray] = []
+    card_collide: list[np.ndarray] = []
     for i in range(np.random.randint(num_cards_min, num_cards_max)):
-        card_sample = make_card_with_mask(card=imread_float(mtg_ds.ran_path()))
+        card_sample = make_card_with_mask(
+            card=imread_float(mtg_ds.ran_path()),
+            kind=kind,
+        )
         M = place_card_on_background_get_transform(
             card_sample,
             bg,
-            bg_existing_polygons=card_polys,
+            bg_existing_polygons=card_collide,
             min_visible=card_min_visible_ratio,
             min_visible_edge=card_min_visible_ratio_edges,
             jitter_ratio=card_jitter_ratio,
@@ -451,16 +582,16 @@ def generate_synthetic_image(
         # done
         card_samples.append(card_sample)
         card_Ms.append(M)
-        card_polys.append(apply_transform_2d(card_sample["keypoints"][0], M))
+        card_collide.append(apply_transform_2d(card_sample["bbox"], M))
     assert len(card_samples) == len(card_Ms)
-    assert len(card_samples) == len(card_polys)
+    assert len(card_samples) == len(card_collide)
 
     # warp cards onto images, we need to apply to image in reverse order
     # because of overlap checks. Cards added later collide with ALL other cards, cards
     # added first don't check with later cards. So these need to be ON TOP.
     keypoints = []
     keypoints_labels = []
-    for sample, M, poly in list(zip(card_samples, card_Ms, card_polys))[::-1]:
+    for sample, M in list(zip(card_samples, card_Ms))[::-1]:
         mask = apply_transform_2d_img(sample["mask"], M, out_size_hw=bg.shape)
         img = apply_transform_2d_img(sample["image"], M, out_size_hw=bg.shape)
         pts = apply_transform_2d(sample["keypoints"], M)
@@ -500,10 +631,16 @@ class Gen:
         card_size_sample_mode: Literal["uniform", "log_uniform"] = "log_uniform",
         card_no_contains: bool = True,
         card_max_place_attempts: int = 10,
+        ratio_bg: Optional[float] = None,
+        # 50000 vs 5000
+        ilsvrc_vs_coco_sample_weights: tuple[float, float] | None = (1.0, 1.0),
+        # segment
+        kind: Literal["obb", "seg"] = "obb",
     ):
         # Initialize datasets (replace with your actual classes)
         self.mtg_ds = SyntheticBgFgMtgImages(img_type="small")
         self.bg_ds = IlsvrcImages()
+        self.bg2_ds = CocoValImages()
 
         # params
         self.bg_size_hw = bg_size_hw
@@ -518,10 +655,39 @@ class Gen:
         self.card_no_contains = card_no_contains
         self.card_max_place_attempts = card_max_place_attempts
 
+        # other data
+        self.ratio_bg = ratio_bg
+        self.kind = kind
+
+        # get sampling weights
+        if ilsvrc_vs_coco_sample_weights is None:
+            p = np.asarray([len(self.bg_ds), len(self.bg2_ds)])
+        else:
+            p = ilsvrc_vs_coco_sample_weights
+        self._bg_p = p / np.sum(p)
+        self._bg_arr = [self.bg_ds, self.bg2_ds]
+
+    def _get_bg_ds(self):
+        idx = np.random.choice(2, p=self._bg_p)
+        return self._bg_arr[idx]
+
+    def random_bg(self):
+        bg = make_aug_background(
+            bg=imread_float(self._get_bg_ds().ran_path()),
+            bg_size=self.bg_size_hw,
+        )
+        return {
+            "image": bg,
+            "keypoints": [],
+            "keypoints_labels": [],
+        }
+
     def random(self):
+        if self.ratio_bg and np.random.uniform(0, 1) < self.ratio_bg:
+            return self.random_bg()
         sample = generate_synthetic_image(
             self.mtg_ds,
-            self.bg_ds,
+            self._get_bg_ds(),
             bg_size_hw=self.bg_size_hw,
             num_cards_min=self.num_cards_min,
             num_cards_max=self.num_cards_max,
@@ -533,6 +699,7 @@ class Gen:
             card_size_sample_mode=self.card_size_sample_mode,
             card_no_contains=self.card_no_contains,
             card_max_place_attempts=self.card_max_place_attempts,
+            kind=self.kind,
         )
         return sample
 
@@ -567,19 +734,12 @@ def create_yolo_obb_dataset(
     *,
     output_dir: str,
     num_train: int = 20000,
-    num_val: int = 1000,
-    num_test: int = 1000,
+    num_val_ratio: float = 0.1,
+    num_test_ratio: float = 0.1,
     ext: Literal["png", "jpg"] = "jpg",
 ):
     """
     Generate a YOLO dataset with synthetic images and annotations.
-
-    Args:
-        output_dir: Directory to save the dataset.
-        num_images: Number of images to generate.
-        min_cards: Minimum number of cards per image.
-        max_cards: Maximum number of cards per image.
-        bg_size: Tuple of (height, width) for the output images.
     """
     output_dir = Path(output_dir)
 
@@ -609,6 +769,9 @@ def create_yolo_obb_dataset(
             },
             fp,
         )
+
+    num_val = int(num_val_ratio * num_train)
+    num_test = int(num_test_ratio * num_train)
 
     # Generate train dataset
     for name, num in [("train", num_train), ("val", num_val), ("test", num_test)]:
@@ -649,8 +812,13 @@ def save_sample(
     annotations = []
     for j, (pts, label) in enumerate(zip(kps, kps_labels)):
         pts /= img.shape[:2][::-1]  # points are (w, h), not (h, w) like shape
-        (x0, y0), (x1, y1), (x2, y2), (x3, y3) = pts
-        annotations.append(f"{label} {x0} {y0} {x1} {y1} {x2} {y2} {x3} {y3}")
+        if np.any(pts < 0) or np.any(pts > 1):
+            warnings.warn(
+                f"points for image {i} are out of bounds, yolo will consider these "
+                "invalid... other libs might not. Set `card_min_visible_ratio_edges=0` "
+                "and use mosaic/translation during training instead."
+            )
+        annotations.append(f"{label} {' '.join(map(str, pts.flatten()))}")
 
     # Save annotations
     label_path = os.path.join(label_dir, f"image_{i:04d}.txt")
@@ -670,9 +838,34 @@ def save_sample(
 
 
 if __name__ == "__main__":
+    # seed_all(42)
+    # gen = Gen(card_min_visible_ratio=0.5, card_min_visible_ratio_edges=0.5, num_train=10000)
+    # create_yolo_obb_dataset(gen, output_dir="../data/yolo_mtg_dataset", ext="png")
+
+    # seed_all(42)
+    # gen = Gen()
+    # create_yolo_obb_dataset(gen, output_dir="../data/yolo_mtg_dataset_v2", ext="jpg")
+
+    # seed_all(42)
+    # gen = Gen(card_min_visible_ratio=0.4, card_jitter_ratio=0.7)
+    # create_yolo_obb_dataset(gen, output_dir="../data/yolo_mtg_dataset_v2_tune", num_train=2500, num_val=250, ext="jpg")
+
+    # seed_all(42)
+    # gen = Gen(card_min_visible_ratio=0.4, card_min_visible_ratio_edges=0.75, card_jitter_ratio=0.7)
+    # create_yolo_obb_dataset(gen, output_dir="../data/yolo_mtg_dataset_v2_tune_B", num_train=5000, ext="jpg")
+
+    # seed_all(42)
+    # gen = Gen(card_min_visible_ratio=0.5, card_min_visible_ratio_edges=0.75, card_jitter_ratio=0.7, ratio_bg=0.1)
+    # create_yolo_obb_dataset(gen, output_dir="../data/yolo_mtg_dataset_v3", num_train=10000, ext="jpg")
+
     seed_all(42)
-
-    gen = Gen()
-    # gen.debug_show_loop()
-
-    create_yolo_obb_dataset(gen, output_dir="../yolo_mtg_dataset_v2", ext="jpg")
+    gen = Gen(
+        card_min_visible_ratio=0.5,
+        card_min_visible_ratio_edges=0.0,
+        card_jitter_ratio=0.7,
+        ratio_bg=0.1,
+        kind="seg",
+    )
+    create_yolo_obb_dataset(
+        gen, output_dir="../data/yolo_mtg_dataset_seg", num_train=10000, ext="jpg"
+    )

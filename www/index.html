@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Card Detection with Backend Inference</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        #video-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            background-color: black;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        #video, #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #overlay {
+            pointer-events: none;
+        }
+        #controls {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #select, #startCamera {
+            padding: 10px;
+            margin: 5px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #fff;
+            font-size: 16px;
+        }
+        #startCamera {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        #status {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <video id="video" width="640" height="480" autoplay muted playsinline></video>
+        <svg id="overlay" width="640" height="480"></svg>
+    </div>
+    <div id="controls">
+        <select id="select"></select>
+        <button id="startCamera">Start Camera</button>
+        <div id="status">Click "Start Camera" to begin.</div>
+    </div>
+    <script src="app.js"></script>
+    <script>
+        main();
+    </script>
+</body>
+</html>
