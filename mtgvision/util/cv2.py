@@ -107,3 +107,73 @@ def cv2_warp_imgs_onto(img, cards, bounds):
 def cv2_draw_contours(image, contours, color=(0, 255, 0), thickness=1):
     for contour in contours:
         cv2.drawContours(image, [contour], -1, color, thickness)
+
+
+# ========================================================================= #
+# HELPER                                                                    #
+# ========================================================================= #
+
+
+def lerp_color(
+    color1: tuple[int, int, int] | int,
+    color2: tuple[int, int, int] | int,
+    t: float,
+) -> tuple[int, int, int]:
+    if isinstance(color1, int):
+        color1 = (color1, color1, color1)
+    if isinstance(color2, int):
+        color2 = (color2, color2, color2)
+    return tuple(int(c1 * (1 - t) + c2 * t) for c1, c2 in zip(color1, color2))
+
+
+def cv2_draw_poly(
+    frame: np.ndarray,
+    points: np.ndarray,
+    c: tuple[int, int, int] | int = (255, 0, 0),
+    color_mod: tuple[int, int, int] | int = None,
+):
+    poly_color = c if color_mod is None else lerp_color(c, color_mod, 0.5)
+    cv2.polylines(
+        frame,
+        [np.asarray(points).astype(int)],
+        isClosed=True,
+        color=poly_color,
+        thickness=1,
+    )
+
+
+def cv2_draw_arrow(
+    frame: np.ndarray,
+    start: np.ndarray,
+    end: np.ndarray,
+    c: tuple[int, int, int] | int = (0, 0, 255),
+    color_mod: tuple[int, int, int] | int = None,
+):
+    arrow_color = c if color_mod is None else lerp_color(c, color_mod, 0.5)
+    cv2.arrowedLine(
+        frame,
+        np.asarray(start).astype(int),
+        np.asarray(end).astype(int),
+        color=arrow_color,
+        thickness=1,
+    )
+
+
+def cv2_draw_text(
+    frame: np.ndarray,
+    text: str,
+    center: np.ndarray,
+    c: tuple[int, int, int] | int = (0, 0, 255),
+    color_mod: tuple[int, int, int] | int = None,
+    font_scale: float = 0.25,
+):
+    color = c if color_mod is None else lerp_color(c, color_mod, 0.5)
+    cv2.putText(
+        frame,
+        text,
+        np.asarray(center).astype(int),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        color,
+        1,
+    )

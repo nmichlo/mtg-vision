@@ -1,11 +1,16 @@
 import functools
 import math
 import os
+import random
 import warnings
 from pathlib import Path
 from typing import Literal, Optional, TypedDict
 
+import albumentations as A
+import cv2
+import numpy as np
 import yaml
+from shapely.geometry import Polygon
 from tqdm import tqdm
 
 from mtgvision.encoder_datasets import (
@@ -15,12 +20,6 @@ from mtgvision.encoder_datasets import (
 )
 from mtgvision.util.image import imread_float, imshow_loop, imwrite, round_rect_mask
 from mtgvision.util.random import seed_all
-import random
-import numpy as np
-import cv2
-from shapely.geometry import Polygon
-import albumentations as A
-
 
 # ========================================================================= #
 # CV2 helper                                                                #
@@ -94,10 +93,12 @@ def get_rotate_over_output_transform(
     oh, ow = get_hw(out_size_hw)
     # get scale
     if mode == "cover":
-        # scale the image to always exactly cover the entire background no matter the rotation
+        # scale the image to always exactly cover the entire background no matter the
+        # rotation
         scale = math.hypot(oh / max(ow, oh), ow / max(ow, oh)) * max(oh, ow) / min(h, w)
     elif mode == "inside":
-        # scale the image to always exactly be inside the entire background no matter the rotation
+        # scale the image to always exactly be inside the entire background no matter
+        # the rotation
         scale = min(oh, ow) / math.hypot(w, h)
     else:
         raise ValueError(f"Invalid mode: {mode}")
@@ -314,7 +315,8 @@ def place_card_on_background_get_transform(
 
     # try place card on image
     for _ in range(max_attempts):
-        # random card center somewhere in bg, allow some edge overlap considering rotating
+        # random card center somewhere in bg, allow some edge overlap considering
+        # rotating
         edge_pad = card_diag // 2
         edge_ovr = int(card_diag * (1 - min_visible_edge))
         cx = random.randint(0 + edge_pad - edge_ovr, bw - edge_pad + edge_ovr)
@@ -812,7 +814,9 @@ def save_sample(
         pts /= img.shape[:2][::-1]  # points are (w, h), not (h, w) like shape
         if np.any(pts < 0) or np.any(pts > 1):
             warnings.warn(
-                f"points for image {i} are out of bounds, yolo will consider these invalid... other libs might not. Set `card_min_visible_ratio_edges=0` and use mosaic/translation during training instead."
+                f"points for image {i} are out of bounds, yolo will consider these "
+                "invalid... other libs might not. Set `card_min_visible_ratio_edges=0` "
+                "and use mosaic/translation during training instead."
             )
         annotations.append(f"{label} {' '.join(map(str, pts.flatten()))}")
 

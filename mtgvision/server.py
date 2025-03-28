@@ -8,7 +8,7 @@ from mtgvision.encoder_export import CoreMlEncoder, MODEL_PATH
 
 
 # Initialize the YOLO detector once at startup
-_DATA_ROOT = Path("/Users/nathanmichlo/Desktop/active/mtg/mtg-vision/data")
+_DATA_ROOT = Path("/Users/nathanmichlo/Desktop/active/mtg/data/gen")
 DETECTOR = CardDetector(_DATA_ROOT / "yolo_mtg_dataset_v3/models/1ipho2mn_best.pt")
 ENCODER = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
 

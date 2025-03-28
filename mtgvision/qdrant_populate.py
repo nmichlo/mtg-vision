@@ -1,111 +1,139 @@
-from dataclasses import dataclass
-from typing import Any, Iterable
+import itertools
+import multiprocessing
+from pathlib import Path
+from typing import Iterable, Iterator, Sequence, TypeVar
+from tqdm import tqdm
 
 
-@dataclass
-class Point:
-    id: str  # UUID
-    vector: list[float]
-    payload: dict[str, Any]
+from doorway.x import ProxyDownloader
+from mtgdata.scryfall import ScryfallCardFace
+from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
+from mtgvision.encoder_export import CoreMlEncoder
+from mtgvision.qdrant import QdrantPoint, VectorStoreQdrant
+from mtgvision.util.image import imread_float
 
 
-class VectorStoreBase:
-    _VECTOR_SIZE: int = 768
-
-    def save_points(self, iter_points: Iterable[Point]):
-        raise NotImplementedError
-
-    def query(self, vector: list[float], k: int) -> list[Point]:
-        raise NotImplementedError
-
-    def query_by_id(self, id_: str) -> Point:
-        raise NotImplementedError
+T = TypeVar("T")
 
 
-class VectorStoreQdrant(VectorStoreBase):
-    _COLLECTION = "mtg"
+def batched(iterable: Iterable[T], n: int) -> Iterator[Sequence[T]]:
+    """Yield successive n-sized batches from an iterable."""
+    it = iter(iterable)
+    while True:
+        batch = list(itertools.islice(it, n))
+        if not batch:
+            return
+        yield batch
 
-    def __init__(self, location: str = "localhost:6333"):
-        import qdrant_client
-        from qdrant_client.http.models import VectorParams, Distance
 
-        self.client = qdrant_client.QdrantClient(location=location)
-        if self.client.collection_exists(self._COLLECTION):
-            self.client.delete_collection(self._COLLECTION)
-        self.client.create_collection(
-            self._COLLECTION,
-            vectors_config=VectorParams(
-                size=self._VECTOR_SIZE,
-                distance=Distance.COSINE,
-            ),
-        )
+class CardProcessor(multiprocessing.Process):
+    def __init__(
+        self,
+        model_path: Path,
+        job_queue: multiprocessing.Queue,
+        result_queue: multiprocessing.Queue,
+    ):
+        """Initialize with picklable arguments."""
+        super().__init__(daemon=True)
+        self.model_path = model_path
+        self.job_queue = job_queue
+        self.result_queue = result_queue
+        self._is_init = False
+        self._x_size_hw = None
+        self._encoder = None
+        self._vstore = None
+        self._proxy = None
 
-    def drop_collection(self):
-        self.client.delete_collection(self._COLLECTION)
-
-    def save_points(self, iter_points: Iterable[Point]):
-        from qdrant_client.http.models import PointStruct
-
-        self.client.upload_points(
-            collection_name=self._COLLECTION,
-            points=(
-                PointStruct(
-                    id=point.id,
-                    vector=point.vector,
-                    payload=point.payload,
-                )
-                for point in iter_points
-            ),
-            batch_size=64,
-        )
-
-    def query(self, vector: list[float], k: int) -> list[Point]:
-        from qdrant_client.http.models import QueryResponse
-
-        results: QueryResponse = self.client.query_points(
-            collection_name=self._COLLECTION,
-            query=vector,
-            limit=k,
-        )
-        return [
-            Point(
-                id=point.id,
-                vector=point.vector,
-                payload=point.payload,
+    def _initialize(self):
+        """Lazily initialize non-picklable resources in the worker process."""
+        if not self._is_init:
+            self._is_init = True
+            self._encoder = CoreMlEncoder(
+                self.model_path.with_suffix(".encoder.mlpackage")
             )
-            for point in results.points
-        ]
+            h, w, c = self._encoder.input_hwc
+            self._x_size_hw = (h, w)
+            self._vstore = VectorStoreQdrant()
+            self._proxy = ProxyDownloader()
+            print(f"Worker {self.pid} initialized")
+
+    def run(self):
+        """Main loop for the worker process."""
+        self._initialize()
+        while True:
+            batch = self.job_queue.get()
+            if batch is None:
+                break
+            result = self.process_batch(batch)
+            self.result_queue.put(result)
+
+    def process_batch(self, batch: Sequence[ScryfallCardFace]) -> int:
+        """Process a batch of cards and upload missing ones to Qdrant."""
+        # Extract card IDs and check existing entries in Qdrant
+        existing_points = self._vstore.retrieve(str(card.id) for card in batch)
+        existing_ids = {point.id for point in existing_points}
+        missing_cards = [card for card in batch if str(card.id) not in existing_ids]
+        # Process each missing card and prepare points for upload
+        points_to_upload = []
+        for card in missing_cards:
+            points_to_upload.append(self._get_card_point(card))
+        if points_to_upload:
+            self._vstore.save_points(points_to_upload)
+        return len(points_to_upload)
+
+    def _get_card_point(self, card: ScryfallCardFace) -> QdrantPoint:
+        """Generate a Point object for a single card."""
+        path = card.download(proxy=self._proxy)
+        x = imread_float(path)
+        x = SyntheticBgFgMtgImages.make_cropped(x, size_hw=self._x_size_hw)
+        z = self._encoder.predict(x).tolist()
+        return QdrantPoint(id=str(card.id), vector=z, payload=None)
 
 
 def _cli():
-    from mtgvision.encoder_export import CoreMlEncoder
     from mtgvision.encoder_export import MODEL_PATH
-    from mtgvision.encoder_train import RanMtgEncDecDataset
-    from doorway.x import ProxyDownloader
-    from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
-    from tqdm import tqdm
-    from mtgvision.util.image import imread_float
 
-    encoder = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
-    dataset = RanMtgEncDecDataset(default_batch_size=1)
-    proxy = ProxyDownloader()
-    db = VectorStoreQdrant()
+    # Configuration
+    dataset = SyntheticBgFgMtgImages(img_type="small", predownload=False)
+    num_workers = 4  # Adjust based on CPU cores
+    batch_size = 32  # Adjust based on memory/performance
+    model_path = MODEL_PATH
 
-    # 1. create dataset of embeddings
-    def _yield_gt_points():
-        for card in tqdm(dataset.mtg.card_iter(), total=len(dataset.mtg)):
-            card.download(proxy=proxy)
-            x = SyntheticBgFgMtgImages.make_cropped(
-                imread_float(card.img_path),
-                size_hw=dataset.x_size_hw,
-            )
-            z = encoder.predict(x).tolist()
-            yield z, card
+    # Create job and result queues
+    job_queue = multiprocessing.Queue()
+    result_queue = multiprocessing.Queue()
 
-    # actually generate and query
-    db.save_points(
-        Point(id=str(card.id), vector=z, payload=None) for z, card in _yield_gt_points()
-    )
+    # Start worker processes
+    processes = []
+    for _ in range(num_workers):
+        worker = CardProcessor(model_path, job_queue, result_queue)
+        worker.start()
+        processes.append(worker)
+
+    # Submit all batches to the job queue
+    batch_itr = batched(dataset.card_iter(), batch_size)
+    total_batches = 0
+    for batch in tqdm(batch_itr, desc="Submitting batches"):
+        job_queue.put(batch)
+        total_batches += 1
+
+    # Signal workers to stop by putting None for each
+    for _ in range(num_workers):
+        job_queue.put(None)
+
+    # Collect results and track progress
+    total_points_uploaded = 0
+    with tqdm(total=len(dataset), desc="Processing batches") as pbar:
+        for _ in range(total_batches):
+            result = result_queue.get()
+            total_points_uploaded += result
+            pbar.update(batch_size)
+
+    # Ensure all workers have finished
+    for proc in processes:
+        proc.join()
+
+    print(f"Total points uploaded: {total_points_uploaded}")
 
 
 if __name__ == "__main__":
