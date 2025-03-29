@@ -149,7 +149,6 @@ class Mutate:
         interp_up = np.random.choice(choices)
         # resize
         img = cv2.resize(img, (new_w, new_h), interpolation=interp_down)
-        print(img.shape, n, new_w, new_h)
         img = cv2.resize(img, (orig_w, orig_h), interpolation=interp_up)
         return img
 
