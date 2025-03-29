@@ -237,7 +237,8 @@ class RanMtgEncDecDataset(IterableDataset):
         return cls(
             default_batch_size=hparams.batch_size,
             predownload=hparams.force_download,
-            paired=hparams.loss_contrastive is not None,
+            paired=hparams.loss_contrastive is not None
+            or hparams.loss_set_contrastive is not None,
             targets=hparams.loss_recon is not None,
             x_size_hw=hparams.x_size_hw,
             y_size_hw=hparams.y_size_hw,
@@ -256,8 +257,8 @@ class RanMtgEncDecDataset(IterableDataset):
 class MtgVisionEncoder(pl.LightningModule):
     hparams: "Config"
     model: "cnv2ae.ConvNeXtV2Ae"
-    _metric = None
-    _metric_set = None
+    metric: "torch.nn.Module"
+    metric_set: "torch.nn.Module"
 
     def __init__(self, config: dict):
         super().__init__()
@@ -277,11 +278,9 @@ class MtgVisionEncoder(pl.LightningModule):
         )
         self.model = model
 
-        # create losses
-        self._metric = None
+        # set loss
         if self.hparams.loss_contrastive:
             self._metric = self._get_metric(self.hparams.loss_contrastive)
-        self._metric_set = None
         if self.hparams.loss_set_contrastive:
             self._metric_set = self._get_metric(self.hparams.loss_set_contrastive)
 
@@ -399,7 +398,8 @@ class MtgVisionEncoder(pl.LightningModule):
             # Person Reidentification: m = 0.25, gamma = 128
             # Fine-grained Image Retrieval: m = 0.4, gamma = 80
             return mll.CircleLoss(m=0.25, gamma=256)
-        raise KeyError(f"Unknown metric: {name}")
+        else:
+            raise KeyError(f"Unknown metric: {name}")
 
     def training_step(self, batch: BatchHintTensor, batch_idx: int):
         logs, loss = {}, 0
@@ -860,15 +860,16 @@ class Config(pydantic.BaseModel):
     optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 1e-3
     weight_decay: float = 1e-7  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
-    batch_size: int = 48
+    batch_size: int = (
+        64  # effectively doubled with loss_contrastive / loss_set_contrastive
+    )
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss
     loss_recon: Optional[str] = None  # 'ssim5+l1'
     # ntxent, triplet, triplet_smooth, arc_face, sub_center_arc_face, sup_con, circle
-    loss_contrastive: Optional[str] = "sub_center_arc_face"  # also try sup_con
-    # ntxent, triplet, triplet_smooth, arc_face, sub_center_arc_face, sup_con, circle
-    loss_set_contrastive: Optional[str] = "arc_face"  # also try sup_con
+    loss_contrastive: Optional[str] = "sup_con"  # sub_center_arc_face
+    loss_set_contrastive: Optional[str] = None  # arc_face
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
     scale_loss_set_contrastive: float = 0.1
@@ -882,7 +883,7 @@ class Config(pydantic.BaseModel):
     log_every_n_steps: int = 2500
     ckpt_every_n_steps: int = 2500
     # needed if model architecture changes or optimizer changes
-    skip_first_optimizer_load_state: bool = True
+    skip_first_optimizer_load_state: bool = False
 
 
 # ========================================================================= #
