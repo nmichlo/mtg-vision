@@ -614,7 +614,11 @@ class SyntheticBgFgMtgImages:
         return self[idx]
 
     _RAN_BG = uran.ApplyShuffled(
-        uran.ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
+        uran.ApplyOrdered(
+            Mutate.flip,
+            Mutate.rotate_bounded,
+            Mutate.warp_inv,
+        ),
         uran.ApplyChoice(
             Mutate.tint,
             None,  # Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul
@@ -625,11 +629,12 @@ class SyntheticBgFgMtgImages:
         # uran.ApplyChoice(Mutate.color_jitter, None),
     )
     _RAN_FG = uran.ApplyOrdered(
-        uran.ApplyChoice(Mutate.downscale_upscale, None, None),
+        uran.ApplyChoice(Mutate.downscale_upscale, None, None, None),
         uran.ApplyChoice(
             Mutate.warp,
             Mutate.affine_transform,
             Mutate.perspective_transform,
+            None,
         ),
         uran.ApplyChoice(
             Mutate.tint,
@@ -640,9 +645,9 @@ class SyntheticBgFgMtgImages:
         ),
     )
     _RAN_VRTL = uran.ApplyShuffled(
-        uran.ApplyChoice(Mutate.downscale_upscale, None, None),
-        uran.ApplyChoice(Mutate.blur, None),
-        uran.ApplyChoice(Mutate.sharpen, None),
+        uran.ApplyChoice(Mutate.downscale_upscale, None, None, None),
+        uran.ApplyChoice(Mutate.blur, None, None),
+        uran.ApplyChoice(Mutate.sharpen, None, None),
         uran.ApplyChoice(
             Mutate.noise,
             Mutate.gaussian_noise,
@@ -669,7 +674,7 @@ class SyntheticBgFgMtgImages:
         uran.ApplyChoice(
             Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
         ),
-        uran.ApplyChoice(Mutate.random_erasing, None),
+        # uran.ApplyChoice(Mutate.random_erasing, None),
     )
 
     @staticmethod

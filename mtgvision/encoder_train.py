@@ -430,15 +430,12 @@ class MtgVisionEncoder(pl.LightningModule):
         # contrastive loss -- based on card IDs as labels
         if self.hparams.loss_contrastive:
             loss_cont = self._metric(z_all, labels_all[:, 0])
-            loss_cont *= self.hparams.scale_loss_contrastive
-            # loss
-            loss += loss_cont
             logs["loss_metric"] = loss_cont
+            loss += loss_cont * self.hparams.scale_loss_contrastive
 
         # contrastive set loss -- based on set codes as labels
         if self.hparams.loss_set_contrastive:
             loss_set_cont = self._metric_set(z_all, labels_all[:, 2])
-            # loss
             logs["loss_set_metric"] = loss_set_cont
             loss += loss_set_cont * self.hparams.scale_loss_set_contrastive
 
@@ -686,8 +683,10 @@ def train(config: "Config"):
     parts = [
         (config.prefix, config.prefix),
         (True, config.model_name),
+        (True, config.head_type),
         (config.loss_recon, config.loss_recon),
         (config.loss_contrastive, config.loss_contrastive),
+        (config.loss_set_contrastive, config.loss_set_contrastive),
         (config.learning_rate, f"lr={config.learning_rate}"),
         (config.batch_size, f"bs={config.batch_size}"),
     ]
@@ -868,14 +867,14 @@ class Config(pydantic.BaseModel):
     # loss
     loss_recon: Optional[str] = None  # 'ssim5+l1'
     # ntxent, triplet, triplet_smooth, arc_face, sub_center_arc_face, sup_con, circle
-    loss_contrastive: Optional[str] = "sup_con"  # sub_center_arc_face
-    loss_set_contrastive: Optional[str] = None  # arc_face
+    loss_contrastive: Optional[str] = "circle"  # sub_center_arc_face
+    loss_set_contrastive: Optional[str] = "circle"  # arc_face
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
-    scale_loss_set_contrastive: float = 0.1
+    scale_loss_set_contrastive: float = 0.05
     # trainer
     compile: bool = False
-    max_steps: int = 10_000_000
+    max_steps: int = 100001
     num_workers: int = 6
     # logging
     prefix: Optional[str] = None
