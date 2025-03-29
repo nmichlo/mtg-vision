@@ -33,7 +33,7 @@ Using similar techniques to facial recognition.
 import uuid
 from collections import defaultdict
 from pathlib import Path
-from typing import DefaultDict, Iterator, Literal, Optional
+from typing import DefaultDict, Hashable, Iterable, Iterator, Literal, Optional, TypeVar
 
 import cv2
 import numpy as np
@@ -83,7 +83,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def warp(img, warp_ratio=0.2, warp_ratio_min=-0.15):
+    def warp(img, warp_ratio=0.3, warp_ratio_min=-0.25):
         # [top left, top right, bottom left, bottom right]
         (h, w) = (img.shape[0] - 1, img.shape[1] - 1)
         src_pts = np.asarray([(0, 0), (0, w), (h, 0), (h, w)], dtype=np.float32)
@@ -107,7 +107,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def noise(img, amount=0.75):
+    def noise(img, amount=0.5):
         noise_type = random.choice(["speckle", "gaussian", "pepper", "poisson"])
         if noise_type == "speckle":
             noisy = uimg.noise_speckle(img, strength=0.3)
@@ -128,6 +128,29 @@ class Mutate:
     def blur(img, n_max=3):
         n = np.random.randint(0, (n_max - 1) // 2 + 1) * 2 + 1
         return cv2.GaussianBlur(img, (n, n), 0)
+
+    @staticmethod
+    @ensure_float32
+    def downscale_upscale(
+        img,
+        n_min=0,
+        n_max=2,
+        choices=(
+            cv2.INTER_NEAREST,
+            cv2.INTER_LINEAR,
+            cv2.INTER_CUBIC,
+        ),
+    ):
+        n = np.random.randint(n_min, n_max + 1)
+        orig_h, orig_w = img.shape[:2]
+        new_h = orig_h // (2**n)
+        new_w = orig_w // (2**n)
+        interp_down = np.random.choice(choices)
+        interp_up = np.random.choice(choices)
+        # resize
+        img = cv2.resize(img, (new_w, new_h), interpolation=interp_down)
+        img = cv2.resize(img, (orig_w, orig_h), interpolation=interp_up)
+        return img
 
     @staticmethod
     @ensure_float32
@@ -157,6 +180,22 @@ class Mutate:
         alpha = 1.0 + np.random.uniform(-contrast, contrast)
         beta = np.random.uniform(-brightness, brightness)
         img = alpha * img + beta
+        return uimg.img_clip(img)
+
+    @staticmethod
+    @ensure_float32
+    def rgb_jitter_add(img, brightness=0.3):
+        # Randomly change the brightness of the image
+        rgb = np.random.uniform(-brightness, brightness, size=(1, 1, 3))
+        img[:, :, :3] *= rgb
+        return uimg.img_clip(img)
+
+    @staticmethod
+    @ensure_float32
+    def rgb_jitter_mul(img, brightness=0.3):
+        # Randomly change the brightness of the image
+        rgb = np.random.uniform(1 - brightness, 1 + brightness, size=(1, 1, 3))
+        img[:, :, :3] *= rgb
         return uimg.img_clip(img)
 
     # @staticmethod
@@ -226,7 +265,7 @@ class Mutate:
     def random_erasing(
         img,
         *,
-        scale_min_max: tuple[float, float] = (0.2, 0.5),  # [0, 1]
+        scale_min_max: tuple[float, float] = (0.2, 0.4),  # [0, 1]
         aspect_min_max: tuple[float, float] = (1, 3),  # [1, inf]
         color: Literal["random", "uniform_random", "zeros", "ones", "mean"] = (
             "random",
@@ -303,7 +342,18 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def affine_transform(img, angle=0, translate=(0, 0), scale=1, shear=0):
+    def affine_transform(img, angle=5, translate=(10, 10), scale=0.1, shear=0.3):
+        # random
+        angle = np.random.uniform(-angle, angle)
+        translate = (
+            np.random.uniform(-translate[0], translate[0]),
+            np.random.uniform(-translate[1], translate[1]),
+        )
+        scale = min(1.0 + scale, 1.0 / (1.0 + scale))
+        scale = np.random.uniform(scale, 1 / scale)
+        shear = np.random.uniform(-shear, shear)
+
+        # adjust
         rows, cols, _ = img.shape
         center = (cols / 2, rows / 2)
         M = cv2.getRotationMatrix2D(center, angle, scale)
@@ -438,6 +488,16 @@ class CocoValImages(IlsvrcImages):
 SizeHW = tuple[int, int]
 PathOrImg = str | np.ndarray
 
+H = TypeVar("H", bound=Hashable)
+
+
+def idx_map(items: Iterable[H]) -> dict[H, int]:
+    """Generate labels for a sequence of items."""
+    labels = {}
+    for i, item in enumerate(sorted(set(items))):
+        labels[item] = i
+    return labels
+
 
 class SyntheticBgFgMtgImages:
     """
@@ -456,18 +516,32 @@ class SyntheticBgFgMtgImages:
             download_mode="now" if predownload else "none",
         )
         # group cards by names so we can find adversarial ones
-        self._cards_by_name: DefaultDict[str, dict[str, ScryfallCardFace]] = (
-            defaultdict(dict)
-        )
-        self._cards_by_set: DefaultDict[str, dict[str, ScryfallCardFace]] = defaultdict(
-            dict
-        )
+        GroupHint = DefaultDict[str, dict[str, ScryfallCardFace]]
+        self._cards_by_name: GroupHint = defaultdict(dict)
+        self._cards_by_set: GroupHint = defaultdict(dict)
+        ids, names, sets = [], [], []
         for card in tqdm(self._ds):
             self._cards_by_name[card.name][card.id] = card
             self._cards_by_set[card.set_code][card.id] = card
+            ids.append(card.id)
+            names.append(card.name)
+            sets.append(card.set_code)
+        self._idx_by_id = idx_map(ids)
+        self._idx_by_name = idx_map(names)
+        self._idx_by_set = idx_map(sets)
         print(
             f"Grouped {len(self._ds)} cards with unique names: {len(self._cards_by_name)} and unique sets: {len(self._cards_by_set)}"
         )
+
+    def card_get_labels(self, card: ScryfallCardFace) -> tuple[int, int, int]:
+        id_idx = self._idx_by_id[card.id]
+        name_idx = self._idx_by_name[card.name]
+        set_idx = self._idx_by_set[card.set_code]
+        return id_idx, name_idx, set_idx
+
+    def card_get_labels_by_id(self, id_: uuid.UUID | str) -> tuple[int, int, int]:
+        card = self.get_card_by_id(id_)
+        return self.card_get_labels(card)
 
     def get_card_by_id(self, id_: uuid.UUID | str) -> ScryfallCardFace:
         return self._ds.get_card_by_id(id_)
@@ -540,45 +614,63 @@ class SyntheticBgFgMtgImages:
         return self[idx]
 
     _RAN_BG = uran.ApplyShuffled(
-        uran.ApplyOrdered(Mutate.flip, Mutate.rotate_bounded, Mutate.warp_inv),
+        uran.ApplyOrdered(
+            Mutate.flip,
+            Mutate.rotate_bounded,
+            Mutate.warp_inv,
+        ),
+        uran.ApplyChoice(
+            Mutate.tint,
+            None,  # Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul
+        ),
         uran.ApplyChoice(
             Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
         ),
         # uran.ApplyChoice(Mutate.color_jitter, None),
     )
     _RAN_FG = uran.ApplyOrdered(
+        uran.ApplyChoice(Mutate.downscale_upscale, None, None, None),
         uran.ApplyChoice(
             Mutate.warp,
             Mutate.affine_transform,
             Mutate.perspective_transform,
+            None,
+        ),
+        uran.ApplyChoice(
+            Mutate.tint,
+            None,  # Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul
         ),
         uran.ApplyChoice(
             Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
         ),
     )
     _RAN_VRTL = uran.ApplyShuffled(
-        # uran.ApplyChoice(Mutate.blur, None),
-        uran.ApplyChoice(Mutate.sharpen, None),
-        # uran.ApplyChoice(
-        #     Mutate.noise,
-        #     Mutate.gaussian_noise,
-        #     Mutate.salt_pepper_noise,
-        #     Mutate.random_erasing,
-        #     Mutate.cutout,
-        #     None,
-        # ),
-        # uran.ApplyChoice(
-        #     uran.ApplyChoice(
-        #         Mutate.noise,
-        #         Mutate.gaussian_noise,
-        #         Mutate.salt_pepper_noise,
-        #         Mutate.random_erasing,
-        #         Mutate.cutout,
-        #         None,
-        #     ),
-        #     None,
-        # ),
-        # uran.ApplyChoice(Mutate.tint, None),
+        uran.ApplyChoice(Mutate.downscale_upscale, None, None, None),
+        uran.ApplyChoice(Mutate.blur, None, None),
+        uran.ApplyChoice(Mutate.sharpen, None, None),
+        uran.ApplyChoice(
+            Mutate.noise,
+            Mutate.gaussian_noise,
+            Mutate.salt_pepper_noise,
+            Mutate.random_erasing,
+            Mutate.cutout,
+            None,
+        ),
+        uran.ApplyChoice(
+            uran.ApplyChoice(
+                Mutate.noise,
+                Mutate.gaussian_noise,
+                Mutate.salt_pepper_noise,
+                Mutate.random_erasing,
+                Mutate.cutout,
+                None,
+            ),
+            None,
+        ),
+        uran.ApplyChoice(
+            Mutate.tint,
+            None,  # Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul
+        ),
         uran.ApplyChoice(
             Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
         ),
@@ -714,5 +806,5 @@ if __name__ == "__main__":
             _o, _l, (192, 128), (192, 128), True
         )
 
-        # uimg.imshow_loop(x, "asdf")
+        uimg.imshow_loop(x, "asdf")
         # uimg.imshow_loop(y, "asdf")

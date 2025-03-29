@@ -9,6 +9,7 @@ import argparse
 import sys
 import uuid
 import warnings
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal, Mapping, Optional, Sequence, Tuple, TypedDict
 import matplotlib.pyplot as plt
@@ -22,7 +23,7 @@ import random
 import wandb
 import kornia as K
 import pytorch_lightning as pl
-from pytorch_metric_learning.losses import NTXentLoss
+import pytorch_metric_learning.losses as mll
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import (
     Callback,
@@ -37,10 +38,13 @@ from mtgvision.util.image import img_clip
 from mtgvision.util.random import seed_all
 
 
+Z_SIZE = 768
+
+
 def _cnv2ae_fn(fn):
     return lambda hw, **k: fn(
         image_wh=hw[::-1],
-        z_size=768,
+        z_size=Z_SIZE,
         **k,
     )
 
@@ -68,15 +72,19 @@ _MODELS = {
 
 
 class BatchHintNumpy(TypedDict, total=False):
-    x: np.ndarray
-    y: np.ndarray
-    labels: np.ndarray
+    y: np.ndarray[np.float32]  # [:, H, W, C]
+    x: np.ndarray[np.float32]  # [:, H, W, C]
+    x_labels: np.ndarray[int]  # [:, 0] ids, [:, 1] names, [:, 2] sets
+    x2: np.ndarray[np.float32]  # [:, H, W, C]
+    x2_labels: np.ndarray[int]  # [:, 0] ids, [:, 1] names, [:, 2] sets
 
 
 class BatchHintTensor(TypedDict, total=False):
-    x: torch.Tensor
-    y: torch.Tensor
-    labels: torch.Tensor
+    y: torch.Tensor  # [:, C, H, W]
+    x: torch.Tensor  # [:, C, H, W]
+    x_labels: torch.Tensor  # [:, 0] ids, [:, 1] names, [:, 2] sets
+    x2: torch.Tensor  # [:, C, H, W]
+    x2_labels: torch.Tensor  # [:, 0] ids, [:, 1] names, [:, 2] sets
 
 
 class RanMtgEncDecDataset(IterableDataset):
@@ -120,27 +128,25 @@ class RanMtgEncDecDataset(IterableDataset):
     ) -> BatchHintNumpy:
         if isinstance(ids, (str, uuid.UUID)):
             ids = [ids]
-        x, y, labels = self._make_image_batch(
+        t = 1.0 if force_target_input else (None if force_target_input is None else 0.0)
+        n = 1.0 if force_similar_neg else (None if force_similar_neg is None else 0.0)
+        imgs, lbls = self._make_image_batch(
             cards=[self.mtg.get_card_by_id(id_) for id_ in ids],
-            bg_imgs=[self.ilsvrc.ran() for id_ in ids],
-            target_is_input_prob=1.0
-            if force_target_input
-            else (None if force_target_input is None else 0.0),
-            similar_neg_prob=1.0
-            if force_similar_neg
-            else (None if force_similar_neg is None else 0.0),
+            bg_imgs=[self.ilsvrc.ran() for _ in ids],
+            target_in_prob=t,
+            similar_neg_prob=n,
         )
-        return self._get_dict(x, y, labels)
+        return self._get_dict(imgs, lbls)
 
-    def random_tensor_batch(self, n: Optional[int] = None) -> BatchHintTensor:
-        x, y, labels = self._random_image_batch(n)
-        return self._get_dict(x, y, labels, K.image_to_tensor, torch.tensor)
+    def random_tensor_batch(self, n: int | None = None) -> BatchHintTensor:
+        imgs, lbls = self._random_image_batch(n)
+        return self._get_dict(imgs, lbls, K.image_to_tensor, torch.asarray)
 
-    def random_image_batch(self, n: Optional[int] = None) -> BatchHintNumpy:
-        x, y, labels = self._random_image_batch(n)
-        return self._get_dict(x, y, labels)
+    def random_image_batch(self, n: int | None = None) -> BatchHintNumpy:
+        imgs, lbls = self._random_image_batch(n)
+        return self._get_dict(imgs, lbls)
 
-    def _random_image_batch(self, n: Optional[int] = None) -> tuple[Any, Any, Any]:
+    def _random_image_batch(self, n: int | None = None):
         if n is None:
             n = self.default_batch_size
         # get random images
@@ -151,108 +157,77 @@ class RanMtgEncDecDataset(IterableDataset):
 
     @classmethod
     def _get_dict(
-        cls, x, y, labels, apply_imgs=lambda v: v, apply_labels=lambda v: v
-    ) -> dict:
-        batch = {}
-        if x is not None:
-            batch["x"] = apply_imgs(x)
-        if y is not None:
-            batch["y"] = apply_imgs(y)
-        if labels is not None:
-            batch["labels"] = apply_labels(labels)
-        return batch
+        cls,
+        imgs: "dict[str, np.ndarray[np.float32]]",
+        lbls: "dict[str, np.ndarray[int]]",
+        apply_imgs=lambda v: v,
+        apply_lbls=lambda v: v,
+    ) -> BatchHintTensor | BatchHintNumpy:
+        return {
+            **{k: apply_imgs(v) for k, v in imgs.items()},
+            **{k: apply_lbls(v) for k, v in lbls.items()},
+        }
+
+    def __make_y__(self, card_img: np.ndarray) -> np.ndarray:
+        y = SyntheticBgFgMtgImages.make_cropped(card_img, size_hw=self.y_size_hw)
+        return y
+
+    def __make_x__(
+        self, card_img: np.ndarray, bg: np.ndarray, target_is_input_prob: float
+    ) -> np.ndarray:
+        if random.random() < (target_is_input_prob or self.target_is_input_prob):
+            x = SyntheticBgFgMtgImages.make_cropped(card_img, size_hw=self.x_size_hw)
+        else:
+            x = SyntheticBgFgMtgImages.make_virtual(
+                card_img,
+                bg,
+                size_hw=self.x_size_hw,
+                half_upsidedown=self.half_upsidedown,
+            )
+        return x
 
     def _make_image_batch(
         self,
         cards: list[ScryfallCardFace],
         bg_imgs: list[np.ndarray],
         *,
-        target_is_input_prob: float = None,
+        target_in_prob: float = None,
         similar_neg_prob: float = None,
-    ) -> tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    ) -> "tuple[dict[str, np.ndarray[np.float32]], dict[str, np.ndarray[int]]]":
         assert len(cards) == len(bg_imgs), f"{len(cards)} != {len(bg_imgs)}"
-
-        # generate random samples
-        xs, ys, x_cls = [], [], []
+        # A. generate random samples
+        imgs, lbls = defaultdict(list), defaultdict(list)
         for i, (card, bg0) in enumerate(zip(cards, bg_imgs)):
             card_img = SyntheticBgFgMtgImages._load_card_image(card)
-            # make the target card, this is a slightly cropped version of the original.
+            # 1. make the target card, this is a slight crop of the actual original.
             if self.targets:
-                ys.append(
-                    SyntheticBgFgMtgImages.make_cropped(
-                        card_img, size_hw=self.y_size_hw
-                    )
-                )
-
-            # make the 1st input with card + random background and augment
-            # sometimes we swap this out with the target so that we learn everything
-            # correctly
-            if random.random() < (target_is_input_prob or self.target_is_input_prob):
-                x0 = SyntheticBgFgMtgImages.make_cropped(
-                    card_img, size_hw=self.x_size_hw
-                )
-            else:
-                x0 = SyntheticBgFgMtgImages.make_virtual(
-                    card_img,
-                    bg0,
-                    size_hw=self.x_size_hw,
-                    half_upsidedown=self.half_upsidedown,
-                )
-            xs.append(x0)
-            x_cls.append(i)
-
-            # make the contrastive learning example
+                imgs["y"].append(self.__make_y__(card_img))
+            # 2. make the 1st input with card + random background and augment
+            #    sometimes we swap this out with the target so that we learn everything
+            #    correctly
+            imgs["x"].append(self.__make_x__(card_img, bg0, target_in_prob))
+            lbls["x_labels"].append(self.mtg.card_get_labels(card))
+            # 3. make the contrastive learning example ... usually this is a positive
+            #    example, but sometimes we randomly swap it out with a negative card
+            #    that probably looks similar to the original card, but is not the same
             if self.paired:
-                xc = i
-                # try convert the positive example to a negative with the same name
+                pair_card: "ScryfallCardFace" = card
+                pair_card_im: "np.ndarray" = card_img
+                # 3.a randomly swap out with nearby negative example
                 if random.random() < (similar_neg_prob or self.similar_neg_prob):
-                    sim_card = self.mtg.get_similar_card(card.id)
-                    if sim_card is not None:
-                        # offset, must not be same, chance of hitting other card in this group is low
-                        # ideally should check if the same
-                        xc = 10000 + i
-                        card_img = SyntheticBgFgMtgImages._load_card_image(sim_card)
-                # make 2nd input with SAME (if above not applied) card but different
+                    _card = self.mtg.get_similar_card(card.id)
+                    if _card is not None:
+                        pair_card = _card
+                        pair_card_im = SyntheticBgFgMtgImages._load_card_image(_card)
+                # 3.b make 2nd input with SAME (if above not applied) card but different
                 # augment and background for contrastive learning
                 bg1 = random.choice(bg_imgs)
-                if random.random() < (
-                    target_is_input_prob or self.target_is_input_prob
-                ):
-                    x1 = SyntheticBgFgMtgImages.make_cropped(
-                        card_img, size_hw=self.x_size_hw
-                    )
-                else:
-                    x1 = SyntheticBgFgMtgImages.make_virtual(
-                        card_img,
-                        bg1,
-                        size_hw=self.x_size_hw,
-                        half_upsidedown=self.half_upsidedown,
-                    )
-                xs.append(x1)
-                x_cls.append(xc)
-
-        # stack
-        x = np.stack(xs, axis=0)
-        y = np.stack(ys, axis=0) if self.targets else None
-        labels = np.asarray(x_cls) if self.paired else None
-
-        if self.check_data:
-
-            def _check(v, name):
-                stat_str = (
-                    lambda v: f"min: {np.min(v)}, max: {np.max(v)}, mean: {np.mean(v)}, std: {np.std(v)}"
-                )
-                if v is not None and np.any(v < 0):
-                    raise ValueError(f"x < 0: {stat_str(v)}")
-                if v is not None and np.any(v > 1):
-                    raise ValueError(f"x > 1: {stat_str(v)}")
-                if v is not None and np.any(np.isnan(v)):
-                    raise ValueError(f"x NaN: {stat_str(v)}")
-
-            _check(x, "x")
-            _check(y, "y")
-
-        return x, y, labels
+                imgs["x2"].append(self.__make_x__(pair_card_im, bg1, target_in_prob))
+                lbls["x2_labels"].append(self.mtg.card_get_labels(pair_card))
+        # B. stack
+        imgs = {k: np.stack(v, axis=0) for k, v in imgs.items()}
+        lbls = {k: np.stack(v, axis=0) for k, v in lbls.items()}
+        return imgs, lbls
 
     def set_batch_size(self, batch_size):
         self.default_batch_size = batch_size
@@ -262,7 +237,8 @@ class RanMtgEncDecDataset(IterableDataset):
         return cls(
             default_batch_size=hparams.batch_size,
             predownload=hparams.force_download,
-            paired=hparams.loss_contrastive is not None,
+            paired=hparams.loss_contrastive is not None
+            or hparams.loss_set_contrastive is not None,
             targets=hparams.loss_recon is not None,
             x_size_hw=hparams.x_size_hw,
             y_size_hw=hparams.y_size_hw,
@@ -281,6 +257,8 @@ class RanMtgEncDecDataset(IterableDataset):
 class MtgVisionEncoder(pl.LightningModule):
     hparams: "Config"
     model: "cnv2ae.ConvNeXtV2Ae"
+    metric: "torch.nn.Module"
+    metric_set: "torch.nn.Module"
 
     def __init__(self, config: dict):
         super().__init__()
@@ -299,6 +277,12 @@ class MtgVisionEncoder(pl.LightningModule):
             head_type=self.hparams.head_type,
         )
         self.model = model
+
+        # set loss
+        if self.hparams.loss_contrastive:
+            self._metric = self._get_metric(self.hparams.loss_contrastive)
+        if self.hparams.loss_set_contrastive:
+            self._metric_set = self._get_metric(self.hparams.loss_set_contrastive)
 
     def on_load_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
         self.configure_model()
@@ -377,10 +361,51 @@ class MtgVisionEncoder(pl.LightningModule):
         multi = self.model.decode(z)
         return multi[0]
 
-    def training_step(self, batch, batch_idx):
+    def _get_metric(self, name: str):
+        # not good for qdrant search?
+        if name == "ntxent":
+            # needs very large batch sizes ~= 4096
+            return mll.NTXentLoss(temperature=0.07)
+        elif name == "triplet":
+            # not circular
+            return mll.TripletMarginLoss(margin=0.05)
+        elif name == "triplet_smooth":
+            # not circular, but probably better
+            return mll.TripletMarginLoss(margin=0.05, smooth_loss=True)
+
+        # Circular/normalized losses are better for qdrant cosine searches
+        elif name == "arc_face":
+            # This loss encourages embeddings of cards from the same set to be closer
+            # than those from different sets, providing group-level guidance.
+            return mll.ArcFaceLoss(
+                num_classes=120000, embedding_size=Z_SIZE, margin=28.6, scale=64
+            )
+        elif name == "sub_center_arc_face":
+            # This loss ensures that embeddings of distorted versions of
+            # the same card are mapped closely together.
+            return mll.SubCenterArcFaceLoss(
+                num_classes=120000,
+                embedding_size=Z_SIZE,
+                margin=28.6,
+                scale=64,
+                sub_centers=3,
+            )
+        elif name == "sup_con":
+            # seems to work well if not configured right?
+            return mll.SupConLoss(temperature=0.1)
+        elif name == "circle":
+            # Face Recognition: m = 0.25, gamma = 256
+            # Person Reidentification: m = 0.25, gamma = 128
+            # Fine-grained Image Retrieval: m = 0.4, gamma = 80
+            return mll.CircleLoss(m=0.25, gamma=256)
+        else:
+            raise KeyError(f"Unknown metric: {name}")
+
+    def training_step(self, batch: BatchHintTensor, batch_idx: int):
         logs, loss = {}, 0
+
         # recon loss
-        if self.hparams.loss_recon is None:
+        if not self.hparams.loss_recon:
             z = self.encode(batch["x"])
         else:
             z, y_recon = self.forward(batch["x"])
@@ -390,23 +415,34 @@ class MtgVisionEncoder(pl.LightningModule):
             # input x size might have more elems than y, but y always corresponds to
             # starting elements in x, so slice array
             loss_recon = recon_loss_fn(y_recon[: len(batch["y"])], batch["y"])
-            loss_recon *= self.hparams.scale_loss_recon
-            loss += loss_recon
             logs["loss_recon"] = loss_recon
+            loss += loss_recon * self.hparams.scale_loss_recon
 
-        # contrastive loss
-        if self.hparams.loss_contrastive is not None:
-            assert self.hparams.loss_contrastive == "ntxent"
-            metric = NTXentLoss(temperature=0.07)
-            labels = batch["labels"]
-            loss_cont = metric(z, labels) * self.hparams.scale_loss_contrastive
-            # scale
-            loss += loss_cont
+        # get z2
+        z_all: "torch.Tensor | None" = None
+        labels_all: "torch.Tensor | None" = None
+        if self.hparams.loss_contrastive or self.hparams.loss_set_contrastive:
+            _z2 = self.encode(batch["x2"])
+            z_all = torch.cat([z, _z2], dim=0)
+            # (N, 3) --> [:, 0] ids, [:, 1] names, [:, 2] sets
+            labels_all = torch.cat([batch["x_labels"], batch["x2_labels"]], dim=0)
+
+        # contrastive loss -- based on card IDs as labels
+        if self.hparams.loss_contrastive:
+            loss_cont = self._metric(z_all, labels_all[:, 0])
             logs["loss_metric"] = loss_cont
+            loss += loss_cont * self.hparams.scale_loss_contrastive
+
+        # contrastive set loss -- based on set codes as labels
+        if self.hparams.loss_set_contrastive:
+            loss_set_cont = self._metric_set(z_all, labels_all[:, 2])
+            logs["loss_set_metric"] = loss_set_cont
+            loss += loss_set_cont * self.hparams.scale_loss_set_contrastive
 
         # loss is required key
         logs["loss"] = loss
         self.log_dict(logs, on_step=True, on_epoch=True, prog_bar=True)
+
         # loss is required key
         return logs
 
@@ -647,8 +683,10 @@ def train(config: "Config"):
     parts = [
         (config.prefix, config.prefix),
         (True, config.model_name),
+        (True, config.head_type),
         (config.loss_recon, config.loss_recon),
         (config.loss_contrastive, config.loss_contrastive),
+        (config.loss_set_contrastive, config.loss_set_contrastive),
         (config.learning_rate, f"lr={config.learning_rate}"),
         (config.batch_size, f"bs={config.batch_size}"),
     ]
@@ -693,7 +731,7 @@ def train(config: "Config"):
                 vis_batches, log_every_n_steps=config.log_every_n_steps
             ),
             ModelCheckpoint(
-                monitor="loss_recon",
+                monitor="loss",
                 save_top_k=3,
                 mode="min",
                 every_n_train_steps=config.ckpt_every_n_steps,
@@ -795,6 +833,7 @@ _CONF_TYPE_OVERRIDES = {
     "checkpoint": str,
     "loss_recon": str,
     "loss_contrastive": str,
+    "loss_set_contrastive": str,
     "prefix": str,
     "optimizer": str,
     "dec_skip_connections": str,
@@ -813,25 +852,29 @@ class Config(pydantic.BaseModel):
     check_data: bool = False  # ensure data is in the right range!
     # model
     model_name: str = "cnvnxt2ae_nano"
-    head_type: str = "pool+linear"  # conv, conv+linear, pool+linear
+    head_type: str = "conv+linear"  # conv, conv+linear, pool+linear
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
     optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 1e-3
     weight_decay: float = 1e-7  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
-    batch_size: int = 64
+    batch_size: int = (
+        64  # effectively doubled with loss_contrastive / loss_set_contrastive
+    )
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss
     loss_recon: Optional[str] = None  # 'ssim5+l1'
-    loss_contrastive: Optional[str] = "ntxent"  # ntxent
-    loss_contrastive_batched: bool = False
+    # ntxent, triplet, triplet_smooth, arc_face, sub_center_arc_face, sup_con, circle
+    loss_contrastive: Optional[str] = "circle"  # sub_center_arc_face
+    loss_set_contrastive: Optional[str] = "circle"  # arc_face
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
+    scale_loss_set_contrastive: float = 0.05
     # trainer
     compile: bool = False
-    max_steps: int = 10_000_000
+    max_steps: int = 100001
     num_workers: int = 6
     # logging
     prefix: Optional[str] = None
@@ -839,7 +882,7 @@ class Config(pydantic.BaseModel):
     log_every_n_steps: int = 2500
     ckpt_every_n_steps: int = 2500
     # needed if model architecture changes or optimizer changes
-    skip_first_optimizer_load_state: bool = True
+    skip_first_optimizer_load_state: bool = False
 
 
 # ========================================================================= #
