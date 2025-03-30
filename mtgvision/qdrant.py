@@ -6,8 +6,6 @@ from typing import Any, Iterable
 import qdrant_client
 from qdrant_client.http.models import ScoredPoint, VectorParams, Distance
 
-from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
-
 
 @dataclass
 class QdrantPoint:
@@ -114,30 +112,33 @@ class VectorStoreQdrant:
 
 
 if __name__ == "__main__":
-    ds = SyntheticBgFgMtgImages(force_update=True)
+    # ds = SyntheticBgFgMtgImages()
 
-    for card in ds.card_iter():
-        print(card.id)
+    db = VectorStoreQdrant()
+    for i in [
+        # "391a5fee-39e6-4192-93ab-134e7efe3990",
+        # "391a5fee-39e6-4192-93ab-134e7efe3990",
+        # "ce9ed217-8378-4a58-a00d-fa4e4cb27c9d",
+        # "14de01ae-a52e-4530-9fe3-9888a8480fc8",
+        # BAD DATA
+        "000225fc-9bc3-4eb3-905e-02c19c873b0b",
+        "007a6422-20b7-40d0-aed1-99eb7482556a",
+        "00bbc009-ef6b-4f16-b737-086b7348e05e",
+        "01498551-4c5d-42b8-9283-73244c680407",
+        "01672157-7cf5-4bc2-90ba-080842625ea7",
+    ]:
+        # plt.imshow(ds.get_image_by_id(i))
+        # plt.imshow(ds.make_cropped(ds.get_image_by_id(i)))
+        # plt.show()
 
-    # db = VectorStoreQdrant()
-    # for i in [
-    #     # "391a5fee-39e6-4192-93ab-134e7efe3990",
-    #     # "391a5fee-39e6-4192-93ab-134e7efe3990",
-    #     # "ce9ed217-8378-4a58-a00d-fa4e4cb27c9d",
-    #     # "14de01ae-a52e-4530-9fe3-9888a8480fc8",
-    #     # BAD DATA
-    #     "000225fc-9bc3-4eb3-905e-02c19c873b0b",
-    #     "007a6422-20b7-40d0-aed1-99eb7482556a",
-    #     "00bbc009-ef6b-4f16-b737-086b7348e05e",
-    #     "01498551-4c5d-42b8-9283-73244c680407",
-    #     "01672157-7cf5-4bc2-90ba-080842625ea7",
-    # ]:
-    #     # plt.imshow(ds.get_image_by_id(i))
-    #     # plt.imshow(ds.make_cropped(ds.get_image_by_id(i)))
-    #     # plt.show()
-    #
-    #     [item] = db.retrieve([i], with_payload=True, with_vectors=True)
-    #
-    #     for item in db.query_nearby(item.vector, k=3000, with_payload=False, with_vectors=False, score_threshold=0.1):
-    #         print('-', item)
-    #     break
+        [item] = db.retrieve([i], with_payload=True, with_vectors=True)
+
+        for item in db.query_nearby(
+            item.vector,
+            k=3000,
+            with_payload=False,
+            with_vectors=False,
+            score_threshold=0.1,
+        ):
+            print("-", item)
+        break
