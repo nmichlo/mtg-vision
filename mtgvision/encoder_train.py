@@ -856,7 +856,7 @@ class Config(pydantic.BaseModel):
     # model
     model_name: str = "cnvnxt2ae_nano"
     # "conv+linear", "conv+mlp", "conv+act+mlp", "pool+linear", "pool+mlp"
-    head_type: cnv2ae.HeadHint = "conv+mlp"
+    head_type: cnv2ae.HeadHint = "conv+linear"
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
