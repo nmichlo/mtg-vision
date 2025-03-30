@@ -1,9 +1,12 @@
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 import qdrant_client
-from qdrant_client.http.models import VectorParams, Distance
+from qdrant_client.http.models import ScoredPoint, VectorParams, Distance
+
+from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 
 
 @dataclass
@@ -13,24 +16,15 @@ class QdrantPoint:
     payload: dict[str, Any] | None = None
 
 
-class VectorStoreBase:
+class VectorStoreQdrant:
+    _COLLECTION = "mtg"
     _VECTOR_SIZE: int = 768
 
-    def save_points(self, iter_points: Iterable[QdrantPoint]):
-        raise NotImplementedError
-
-    def query(self, vector: list[float], k: int) -> list[QdrantPoint]:
-        raise NotImplementedError
-
-    def query_by_id(self, id_: str) -> QdrantPoint:
-        raise NotImplementedError
-
-
-class VectorStoreQdrant(VectorStoreBase):
-    _COLLECTION = "mtg"
-
     def __init__(self, location: str = "localhost:6333"):
-        self.client = qdrant_client.QdrantClient(location=location)
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        self.client = qdrant_client.QdrantClient(
+            location=location,
+        )
         if not self.client.collection_exists(self._COLLECTION):
             self.client.create_collection(
                 self._COLLECTION,
@@ -88,7 +82,8 @@ class VectorStoreQdrant(VectorStoreBase):
         *,
         with_payload: bool = True,
         with_vectors: bool = False,
-    ) -> list[QdrantPoint]:
+        score_threshold: float = None,
+    ) -> list[ScoredPoint]:
         from qdrant_client.http.models import QueryResponse
 
         results: QueryResponse = self.client.query_points(
@@ -97,15 +92,9 @@ class VectorStoreQdrant(VectorStoreBase):
             limit=k,
             with_vectors=with_vectors,
             with_payload=with_payload,
+            score_threshold=score_threshold,
         )
-        return [
-            QdrantPoint(
-                id=point.id,
-                vector=point.vector,
-                payload=point.payload,
-            )
-            for point in results.points
-        ]
+        return results.points
 
     def update_payload(
         self,
@@ -122,3 +111,33 @@ class VectorStoreQdrant(VectorStoreBase):
             vector=None,
             payload=deepcopy(payload),
         )
+
+
+if __name__ == "__main__":
+    ds = SyntheticBgFgMtgImages(force_update=True)
+
+    for card in ds.card_iter():
+        print(card.id)
+
+    # db = VectorStoreQdrant()
+    # for i in [
+    #     # "391a5fee-39e6-4192-93ab-134e7efe3990",
+    #     # "391a5fee-39e6-4192-93ab-134e7efe3990",
+    #     # "ce9ed217-8378-4a58-a00d-fa4e4cb27c9d",
+    #     # "14de01ae-a52e-4530-9fe3-9888a8480fc8",
+    #     # BAD DATA
+    #     "000225fc-9bc3-4eb3-905e-02c19c873b0b",
+    #     "007a6422-20b7-40d0-aed1-99eb7482556a",
+    #     "00bbc009-ef6b-4f16-b737-086b7348e05e",
+    #     "01498551-4c5d-42b8-9283-73244c680407",
+    #     "01672157-7cf5-4bc2-90ba-080842625ea7",
+    # ]:
+    #     # plt.imshow(ds.get_image_by_id(i))
+    #     # plt.imshow(ds.make_cropped(ds.get_image_by_id(i)))
+    #     # plt.show()
+    #
+    #     [item] = db.retrieve([i], with_payload=True, with_vectors=True)
+    #
+    #     for item in db.query_nearby(item.vector, k=3000, with_payload=False, with_vectors=False, score_threshold=0.1):
+    #         print('-', item)
+    #     break
