@@ -452,12 +452,14 @@ class MtgVisionEncoder(pl.LightningModule):
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay,
+                eps=1e-4,  # needed for mixed precision
             )
         elif self.hparams.optimizer == "radam":
             opt = optim.RAdam(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay,
+                eps=1e-4,  # needed for mixed precision
             )
         elif self.hparams.optimizer == "sgd":
             opt = optim.SGD(
@@ -837,6 +839,7 @@ _CONF_TYPE_OVERRIDES = {
     "prefix": str,
     "optimizer": str,
     "dec_skip_connections": str,
+    "head_type": str,
 }
 
 
@@ -852,7 +855,8 @@ class Config(pydantic.BaseModel):
     check_data: bool = False  # ensure data is in the right range!
     # model
     model_name: str = "cnvnxt2ae_nano"
-    head_type: str = "conv+linear"  # conv, conv+linear, pool+linear
+    # "conv+linear", "conv+mlp", "conv+act+mlp", "pool+linear", "pool+mlp"
+    head_type: cnv2ae.HeadHint = "conv+linear"
     x_size_hw: tuple[int, int] = (192, 128)
     y_size_hw: tuple[int, int] = (192, 128)
     # optimisation
