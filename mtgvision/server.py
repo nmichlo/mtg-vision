@@ -1,24 +1,41 @@
+import functools
+
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import cv2
 import numpy as np
-from mtgvision.od_cam import CardDetector
-from mtgvision.encoder_export import CoreMlEncoder, MODEL_PATH
+
+from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
+from mtgvision.encoder_export import CoreMlEncoder
+from mtgvision.od_export import CardSegmenter
+from mtgvision.qdrant import VectorStoreQdrant
 
 
 # Initialize the YOLO detector once at startup
-_DATA_ROOT = Path("/Users/nathanmichlo/Desktop/active/mtg/data/gen")
-DETECTOR = CardDetector(_DATA_ROOT / "yolo_mtg_dataset_v3/models/1ipho2mn_best.pt")
-ENCODER = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
+@functools.lru_cache()
+def get_ctx():
+    SEGMENTER = CardSegmenter()
+    ENCODER = CoreMlEncoder()
+    VECS = VectorStoreQdrant()
+    DATA = SyntheticBgFgMtgImages()
+    return SEGMENTER, ENCODER, VECS, DATA
+
 
 # Create the app
 app = FastAPI()
 
 
+# encode numpy array as jpg base64
+def encode_im(im):
+    pass
+
+
 @app.websocket("/detect")
 async def detect_websocket(websocket: WebSocket):
     """Handle WebSocket connections to receive frames and send detection metadata."""
+    SEGMENTER, ENCODER, VECS, DATA = get_ctx()
+
     await websocket.accept()
     while True:
         try:
@@ -26,22 +43,37 @@ async def detect_websocket(websocket: WebSocket):
             data = await websocket.receive_bytes()
 
             # Decode the JPEG image
+            print(f"Received {len(data)} bytes")
             nparr = np.frombuffer(data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR_RGB)
             if frame is None:
+                print("Failed to decode frame, skipping...")
                 continue
 
             # Run YOLO detection
-            detections = DETECTOR(frame)
+            segments = SEGMENTER(frame)
 
-            # extract cards
-            dets = []
-            for card in detections.detection_groups[0]:
+            # extract cards & embed
+            det_data = []
+            for seg in segments:
+                im = seg.extract_dewarped(frame)
+                z = ENCODER.predict(im)
+                [result] = VECS.query_nearby(z, k=1)
+                card = DATA.get_card_by_id(result.id)
                 det = {
-                    "points": det.points.tolist(),
-                    "score": float(np.mean(det.scores)),
+                    "points": seg.xyxyxyxy.tolist(),
+                    "score": float(seg.conf),
+                    # "img": None
+                    "match": {
+                        "id": result.id,
+                        "score": result.score,
+                        # "img": None
+                        "name": card.name,
+                        "set_name": card.set_name,
+                        "img_uri": card.img_uri,
+                    },
                 }
-                dets.append(det)
+                det_data.append(det)
 
             # Send detection metadata back to the browser
             await websocket.send_json(
@@ -51,7 +83,7 @@ async def detect_websocket(websocket: WebSocket):
             )
         except Exception as e:
             print(f"WebSocket error: {e}")
-            break
+            raise
 
 
 # Serve static files from the 'www' directory
