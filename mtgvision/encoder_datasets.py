@@ -33,13 +33,23 @@ Using similar techniques to facial recognition.
 import uuid
 from collections import defaultdict
 from pathlib import Path
-from typing import DefaultDict, Hashable, Iterable, Iterator, Literal, Optional, TypeVar
+from typing import (
+    DefaultDict,
+    Hashable,
+    Iterable,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    TypeVar,
+)
 
 import cv2
 import numpy as np
 from math import ceil
 import random
 
+from filelock import FileLock
 from tqdm import tqdm
 
 from mtgdata import ScryfallDataset, ScryfallImageType
@@ -508,35 +518,55 @@ class SyntheticBgFgMtgImages:
     as the result of some detection or segmentation task.
     """
 
-    def __init__(self, img_type=ScryfallImageType.small, predownload=False):
-        self._ds = ScryfallDataset(
+    def __init__(
+        self, img_type=ScryfallImageType.small, predownload=False, force_update=False
+    ):
+        path = Path(__file__).parent.parent.parent / "data/ds/load.lock"
+        with FileLock(path, blocking=True, timeout=10):
+            self._init_(
+                img_type=img_type, predownload=predownload, force_update=force_update
+            )
+
+    def _init_(
+        self, img_type=ScryfallImageType.small, predownload=False, force_update=False
+    ):
+        # LOAD CARDS ... TEMPORARY
+        ds = ScryfallDataset(
             img_type=img_type,
             data_root=Path(__file__).parent.parent.parent / "data/ds",
-            force_update=False,
+            force_update=force_update,
             download_mode="now" if predownload else "none",
         )
+        # cards
+        self._card_by_id: dict[str, ScryfallCardFace] = {}
+        self._card_ids: List[str] = []
         # group cards by names so we can find adversarial ones
         GroupHint = DefaultDict[str, dict[str, ScryfallCardFace]]
         self._cards_by_name: GroupHint = defaultdict(dict)
         self._cards_by_set: GroupHint = defaultdict(dict)
-        ids, names, sets = [], [], []
-        for card in tqdm(self._ds):
+        cards, card_ids, card_names, card_sets = [], [], [], []
+        for card in tqdm(ds):
+            self._card_by_id[card.id] = card
             self._cards_by_name[card.name][card.id] = card
             self._cards_by_set[card.set_code][card.id] = card
-            ids.append(card.id)
-            names.append(card.name)
-            sets.append(card.set_code)
-        self._idx_by_id = idx_map(ids)
-        self._idx_by_name = idx_map(names)
-        self._idx_by_set = idx_map(sets)
+            cards.append(card)
+            card_ids.append(card.id)
+            card_names.append(card.name)
+            card_sets.append(card.set_code)
+        # save cards
+        self._card_ids = sorted(card_ids)
+        # unique values assigned to each unique value
+        self._labels_by_id: dict[str, int] = idx_map(card_ids)
+        self._labels_by_name: dict[str, int] = idx_map(card_names)
+        self._labels_by_set: dict[str, int] = idx_map(card_sets)
         print(
-            f"Grouped {len(self._ds)} cards with unique names: {len(self._cards_by_name)} and unique sets: {len(self._cards_by_set)}"
+            f"Grouped {len(self._card_ids)} cards with unique names: {len(self._cards_by_name)} and unique sets: {len(self._cards_by_set)}"
         )
 
     def card_get_labels(self, card: ScryfallCardFace) -> tuple[int, int, int]:
-        id_idx = self._idx_by_id[card.id]
-        name_idx = self._idx_by_name[card.name]
-        set_idx = self._idx_by_set[card.set_code]
+        id_idx = self._labels_by_id[card.id]
+        name_idx = self._labels_by_name[card.name]
+        set_idx = self._labels_by_set[card.set_code]
         return id_idx, name_idx, set_idx
 
     def card_get_labels_by_id(self, id_: uuid.UUID | str) -> tuple[int, int, int]:
@@ -544,7 +574,9 @@ class SyntheticBgFgMtgImages:
         return self.card_get_labels(card)
 
     def get_card_by_id(self, id_: uuid.UUID | str) -> ScryfallCardFace:
-        return self._ds.get_card_by_id(id_)
+        if isinstance(id_, str):
+            id_ = uuid.UUID(id_)
+        return self._card_by_id[id_]
 
     def get_image_by_id(self, id_: uuid.UUID | str) -> np.ndarray:
         _, img = self.get_card_and_image_by_id(id_)
@@ -553,7 +585,7 @@ class SyntheticBgFgMtgImages:
     def get_card_and_image_by_id(
         self, id_: uuid.UUID | str
     ) -> tuple[ScryfallCardFace, np.ndarray]:
-        card = self._ds.get_card_by_id(id_)
+        card = self.get_card_by_id(id_)
         return card, self._load_card_image(card)
 
     def _get_group(self, card, mode) -> dict[str, ScryfallCardFace]:
@@ -582,18 +614,18 @@ class SyntheticBgFgMtgImages:
         return uimg.img_float32(card.dl_and_open_im_resized())
 
     def __len__(self):
-        return len(self._ds)
+        return len(self._card_ids)
 
     def __getitem__(self, item):
-        return self._load_card_image(self._ds[item])
+        return self._load_card_image(self.get_card_by_id(self._card_ids[item]))
 
     def __iter__(self):
-        for card in self._ds:
+        for card in self.card_iter():
             yield self._load_card_image(card)
 
     def card_iter(self) -> Iterator[ScryfallCardFace]:
-        for card in self._ds:
-            yield card
+        for id_ in self._card_ids:
+            yield self.get_card_by_id(id_)
 
     def ran(self) -> np.ndarray:
         _, img = self.ran_card_and_image()
@@ -608,7 +640,8 @@ class SyntheticBgFgMtgImages:
         return str(self.ran_card().download())
 
     def ran_card(self) -> ScryfallCardFace:
-        return random.choice(self._ds)
+        id_ = random.choice(self._card_ids)
+        return self.get_card_by_id(id_)
 
     def get(self, idx) -> np.ndarray:
         return self[idx]
