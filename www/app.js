@@ -1,8 +1,41 @@
-// Global variables
+// ========== Global Variables ==========
 let currentStream;
 let ws;
+let selectedId = null;
+let reconnectTimeout;
 
-// Start video stream with the specified device ID
+// ========== WebSocket Handling ==========
+function connectWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `ws://${window.location.host}/detect`;
+
+    ws = new WebSocket(wsUrl);
+    const loading = document.getElementById('loading');
+    loading.style.display = 'block';
+    ws.onopen = () => {
+        console.log('WebSocket connection established');
+        document.getElementById('status').textContent = 'Connected to server.';
+        loading.style.display = 'none';
+    };
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        drawDetections(data.detections);
+        updateSidebar(data.detections);
+    };
+    ws.onerror = () => {
+        console.error('WebSocket error');
+        document.getElementById('status').textContent = 'WebSocket error occurred.';
+        loading.style.display = 'block';
+    };
+    ws.onclose = () => {
+        console.log('WebSocket connection closed');
+        document.getElementById('status').textContent = 'Disconnected from server. Reconnecting...';
+        loading.style.display = 'block';
+        reconnectTimeout = setTimeout(connectWebSocket, 5000);
+    };
+}
+
+// ========== Video Stream Handling ==========
 async function startStream(deviceId) {
     if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
@@ -29,23 +62,6 @@ async function populateDevices(currentDeviceId) {
     });
 }
 
-// Draw bounding boxes on the SVG overlay
-function drawBoundingBoxes(detections) {
-    const svg = document.getElementById('overlay');
-    svg.innerHTML = ''; // Clear previous boxes
-    detections.forEach(det => {
-        // Convert points array to SVG points string (e.g., "x1,y1 x2,y2 x3,y3 x4,y4")
-        const pointsStr = det.points.map(p => p.join(',')).join(' ');
-        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-        polygon.setAttribute('points', pointsStr);
-        polygon.setAttribute('stroke', 'red');
-        polygon.setAttribute('stroke-width', '2');
-        polygon.setAttribute('fill', 'none');
-        svg.appendChild(polygon);
-    });
-}
-
-// Send video frames to the backend over WebSocket
 function startSendingFrames(video) {
     const canvas = document.createElement('canvas');
     canvas.width = 640;
@@ -62,33 +78,69 @@ function startSendingFrames(video) {
     }, 100); // Send at 10 FPS (every 100ms)
 }
 
-// Main function
+// ========== Drawing Functions ==========
+function drawDetections(detections) {
+    const svg = document.getElementById('overlay');
+    svg.innerHTML = '';
+    detections.forEach(det => {
+        const isSelected = det.id === selectedId;
+        const strokeColor = isSelected ? 'yellow' : det.color;
+        const strokeWidth = isSelected ? '4' : '2';
+        const pointsStr = det.points.map(p => p.join(',')).join(' ');
+        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        polygon.setAttribute('points', pointsStr);
+        polygon.setAttribute('stroke', strokeColor);
+        polygon.setAttribute('stroke-width', strokeWidth);
+        polygon.setAttribute('fill', 'none');
+        polygon.addEventListener('click', () => { selectedId = det.id; });
+        svg.appendChild(polygon);
+
+        const topPoint = det.points.reduce((a, b) => a[1] < b[1] ? a : b);
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', topPoint[0]);
+        text.setAttribute('y', topPoint[1] - 5);
+        text.setAttribute('fill', 'white');
+        text.setAttribute('font-size', '12');
+        text.textContent = det.match.name;
+        svg.appendChild(text);
+    });
+}
+
+function updateSidebar(detections) {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.innerHTML = '';
+    const sortedDets = [...detections].sort((a, b) => a.id - b.id);
+    sortedDets.forEach(det => {
+        const div = document.createElement('div');
+        div.style.marginBottom = '10px';
+        if (det.id === selectedId) div.style.border = '2px solid yellow';
+        const colorDiv = document.createElement('div');
+        colorDiv.style.width = '20px';
+        colorDiv.style.height = '20px';
+        colorDiv.style.backgroundColor = det.color;
+        colorDiv.style.display = 'inline-block';
+        div.appendChild(colorDiv);
+        const img = document.createElement('img');
+        img.src = 'data:image/jpeg;base64,' + det.img;
+        img.style.width = '100px';
+        img.style.height = 'auto';
+        div.appendChild(img);
+        const name = document.createElement('p');
+        name.textContent = det.match.name;
+        div.appendChild(name);
+        div.addEventListener('click', () => { selectedId = det.id; });
+        sidebar.appendChild(div);
+    });
+}
+
+// ========== Main Function ==========
 async function main() {
     const video = document.getElementById('video');
     const select = document.getElementById('select');
     const status = document.getElementById('status');
     const startCameraButton = document.getElementById('startCamera');
 
-    // Initialize WebSocket connection
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    ws = new WebSocket(`${protocol}//${host}/detect`);
-    ws.onopen = () => {
-        console.log('WebSocket connection established');
-        status.textContent = 'Connected to server. Select a camera to start.';
-    };
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        drawBoundingBoxes(data.detections);
-    };
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        status.textContent = 'WebSocket error occurred.';
-    };
-    ws.onclose = () => {
-        console.log('WebSocket connection closed');
-        status.textContent = 'Disconnected from server.';
-    };
+    connectWebSocket();
 
     // Start camera on button click
     startCameraButton.addEventListener('click', async () => {
@@ -110,9 +162,7 @@ async function main() {
         }
     });
 
-    // Handle device selection changes
     select.addEventListener('change', async () => {
-        const deviceId = select.value;
-        await startStream(deviceId);
+        await startStream(select.value);
     });
 }
