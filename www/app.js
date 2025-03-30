@@ -70,7 +70,9 @@ async function main() {
     const startCameraButton = document.getElementById('startCamera');
 
     // Initialize WebSocket connection
-    ws = new WebSocket('ws://localhost:8000/detect');
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    ws = new WebSocket(`${protocol}//${host}/detect`);
     ws.onopen = () => {
         console.log('WebSocket connection established');
         status.textContent = 'Connected to server. Select a camera to start.';
