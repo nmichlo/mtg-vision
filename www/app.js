@@ -7,15 +7,12 @@ let reconnectTimeout;
 // ========== WebSocket Handling ==========
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `ws://${window.location.host}/detect`;
+    const wsUrl = `${protocol}//${window.location.host}/detect`;
 
     ws = new WebSocket(wsUrl);
-    const loading = document.getElementById('loading');
-    loading.style.display = 'block';
     ws.onopen = () => {
         console.log('WebSocket connection established');
         document.getElementById('status').textContent = 'Connected to server.';
-        loading.style.display = 'none';
     };
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
@@ -25,12 +22,10 @@ function connectWebSocket() {
     ws.onerror = () => {
         console.error('WebSocket error');
         document.getElementById('status').textContent = 'WebSocket error occurred.';
-        loading.style.display = 'block';
     };
     ws.onclose = () => {
         console.log('WebSocket connection closed');
         document.getElementById('status').textContent = 'Disconnected from server. Reconnecting...';
-        loading.style.display = 'block';
         reconnectTimeout = setTimeout(connectWebSocket, 5000);
     };
 }
@@ -45,7 +40,6 @@ async function startStream(deviceId) {
     document.getElementById('video').srcObject = currentStream;
 }
 
-// Populate the device selector dropdown
 async function populateDevices(currentDeviceId) {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter(device => device.kind === 'videoinput');
@@ -73,15 +67,15 @@ function startSendingFrames(video) {
             ctx.drawImage(video, 0, 0, 640, 480);
             canvas.toBlob(blob => {
                 ws.send(blob);
-            }, 'image/jpeg', 0.5); // 50% quality to reduce bandwidth
+            }, 'image/jpeg', 0.5);
         }
-    }, 100); // Send at 10 FPS (every 100ms)
+    }, 100); // 10 FPS
 }
 
 // ========== Drawing Functions ==========
 function drawDetections(detections) {
     const svg = document.getElementById('overlay');
-    svg.innerHTML = '';
+    svg.innerHTML = ''; // Clear previous drawings
     detections.forEach(det => {
         const isSelected = det.id === selectedId;
         const strokeColor = isSelected ? 'yellow' : det.color;
@@ -92,45 +86,84 @@ function drawDetections(detections) {
         polygon.setAttribute('stroke', strokeColor);
         polygon.setAttribute('stroke-width', strokeWidth);
         polygon.setAttribute('fill', 'none');
-        polygon.addEventListener('click', () => { selectedId = det.id; });
+        polygon.style.pointerEvents = 'auto'; // Enable clicking
+        polygon.addEventListener('click', () => {
+            selectedId = det.id;
+            updateCardInfo(det);
+            updateSidebar(detections); // Refresh sidebar to highlight selected card
+        });
         svg.appendChild(polygon);
 
-        const topPoint = det.points.reduce((a, b) => a[1] < b[1] ? a : b);
-        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', topPoint[0]);
-        text.setAttribute('y', topPoint[1] - 5);
-        text.setAttribute('fill', 'white');
-        text.setAttribute('font-size', '12');
-        text.textContent = det.match.name;
-        svg.appendChild(text);
+        // Display the best match name above the polygon
+        const bestMatch = det.matches[0];
+        if (bestMatch) {
+            const topPoint = det.points.reduce((a, b) => a[1] < b[1] ? a : b); // Find top-most point
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', topPoint[0]);
+            text.setAttribute('y', topPoint[1] - 5);
+            text.setAttribute('fill', 'white');
+            text.setAttribute('font-size', '12');
+            text.textContent = bestMatch.name;
+            svg.appendChild(text);
+        }
     });
 }
 
 function updateSidebar(detections) {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.innerHTML = '';
-    const sortedDets = [...detections].sort((a, b) => a.id - b.id);
+    const cardList = document.getElementById('card-list');
+    cardList.innerHTML = ''; // Clear previous content
+    if (detections.length === 0) {
+        cardList.innerHTML = '<p>No cards detected</p>';
+        return;
+    }
+    const sortedDets = [...detections].sort((a, b) => a.id - b.id); // Sort by ID
+
     sortedDets.forEach(det => {
         const div = document.createElement('div');
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
         div.style.marginBottom = '10px';
-        if (det.id === selectedId) div.style.border = '2px solid yellow';
-        const colorDiv = document.createElement('div');
-        colorDiv.style.width = '20px';
-        colorDiv.style.height = '20px';
-        colorDiv.style.backgroundColor = det.color;
-        colorDiv.style.display = 'inline-block';
-        div.appendChild(colorDiv);
+        div.style.cursor = 'pointer';
+        if (det.id === selectedId) div.style.border = '2px solid yellow'; // Highlight selected card
         const img = document.createElement('img');
         img.src = 'data:image/jpeg;base64,' + det.img;
-        img.style.width = '100px';
+        img.style.width = '50px';
         img.style.height = 'auto';
         div.appendChild(img);
-        const name = document.createElement('p');
-        name.textContent = det.match.name;
-        div.appendChild(name);
-        div.addEventListener('click', () => { selectedId = det.id; });
-        sidebar.appendChild(div);
+        const info = document.createElement('div');
+        info.style.marginLeft = '10px';
+        const bestMatch = det.matches[0];
+        info.innerHTML = `<strong>ID: ${det.id}</strong><br>${bestMatch ? bestMatch.name : 'Unknown'}`;
+        div.appendChild(info);
+        div.addEventListener('click', () => {
+            selectedId = det.id;
+            updateCardInfo(det);
+            updateSidebar(detections); // Refresh to highlight selected card
+        });
+        cardList.appendChild(div);
     });
+
+}
+
+function updateCardInfo(det) {
+    const cardInfo = document.getElementById('card-info');
+    if (!det) {
+        cardInfo.innerHTML = '';
+        return;
+    }
+    const bestMatch = det.matches[0];
+    cardInfo.innerHTML = `
+        <h3>${bestMatch.name}</h3>
+        <p>Set: ${bestMatch.set_name || 'Unknown'} (${bestMatch.set_code || ''})</p>
+        <img src="${bestMatch.img_uri || 'data:image/jpeg;base64,' + det.img}" alt="${bestMatch.name}" style="width: 100%; height: auto;">
+    `;
+}
+
+function updateOverlaySize() {
+    const video = document.getElementById('video');
+    const svg = document.getElementById('overlay');
+    const { width, height } = video.getBoundingClientRect();
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
 }
 
 // ========== Main Function ==========
@@ -142,7 +175,23 @@ async function main() {
 
     connectWebSocket();
 
-    // Start camera on button click
+    // Attempt to auto-start the stream
+    try {
+        const initialStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = initialStream;
+        currentStream = initialStream;
+        const deviceId = initialStream.getVideoTracks()[0].getSettings().deviceId;
+        status.textContent = 'Camera access granted. Populating devices...';
+        await populateDevices(deviceId);
+        status.textContent = 'Streaming to server...';
+        startSendingFrames(video);
+        startCameraButton.disabled = true; // Disable button since stream is active
+    } catch (error) {
+        console.warn('Auto-start failed:', error);
+        status.textContent = 'Auto-start failed. Click "Start Streaming" to begin.';
+    }
+
+    // Manual start on button click (for browsers requiring interaction)
     startCameraButton.addEventListener('click', async () => {
         startCameraButton.disabled = true;
         status.textContent = 'Requesting camera access...';
@@ -154,7 +203,7 @@ async function main() {
             status.textContent = 'Camera access granted. Populating devices...';
             await populateDevices(deviceId);
             status.textContent = 'Streaming to server...';
-            startSendingFrames(video); // Start sending frames to the backend
+            startSendingFrames(video);
         } catch (error) {
             console.error('Error accessing camera:', error);
             status.textContent = 'Error: Could not access camera.';
@@ -162,7 +211,12 @@ async function main() {
         }
     });
 
+    // Populate device list
     select.addEventListener('change', async () => {
         await startStream(select.value);
     });
+
+    // Update overlay size on window resize
+    window.addEventListener('resize', updateOverlaySize);
+    updateOverlaySize(); // Initial call
 }
