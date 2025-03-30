@@ -839,6 +839,7 @@ _CONF_TYPE_OVERRIDES = {
     "prefix": str,
     "optimizer": str,
     "dec_skip_connections": str,
+    "head_type": str,
 }
 
 
