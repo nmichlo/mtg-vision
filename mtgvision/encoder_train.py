@@ -93,14 +93,14 @@ class RanMtgEncDecDataset(IterableDataset):
         default_batch_size: int,
         *,
         predownload: bool = False,
-        paired: bool,  # for contrastive loss, two random aug of same cards
-        targets: bool,
+        paired: bool = False,  # for contrastive loss, two random aug of same cards
+        targets: bool = True,
         x_size_hw: Tuple[int, int] = (192, 128),
         y_size_hw: Tuple[int, int] = (192, 128),
-        half_upsidedown: bool,
-        target_is_input_prob: float,
-        similar_neg_prob: float,
-        check_data: bool,
+        half_upsidedown: bool = False,
+        target_is_input_prob: float = 0.05,
+        similar_neg_prob: float = 0.2,
+        check_data: bool = False,
     ):
         assert default_batch_size > 0
         self.default_batch_size = default_batch_size
@@ -872,7 +872,7 @@ class Config(pydantic.BaseModel):
     loss_recon: Optional[str] = None  # 'ssim5+l1'
     # ntxent, triplet, triplet_smooth, arc_face, sub_center_arc_face, sup_con, circle
     loss_contrastive: Optional[str] = "circle"  # sub_center_arc_face
-    loss_set_contrastive: Optional[str] = "circle"  # arc_face
+    loss_set_contrastive: Optional[str] = None  # arc_face
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
     scale_loss_set_contrastive: float = 0.05
