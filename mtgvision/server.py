@@ -20,6 +20,8 @@ from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.od_export import CardSegmenter, InstanceSeg
 from mtgvision.qdrant import VectorStoreQdrant
+from mtgvision.util.image import imshow
+
 
 # ========== Global Context ==========
 
@@ -83,8 +85,8 @@ class TrackerCtx:
 
     def __init__(
         self,
-        update_wait_sec: float = 1.0,
-        ewma_weight: float = 0.05,
+        update_wait_sec: float = 0.5,
+        ewma_weight: float = 0.1,
     ):
         self.update_wait_sec = update_wait_sec
         self.ewma_weight = ewma_weight
@@ -101,7 +103,7 @@ class TrackerCtx:
         self.tracked_data = {}  # {id: {'z_avg': np.ndarray, 'last_query_time': float, 'nearby_points': list, 'nearby_cards': list}}
 
     def update(self, frame: np.ndarray) -> list[TrackedData]:
-        # 0. Segment the frame
+        # 0. Segment the frame (RGB)
         segments = self.segmenter(frame)
 
         # 1. Create Norfair detections with minimal initial data
@@ -198,25 +200,31 @@ async def detect_websocket(websocket: WebSocket):
     while True:
         try:
             # 1. Receive binary image data from the browser
-            data = await websocket.receive_bytes()
+            data = await websocket.receive_bytes()  # RGB bytes
 
-            # 2. Decode the JPEG image
+            # 2. Decode the JPEG image as RGB array (needed for models, must NOT be BGR)
             print(f"Received {len(data)} bytes")
             nparr = np.frombuffer(data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR_RGB)
             if frame is None:
                 print("Failed to decode frame, skipping...")
                 continue
 
             # 3. Process the frame
             objs = ctx.update(frame)
+            for i, obj in enumerate(objs):
+                print(
+                    obj.id,
+                    [(m["name"], m["set_code"]) for m in obj.to_dict()["matches"]],
+                )
+                if obj.last_img is not None:
+                    imshow(obj.last_img, f"{i}")
 
             # 4. Send results
-            await websocket.send_json(
-                {
-                    "detections": [obj.to_dict() for obj in objs],
-                }
-            )
+            response = {
+                "detections": [obj.to_dict() for obj in objs],
+            }
+            await websocket.send_json(response)
         except Exception as e:
             print(f"WebSocket error: {e}")
             raise

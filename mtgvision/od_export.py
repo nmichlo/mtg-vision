@@ -96,11 +96,13 @@ class InstanceSeg:
         self,
         frame: np.ndarray,
         out_size_hw: tuple[int, int] = (192, 128),
-        expand_ratio: float = 0.1,
+        expand_ratio: float = -0.05,
     ) -> np.ndarray:
         h, w = out_size_hw
         dst_pts = np.asarray([[0, 0], [w, 0], [w, h], [0, h]])
-        dst_pts = (1 + expand_ratio) * dst_pts - expand_ratio * np.asarray([w, h])
+        dst_pts = (1 + expand_ratio) * dst_pts - (0.5 * expand_ratio) * np.asarray(
+            [w, h]
+        )
         M = cv2.getPerspectiveTransform(
             np.asarray(self.xyxyxyxy).astype(np.float32),
             np.asarray(dst_pts).astype(np.float32),
