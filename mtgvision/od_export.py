@@ -96,7 +96,7 @@ class InstanceSeg:
         self,
         frame: np.ndarray,
         out_size_hw: tuple[int, int] = (192, 128),
-        expand_ratio: float = -0.05,
+        expand_ratio: float = 0.05,
     ) -> np.ndarray:
         h, w = out_size_hw
         dst_pts = np.asarray([[0, 0], [w, 0], [w, h], [0, h]])

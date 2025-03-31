@@ -1,15 +1,26 @@
-// ========== Global Variables ==========
+// ======================================================================== //
+// Global Vars                                                              //
+// ======================================================================== //
+
 let currentStream;
 let ws;
 let selectedId = null;
 let reconnectTimeout;
+let svg; // SVG.js instance
+let isStreaming = false; // Track streaming state
+let sendInterval; // Store interval for sending frames
 
-// ========== WebSocket Handling ==========
+// ======================================================================== //
+// WebSocket Handling                                                       //
+// ======================================================================== //
+
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/detect`;
 
     ws = new WebSocket(wsUrl);
+
+    // setup event handlers
     ws.onopen = () => {
         console.log('WebSocket connection established');
         document.getElementById('status').textContent = 'Connected to server.';
@@ -30,7 +41,12 @@ function connectWebSocket() {
     };
 }
 
-// ========== Video Stream Handling ==========
+
+// ======================================================================== //
+// Video Stream Handling                                                    //
+// ======================================================================== //
+
+
 async function startStream(deviceId) {
     if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
@@ -62,7 +78,7 @@ function startSendingFrames(video) {
     canvas.height = 480;
     const ctx = canvas.getContext('2d');
 
-    setInterval(() => {
+    sendInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ctx.drawImage(video, 0, 0, 640, 480);
             canvas.toBlob(blob => {
@@ -72,51 +88,62 @@ function startSendingFrames(video) {
     }, 100); // 10 FPS
 }
 
-// ========== Drawing Functions ==========
+function stopStreaming() {
+    if (sendInterval) {
+        clearInterval(sendInterval);
+        sendInterval = null;
+    }
+    if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+    }
+    document.getElementById('video').srcObject = null;
+    isStreaming = false;
+    document.getElementById('startCamera').textContent = 'Start Streaming';
+    document.getElementById('status').textContent = 'Streaming stopped.';
+}
+
+// ======================================================================== //
+// Drawing Functions                                                        //
+// ======================================================================== //
+
+
 function drawDetections(detections) {
-    const svg = document.getElementById('overlay');
-    svg.innerHTML = ''; // Clear previous drawings
+    svg.clear(); // Clear previous drawings using SVG.js
     detections.forEach(det => {
         const isSelected = det.id === selectedId;
         const strokeColor = isSelected ? 'yellow' : det.color;
-        const strokeWidth = isSelected ? '4' : '2';
-        const pointsStr = det.points.map(p => p.join(',')).join(' ');
-        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-        polygon.setAttribute('points', pointsStr);
-        polygon.setAttribute('stroke', strokeColor);
-        polygon.setAttribute('stroke-width', strokeWidth);
-        polygon.setAttribute('fill', 'none');
-        polygon.style.pointerEvents = 'auto'; // Enable clicking
-        polygon.addEventListener('click', () => {
+        const strokeWidth = isSelected ? 4 : 2;
+        const points = det.points.map(p => p.join(',')).join(' ');
+
+        const polygon = svg.polygon(points)
+            .fill('none')
+            .stroke({ color: strokeColor, width: strokeWidth });
+        // polygon.css('pointer-events', 'auto'); // Enable clicking
+        polygon.click(() => {
             selectedId = det.id;
             updateCardInfo(det);
-            updateSidebar(detections); // Refresh sidebar to highlight selected card
+            updateSidebar(detections); // Refresh sidebar
         });
-        svg.appendChild(polygon);
 
-        // Display the best match name above the polygon
         const bestMatch = det.matches[0];
         if (bestMatch) {
-            const topPoint = det.points.reduce((a, b) => a[1] < b[1] ? a : b); // Find top-most point
-            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            text.setAttribute('x', topPoint[0]);
-            text.setAttribute('y', topPoint[1] - 5);
-            text.setAttribute('fill', 'white');
-            text.setAttribute('font-size', '12');
-            text.textContent = bestMatch.name;
-            svg.appendChild(text);
+            const topPoint = det.points.reduce((a, b) => a[1] < b[1] ? a : b);
+            svg.text(bestMatch.name)
+                .move(topPoint[0], topPoint[1] - 15)
+                .font({ fill: 'white', size: 12 });
         }
     });
 }
 
 function updateSidebar(detections) {
     const cardList = document.getElementById('card-list');
-    cardList.innerHTML = ''; // Clear previous content
+    cardList.innerHTML = '';
     if (detections.length === 0) {
         cardList.innerHTML = '<p>No cards detected</p>';
         return;
     }
-    const sortedDets = [...detections].sort((a, b) => a.id - b.id); // Sort by ID
+    const sortedDets = [...detections].sort((a, b) => a.id - b.id);
 
     sortedDets.forEach(det => {
         const div = document.createElement('div');
@@ -124,7 +151,7 @@ function updateSidebar(detections) {
         div.style.alignItems = 'center';
         div.style.marginBottom = '10px';
         div.style.cursor = 'pointer';
-        if (det.id === selectedId) div.style.border = '2px solid yellow'; // Highlight selected card
+        if (det.id === selectedId) div.style.border = '2px solid yellow';
         const img = document.createElement('img');
         img.src = 'data:image/jpeg;base64,' + det.img;
         img.style.width = '50px';
@@ -138,11 +165,10 @@ function updateSidebar(detections) {
         div.addEventListener('click', () => {
             selectedId = det.id;
             updateCardInfo(det);
-            updateSidebar(detections); // Refresh to highlight selected card
+            updateSidebar(detections);
         });
         cardList.appendChild(div);
     });
-
 }
 
 function updateCardInfo(det) {
@@ -155,28 +181,36 @@ function updateCardInfo(det) {
     cardInfo.innerHTML = `
         <h3>${bestMatch.name}</h3>
         <p>Set: ${bestMatch.set_name || 'Unknown'} (${bestMatch.set_code || ''})</p>
-        <img src="${bestMatch.img_uri || 'data:image/jpeg;base64,' + det.img}" alt="${bestMatch.name}" style="width: 100%; height: auto;">
+        <img src="${bestMatch.img_uri || 'data:image/jpeg;base64,' + det.img}" alt="${bestMatch.name}" style="width: 100%; height: auto; border-radius: 3px;">
     `;
+    console.log(bestMatch)
+    console.log(bestMatch)
+    console.log(bestMatch)
 }
 
 function updateOverlaySize() {
     const video = document.getElementById('video');
-    const svg = document.getElementById('overlay');
     const { width, height } = video.getBoundingClientRect();
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.viewbox(0, 0, width, height); // Update viewBox with SVG.js
 }
 
-// ========== Main Function ==========
+
+// ======================================================================== //
+// Main Function                                                            //
+// ======================================================================== //
+
 async function main() {
     const video = document.getElementById('video');
     const select = document.getElementById('select');
     const status = document.getElementById('status');
     const startCameraButton = document.getElementById('startCamera');
 
+    // Initialize WebSocket and SVG overlay
     connectWebSocket();
+    svg = SVG(document.getElementById('overlay'));
 
-    // Attempt to auto-start the stream
-    try {
+    // helper function to initialize to start streaming
+    async function start() {
         const initialStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
         video.srcObject = initialStream;
         currentStream = initialStream;
@@ -185,6 +219,11 @@ async function main() {
         await populateDevices(deviceId);
         status.textContent = 'Streaming to server...';
         startSendingFrames(video);
+    }
+
+    // Attempt to auto-start the stream
+    try {
+        await start();
         startCameraButton.disabled = true; // Disable button since stream is active
     } catch (error) {
         console.warn('Auto-start failed:', error);
@@ -193,20 +232,23 @@ async function main() {
 
     // Manual start on button click (for browsers requiring interaction)
     startCameraButton.addEventListener('click', async () => {
-        startCameraButton.disabled = true;
-        status.textContent = 'Requesting camera access...';
-        try {
-            const initialStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-            video.srcObject = initialStream;
-            currentStream = initialStream;
-            const deviceId = initialStream.getVideoTracks()[0].getSettings().deviceId;
-            status.textContent = 'Camera access granted. Populating devices...';
-            await populateDevices(deviceId);
-            status.textContent = 'Streaming to server...';
-            startSendingFrames(video);
-        } catch (error) {
-            console.error('Error accessing camera:', error);
-            status.textContent = 'Error: Could not access camera.';
+        const isStarted = startCameraButton.textContent === 'Stop Streaming';
+
+        if (!isStarted) {
+            startCameraButton.disabled = true;
+            status.textContent = 'Requesting camera access...';
+            try {
+                startCameraButton.textContent = 'Stop Streaming';
+                await start();
+            } catch (error) {
+                console.error('Error accessing camera:', error);
+                startCameraButton.textContent = 'Start Streaming';
+                status.textContent = 'Error: Could not access camera.';
+            }
+            startCameraButton.disabled = false;
+        } else {
+            stopStreaming();
+            startCameraButton.textContent = 'Start Streaming';
             startCameraButton.disabled = false;
         }
     });
@@ -220,3 +262,4 @@ async function main() {
     window.addEventListener('resize', updateOverlaySize);
     updateOverlaySize(); // Initial call
 }
+
