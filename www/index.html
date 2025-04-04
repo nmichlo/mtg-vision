@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Card Detection with LitElement</title>
-    <script src="https://cdn.jsdelivr.net/npm/svgjs@2.6.2/dist/svg.js"></script>
+    <title>Card Detection with LitElement (Refined)</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/svgjs@2/dist/svg.min.js"></script>
+
     <script type="module" src="app.js"></script>
 
     <style>
-        /* Global Styles (apply to body, layout, and potentially component host elements) */
+        /* Global Styles (mostly unchanged) */
         :root {
-            /* Define CSS variables for theming across components */
             --background-dark: #1e1e1e;
             --background-medium: #2e2e2e;
             --background-light: #3e3e3e;
@@ -24,11 +25,8 @@
             --font-family: 'Courier New', Courier, monospace;
             --sidebar-width: 300px;
         }
-
-        * {
-            box-sizing: border-box;
-        }
-
+        /* ... (rest of the global CSS from previous example remains the same) ... */
+         * { box-sizing: border-box; }
         body {
             display: flex;
             flex-direction: row; /* Default layout */
@@ -39,30 +37,21 @@
             font-family: var(--font-family);
             overflow: hidden; /* Prevent body scrollbars */
         }
-
-        /* Style the host element of the main application */
         card-detector-app {
-            flex-grow: 1; /* Allow app to take full space */
-            display: flex; /* Use flexbox for internal layout */
-            flex-direction: row; /* Default layout inside app */
-            min-height: 100vh; /* Ensure it stretches */
+            flex-grow: 1;
+            display: flex;
+            flex-direction: row;
+            min-height: 100vh;
         }
-
-        /* Responsive Design */
-        @media (max-width: 768px) {
-            body {
-                flex-direction: column;
-            }
-            card-detector-app {
-                 flex-direction: column; /* Stack components vertically */
-                 min-height: initial; /* Don't force min-height on mobile maybe */
-                 height: 100vh; /* Occupy full viewport height */
-            }
-            /* Adjust sidebar width variable if needed for component styling */
-            :root {
-                --sidebar-width: 100%;
-            }
-        }
+         @media (max-width: 768px) {
+             body { flex-direction: column; }
+             card-detector-app {
+                 flex-direction: column;
+                 min-height: initial;
+                 height: 100vh;
+             }
+             :root { --sidebar-width: 100%; }
+         }
     </style>
 </head>
 <body>
