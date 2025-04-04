@@ -3,200 +3,69 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Card Detection with Backend Inference (lit-html)</title>
+    <title>Card Detection with LitElement</title>
     <script src="https://cdn.jsdelivr.net/npm/svgjs@2.6.2/dist/svg.js"></script>
     <script type="module" src="app.js"></script>
+
     <style>
-        /* Keep the original CSS styles here or link an external CSS file */
-        /* For brevity, I'm assuming the styles from the original HTML are here */
+        /* Global Styles (apply to body, layout, and potentially component host elements) */
+        :root {
+            /* Define CSS variables for theming across components */
+            --background-dark: #1e1e1e;
+            --background-medium: #2e2e2e;
+            --background-light: #3e3e3e;
+            --text-primary: #fff;
+            --text-secondary: #ccc;
+            --accent-color: #00cc00;
+            --accent-color-darker: #009900;
+            --error-color: #ff6b6b;
+            --selection-color: yellow;
+            --border-radius: 5px;
+            --font-family: 'Courier New', Courier, monospace;
+            --sidebar-width: 300px;
+        }
+
         * {
             box-sizing: border-box;
         }
+
         body {
             display: flex;
-            flex-direction: row;
-            align-items: stretch;
+            flex-direction: row; /* Default layout */
             min-height: 100vh;
             margin: 0;
-            background-color: #1e1e1e;
-            color: #fff;
-            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--background-dark);
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            overflow: hidden; /* Prevent body scrollbars */
         }
 
-        #video-container {
-            position: relative;
-            flex: 1;
-            background-color: black;
-            border-radius: 5px;
-            overflow: hidden;
+        /* Style the host element of the main application */
+        card-detector-app {
+            flex-grow: 1; /* Allow app to take full space */
+            display: flex; /* Use flexbox for internal layout */
+            flex-direction: row; /* Default layout inside app */
+            min-height: 100vh; /* Ensure it stretches */
         }
-
-        #video, #overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-
-        #overlay {
-            pointer-events: none; /* Default, polygons will override */
-        }
-
-        #sidebar {
-            width: 300px; /* Or adjust as needed */
-            background-color: #2e2e2e;
-            padding: 10px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            overflow-y: auto; /* Allow sidebar content to scroll if needed */
-        }
-
-        #controls {
-            margin-bottom: 20px;
-        }
-
-        #controls select, #controls button { /* Target specifically */
-            padding: 10px;
-            margin: 5px 0;
-            border: 2px solid #00cc00; /* Green border to match theme */
-            border-radius: 5px;
-            background-color: #333;
-            color: #fff;
-            font-size: 16px;
-            font-family: 'Courier New', Courier, monospace;
-            width: 100%;
-            box-sizing: border-box;
-            cursor: pointer;
-        }
-
-        #controls button { /* Target specifically */
-            background-color: transparent;
-            color: #00cc00;
-            transition: background-color 0.3s, color 0.3s;
-        }
-
-        #controls button:hover:not(:disabled) { /* Target specifically */
-            background-color: #00cc00;
-            color: #1e1e1e;
-        }
-        #controls button:disabled {
-             cursor: not-allowed;
-             opacity: 0.6;
-        }
-
-
-        #status {
-            margin-top: 10px;
-            font-size: 14px;
-            color: #ccc;
-        }
-
-        #card-list {
-            flex: 1;
-            overflow-y: auto;
-            margin-bottom: 10px; /* Space before card-info */
-        }
-
-        #card-list p {
-            color: #ccc;
-            text-align: center;
-        }
-
-         .card-list-item {
-            display: flex;
-            align-items: center;
-            margin-bottom: 10px;
-            cursor: pointer;
-            padding: 5px;
-            border: 2px solid transparent; /* Placeholder for selection border */
-            border-radius: 4px;
-            transition: background-color 0.2s;
-         }
-         .card-list-item:hover {
-            background-color: #3a3a3a;
-         }
-
-         .card-list-item.selected {
-             border: 2px solid yellow;
-             background-color: #444; /* Slightly different background when selected */
-         }
-
-         .card-list-item .img-container {
-            position: relative;
-            width: 50px;
-            height: 70px; /* Adjust height as needed */
-            overflow: hidden;
-            border-radius: 3px;
-            flex-shrink: 0; /* Prevent shrinking */
-         }
-
-         .card-list-item img {
-             width: 100%;
-             height: auto;
-             display: block; /* Remove extra space below image */
-         }
-
-         .card-list-item .uri-img {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-         }
-
-         .card-list-item .info {
-            margin-left: 10px;
-            overflow: hidden; /* Prevent text overflow */
-            white-space: nowrap; /* Keep text on one line */
-            text-overflow: ellipsis; /* Add ellipsis for overflow */
-         }
-
-        #card-info {
-            margin-top: auto; /* Push to bottom if space allows */
-            padding: 10px;
-            background-color: #3e3e3e;
-            border-radius: 5px;
-            min-height: 100px; /* Ensure it has some minimum size */
-        }
-         #card-info img {
-             width: 100%;
-             height: auto;
-             border-radius: 3px;
-             margin-top: 5px;
-         }
-
 
         /* Responsive Design */
         @media (max-width: 768px) {
             body {
                 flex-direction: column;
             }
-            #video-container {
-                width: 100%;
-                height: 50vh; /* Adjust vertical height */
-                min-height: 250px; /* Minimum sensible height */
-                flex: 0 1 auto; /* Don't grow, shrink if needed, base size auto */
+            card-detector-app {
+                 flex-direction: column; /* Stack components vertically */
+                 min-height: initial; /* Don't force min-height on mobile maybe */
+                 height: 100vh; /* Occupy full viewport height */
             }
-            #sidebar {
-                width: 100%;
-                height: auto; /* Auto height */
-                flex: 1; /* Take remaining space */
-                overflow-y: auto; /* Ensure scrolling if content overflows */
-            }
-            #controls select, #controls button {
-                font-size: 18px;
-                padding: 12px; /* Slightly larger padding */
-            }
-            #card-info {
-                margin-top: 15px; /* Add some space */
+            /* Adjust sidebar width variable if needed for component styling */
+            :root {
+                --sidebar-width: 100%;
             }
         }
     </style>
 </head>
 <body>
-    <div id="app-container"></div>
+    <card-detector-app></card-detector-app>
 </body>
 </html>
