@@ -118,25 +118,27 @@ function drawDetections(detections) {
 
         const polygon = svg.polygon(points)
             .fill('none')
-            .stroke({ color: strokeColor, width: strokeWidth });
-        // polygon.css('pointer-events', 'auto'); // Enable clicking
-        polygon.click(() => {
-            selectedId = det.id;
-            updateCardInfo(det);
-            updateSidebar(detections); // Refresh sidebar
-        });
+            .stroke({ color: strokeColor, width: strokeWidth })
+            .attr('pointer-events', 'auto') // Enable clicking on the polygon
+            .on('click', () => {
+                selectedId = det.id;
+                updateCardInfo(det);
+                updateSidebar(detections); // Refresh sidebar
+            });
 
         const bestMatch = det.matches[0];
         if (bestMatch) {
             const topPoint = det.points.reduce((a, b) => a[1] < b[1] ? a : b);
             svg.text(bestMatch.name)
                 .move(topPoint[0], topPoint[1] - 15)
-                .font({ fill: 'white', size: 12 });
+                .font({ fill: 'white', size: 12 })
+                .attr('pointer-events', 'none'); // Prevent text from interfering with polygon clicks
         }
     });
 }
 
 function updateSidebar(detections) {
+    console.log('Detections received for sidebar:', detections); // Debugging
     const cardList = document.getElementById('card-list');
     cardList.innerHTML = '';
     if (detections.length === 0) {
@@ -151,17 +153,43 @@ function updateSidebar(detections) {
         div.style.alignItems = 'center';
         div.style.marginBottom = '10px';
         div.style.cursor = 'pointer';
+        div.classList.add('card-list-item'); // Add class for hover effect
         if (det.id === selectedId) div.style.border = '2px solid yellow';
+
+        const imgContainer = document.createElement('div');
+        imgContainer.style.position = 'relative';
+        imgContainer.style.width = '50px';
+        imgContainer.style.height = '70px'; // Adjust height as needed
+        imgContainer.style.overflow = 'hidden';
+        imgContainer.style.borderRadius = '3px';
+
         const img = document.createElement('img');
         img.src = 'data:image/jpeg;base64,' + det.img;
-        img.style.width = '50px';
+        img.style.width = '100%';
         img.style.height = 'auto';
-        div.appendChild(img);
+        imgContainer.appendChild(img);
+
+        const uriImg = document.createElement('img');
+        const bestMatch = det.matches[0];
+        uriImg.src = bestMatch ? bestMatch.img_uri : '';
+        uriImg.style.position = 'absolute';
+        uriImg.style.top = '0';
+        uriImg.style.left = '0';
+        uriImg.style.width = '100%';
+        uriImg.style.height = '100%';
+        uriImg.style.objectFit = 'cover';
+        if (bestMatch && bestMatch.img_uri) {
+            imgContainer.appendChild(uriImg);
+        }
+
+        div.appendChild(imgContainer);
+
         const info = document.createElement('div');
         info.style.marginLeft = '10px';
-        const bestMatch = det.matches[0];
-        info.innerHTML = `<strong>ID: ${det.id}</strong><br>${bestMatch ? bestMatch.name : 'Unknown'}`;
+        const bestMatchName = bestMatch ? bestMatch.name : 'Unknown';
+        info.innerHTML = `<strong>ID: ${det.id}</strong><br>${bestMatchName}`;
         div.appendChild(info);
+
         div.addEventListener('click', () => {
             selectedId = det.id;
             updateCardInfo(det);
@@ -204,10 +232,12 @@ async function main() {
     const select = document.getElementById('select');
     const status = document.getElementById('status');
     const startCameraButton = document.getElementById('startCamera');
+    const videoContainer = document.getElementById('video-container');
+    const overlay = document.getElementById('overlay');
 
     // Initialize WebSocket and SVG overlay
     connectWebSocket();
-    svg = SVG(document.getElementById('overlay'));
+    svg = SVG(overlay);
 
     // helper function to initialize to start streaming
     async function start() {
@@ -261,5 +291,7 @@ async function main() {
     // Update overlay size on window resize
     window.addEventListener('resize', updateOverlaySize);
     updateOverlaySize(); // Initial call
-}
 
+    // Ensure overlay size is updated when video loads (in case of auto-start)
+    video.addEventListener('loadedmetadata', updateOverlaySize);
+}
