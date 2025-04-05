@@ -196,7 +196,14 @@ class VideoContainer extends LitElement {
         .fill('none')
         .stroke({ color: isSelected ? 'yellow' : det.color, width: isSelected ? 4 : 2 })
         .attr('pointer-events', 'auto')
-        .on('click', () => $selectedId.set(det.id));
+        .on('click', () => {
+          const currentSelectedId = this.#selectedIdController.value;
+          if (currentSelectedId === det.id) {
+            $selectedId.set(null);
+          } else {
+            $selectedId.set(det.id);
+          }
+        });
       const bestMatch = det.matches[0];
       if (bestMatch) {
         const topPoint = scaledPoints.reduce((a, b) => a[1] < b[1] ? a : b);
