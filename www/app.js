@@ -1,5 +1,3 @@
-// app.js
-
 import './store.js';
 import './websocket.js';
 import './video-container.js';

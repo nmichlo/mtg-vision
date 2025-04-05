@@ -51,7 +51,6 @@ export const $selectedId = atom(null);
 /** @type {Atom<string>} */
 export const $status = atom('Click "Start Streaming" to begin.');
 
-
 export default {
   $devices,
   $selectedDevice,

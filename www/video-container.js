@@ -2,6 +2,7 @@ import SVG from 'https://esm.run/svg.js';
 import { LitElement, html, css } from 'https://esm.run/lit';
 import { StoreController } from 'https://esm.run/@nanostores/lit';
 import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status } from './store.js';
+import { ws } from './websocket.js'; // Import ws for frame sending
 
 /**
  * Populates the $devices atom with available video input devices.
@@ -20,7 +21,33 @@ export async function populateDevices() {
 }
 
 class VideoContainer extends LitElement {
-  static styles = css`/* ... */`;
+  static styles = css`
+    :host {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+  `;
 
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #isStreamingController = new StoreController(this, $isStreaming);
@@ -31,18 +58,20 @@ class VideoContainer extends LitElement {
     super();
     this.currentStream = null;
     this.currentDeviceId = null;
+    this.originalWidth = null;
+    this.originalHeight = null;
   }
 
-  // connectedCallback() {
-  //   super.connectedCallback();
-  //   this.tryAutoStart();
-  // }
+  connectedCallback() {
+    super.connectedCallback();
+    this.tryAutoStart();
+  }
 
-  // disconnectedCallback() {
-  //   super.disconnectedCallback();
-  //   if (this.currentStream) this.stopStream();
-  //   window.removeEventListener('resize', this.updateOverlaySize);
-  // }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this.currentStream) this.stopStream();
+    window.removeEventListener('resize', this.updateOverlaySize);
+  }
 
   render() {
     return html`
@@ -57,11 +86,13 @@ class VideoContainer extends LitElement {
     this.video = this.shadowRoot.getElementById('video');
     this.svgElement = this.shadowRoot.getElementById('overlay');
     this.svg = SVG(this.svgElement);
-    this.updateOverlaySize();
-    window.addEventListener('resize', this.updateOverlaySize);
     this.video.addEventListener('loadedmetadata', () => {
+      this.originalWidth = this.video.videoWidth;
+      this.originalHeight = this.video.videoHeight;
+      this.updateOverlaySize();
       this.video.play();
     });
+    window.addEventListener('resize', this.updateOverlaySize);
   }
 
   async tryAutoStart() {
@@ -100,7 +131,7 @@ class VideoContainer extends LitElement {
       this.stopStream();
     }
     try {
-      const constraints = {video: {deviceId: {exact: deviceId}, width: 640, height: 480}};
+      const constraints = { video: { deviceId: { exact: deviceId }, width: 640, height: 480 } };
       if (!deviceId) {
         delete constraints.video.deviceId;
       }
@@ -110,7 +141,7 @@ class VideoContainer extends LitElement {
       this.startSendingFrames();
     } catch (error) {
       console.error('Failed to start stream:', error);
-      $status.set('Failed to start camera.' + error);
+      $status.set('Failed to start camera: ' + error);
     }
   }
 
@@ -142,17 +173,21 @@ class VideoContainer extends LitElement {
 
   drawDetections() {
     this.svg.clear();
+    if (!this.originalWidth || !this.originalHeight) return;
+    const scaleX = this.originalWidth / 640;
+    const scaleY = this.originalHeight / 480;
     this.#detectionsController.value.forEach(det => {
+      const scaledPoints = det.points.map(p => [p[0] * scaleX, p[1] * scaleY]);
+      const pointsStr = scaledPoints.map(p => p.join(',')).join(' ');
       const isSelected = det.id === this.#selectedIdController.value;
-      const points = det.points.map(p => p.join(',')).join(' ');
-      this.svg.polygon(points)
+      this.svg.polygon(pointsStr)
         .fill('none')
         .stroke({ color: isSelected ? 'yellow' : det.color, width: isSelected ? 4 : 2 })
         .attr('pointer-events', 'auto')
         .on('click', () => $selectedId.set(det.id));
       const bestMatch = det.matches[0];
       if (bestMatch) {
-        const topPoint = det.points.reduce((a, b) => a[1] < b[1] ? a : b);
+        const topPoint = scaledPoints.reduce((a, b) => a[1] < b[1] ? a : b);
         this.svg.text(bestMatch.name)
           .move(topPoint[0], topPoint[1] - 15)
           .font({ fill: 'white', size: 12 });
@@ -161,8 +196,9 @@ class VideoContainer extends LitElement {
   }
 
   updateOverlaySize = () => {
-    const { width, height } = this.video.getBoundingClientRect();
-    this.svg.viewbox(0, 0, width, height);
+    if (this.originalWidth && this.originalHeight) {
+      this.svg.viewbox(0, 0, this.originalWidth, this.originalHeight);
+    }
   };
 }
 

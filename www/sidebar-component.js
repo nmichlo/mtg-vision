@@ -32,7 +32,7 @@ class SidebarComponent extends LitElement {
 
   render() {
     return html`
-<div id="controls">
+      <div id="controls">
         <select @change=${this.#onDeviceChange}>
           ${this.#devicesController.value.map((device, index) => html`
             <option value=${device.deviceId} ?selected=${device.deviceId === this.#selectedDeviceController.value}>
@@ -68,7 +68,7 @@ class SidebarComponent extends LitElement {
   }
 
   #renderCardInfo() {
-    const det = this.detections.find(d => d.id === this.selectedId);
+    const det = this.#detectionsController.value.find(d => d.id === this.#selectedIdController.value);
     if (!det) return '';
     const bestMatch = det.matches[0];
     return html`
