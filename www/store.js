@@ -51,11 +51,11 @@ export const $selectedId = atom(null);
 /** @type {Atom<string>} */
 export const $status = atom('Click "Start Streaming" to begin.');
 
-export default {
-  $devices,
-  $selectedDevice,
-  $isStreaming,
-  $detections,
-  $selectedId,
-  $status,
-};
+/**
+ * @typedef {Object} Stats
+ * @property {number} messagesSent
+ * @property {string} messagesReceived
+ */
+
+/** @type {Atom<string>} */
+export const $stats = atom({messagesSent: 0, messagesReceived: 0});

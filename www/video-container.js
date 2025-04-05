@@ -1,7 +1,7 @@
 import SVG from 'https://esm.run/svg.js';
 import { LitElement, html, css } from 'https://esm.run/lit';
 import { StoreController } from 'https://esm.run/@nanostores/lit';
-import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status } from './store.js';
+import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status, $stats } from './store.js';
 import { ws } from './websocket.js';
 
 /**
@@ -91,6 +91,7 @@ class VideoContainer extends LitElement {
   #isStreamingController = new StoreController(this, $isStreaming);
   #detectionsController = new StoreController(this, $detections);
   #selectedIdController = new StoreController(this, $selectedId);
+  #statsController = new StoreController(this, $stats);
 
   static styles = css`
     :host {
@@ -117,6 +118,21 @@ class VideoContainer extends LitElement {
       height: 100%;
       pointer-events: auto;
       z-index: 1;
+    }
+    .stats-overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .message-stats {
+      display: flex;
+      flex-direction: column;
     }
   `;
 
@@ -146,6 +162,12 @@ class VideoContainer extends LitElement {
       <div class="container">
         <video id="video" autoplay muted playsinline></video>
         <svg id="overlay"></svg>
+        <div class="stats-overlay">
+          <div class="message-stats">
+            <span>Messages: ${this.#statsController.value.sent}/${this.#statsController.value}</span>
+            <span>Ratio: ${this.#statsController.value.average} (avg)</span>
+          </div>
+        </div>
       </div>
     `;
   }
