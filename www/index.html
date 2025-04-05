@@ -3,14 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Card Detection with LitElement (Refined)</title>
-
-    <script src="https://cdn.jsdelivr.net/npm/svgjs@2/dist/svg.min.js"></script>
+    <title>Mtg Card Recognition</title>
 
     <script type="module" src="app.js"></script>
 
     <style>
-        /* Global Styles (mostly unchanged) */
+        /* Global Styles (Same as previous example) */
         :root {
             --background-dark: #1e1e1e;
             --background-medium: #2e2e2e;
@@ -25,31 +23,18 @@
             --font-family: 'Courier New', Courier, monospace;
             --sidebar-width: 300px;
         }
-        /* ... (rest of the global CSS from previous example remains the same) ... */
-         * { box-sizing: border-box; }
+        * { box-sizing: border-box; }
         body {
-            display: flex;
-            flex-direction: row; /* Default layout */
-            min-height: 100vh;
-            margin: 0;
-            background-color: var(--background-dark);
-            color: var(--text-primary);
-            font-family: var(--font-family);
-            overflow: hidden; /* Prevent body scrollbars */
+            display: flex; flex-direction: row; min-height: 100vh; margin: 0;
+            background-color: var(--background-dark); color: var(--text-primary);
+            font-family: var(--font-family); overflow: hidden; /* Keep overflow hidden */
         }
         card-detector-app {
-            flex-grow: 1;
-            display: flex;
-            flex-direction: row;
-            min-height: 100vh;
+            flex-grow: 1; display: flex; flex-direction: row; min-height: 100vh;
         }
          @media (max-width: 768px) {
              body { flex-direction: column; }
-             card-detector-app {
-                 flex-direction: column;
-                 min-height: initial;
-                 height: 100vh;
-             }
+             card-detector-app { flex-direction: column; min-height: initial; height: 100vh; }
              :root { --sidebar-width: 100%; }
          }
     </style>
