@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'https://esm.run/lit';
 import { StoreController } from 'https://esm.run/@nanostores/lit';
-import { $detections, $selectedId, $devices, $isStreaming } from './store.js';
+import { $detections, $selectedId, $devices, $isStreaming, $selectedDevice } from './store.js';
 
 class SidebarComponent extends LitElement {
   static styles = css`
@@ -44,13 +44,21 @@ class SidebarComponent extends LitElement {
   #selectedIdController = new StoreController(this, $selectedId);
   #devicesController = new StoreController(this, $devices);
   #isStreamingController = new StoreController(this, $isStreaming);
+  #selectedDeviceController = new StoreController(this, $selectedDevice);
+
+  connectedCallback() {
+    super.connectedCallback();
+    this.loadStoredDevice();
+  }
 
   render() {
     return html`
-      <select @change=${e => $selectedDevice.set(e.target.value)}>
+      <select @change=${this.#onDeviceChange}>
         <option value="">Select a camera</option>
         ${this.#devicesController.value.map(device => html`
-          <option value=${device.deviceId}>${device.label || 'Camera'}</option>
+          <option value=${device.deviceId} ?selected=${device.deviceId === this.#selectedDeviceController.value}>
+            ${device.label || 'Camera'}
+          </option>
         `)}
       </select>
       <button @click=${() => $isStreaming.set(!this.#isStreamingController.value)}>
@@ -75,6 +83,36 @@ class SidebarComponent extends LitElement {
         ${this.#selectedIdController.value !== null ? this.#renderCardInfo() : ''}
       </div>
     `;
+  }
+
+  #onDeviceChange(event) {
+    const selectedDeviceId = event.target.value;
+    $selectedDevice.set(selectedDeviceId);
+    localStorage.setItem('selectedDeviceId', selectedDeviceId);
+  }
+
+  loadStoredDevice() {
+    const storedDeviceId = localStorage.getItem('selectedDeviceId');
+    if (storedDeviceId) {
+      const deviceExists = this.#devicesController.value.some(device => device.deviceId === storedDeviceId);
+      if (deviceExists) {
+        $selectedDevice.set(storedDeviceId);
+      } else {
+        localStorage.removeItem('selectedDeviceId');
+        this.setDefaultDevice();
+      }
+    } else {
+      this.setDefaultDevice();
+    }
+  }
+
+  setDefaultDevice() {
+    const devices = this.#devicesController.value;
+    if (devices.length > 0) {
+      const defaultDeviceId = devices[0].deviceId;
+      $selectedDevice.set(defaultDeviceId);
+      localStorage.setItem('selectedDeviceId', defaultDeviceId);
+    }
   }
 
   #renderCardInfo() {

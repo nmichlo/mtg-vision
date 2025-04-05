@@ -33,8 +33,6 @@ class VideoContainer extends LitElement {
       height: 100%;
     }
     video {
-      top: 0;
-      left: 0;
       width: 100%;
       height: 100%;
       object-fit: contain;
@@ -193,9 +191,9 @@ class VideoContainer extends LitElement {
       const pointsStr = scaledPoints.map(p => p.join(',')).join(' ');
       const isSelected = det.id === this.#selectedIdController.value;
       this.svg.polygon(pointsStr)
-        .fill('none')
+        .fill('transparent') // Make interior clickable
         .stroke({ color: isSelected ? 'yellow' : det.color, width: isSelected ? 4 : 2 })
-        .attr('pointer-events', 'auto')
+        .attr('pointer-events', 'all') // Allow clicks on interior
         .on('click', () => {
           const currentSelectedId = this.#selectedIdController.value;
           if (currentSelectedId === det.id) {
