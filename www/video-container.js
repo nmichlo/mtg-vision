@@ -1,8 +1,7 @@
 import SVG from 'https://esm.run/svg.js';
 import { LitElement, html, css } from 'https://esm.run/lit';
-import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices } from './store.js';
-import { ws } from './websocket.js';
-
+import { StoreController } from 'https://esm.run/@nanostores/lit';
+import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status } from './store.js';
 
 /**
  * Populates the $devices atom with available video input devices.
@@ -20,58 +19,30 @@ export async function populateDevices() {
   }
 }
 
-
 class VideoContainer extends LitElement {
-  static styles = css`
-    :host {
-      position: relative;
-      flex: 1;
-      background-color: black;
-      border-radius: 5px;
-      overflow: hidden;
-    }
-    .container {
-      position: relative;
-    }
-    video, svg {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-    }
-    svg { pointer-events: none; }
-  `;
+  static styles = css`/* ... */`;
+
+  #selectedDeviceController = new StoreController(this, $selectedDevice);
+  #isStreamingController = new StoreController(this, $isStreaming);
+  #detectionsController = new StoreController(this, $detections);
+  #selectedIdController = new StoreController(this, $selectedId);
 
   constructor() {
     super();
     this.currentStream = null;
-    this.sendInterval = null;
     this.currentDeviceId = null;
-    this.selectedDevice = null;
-    this.isStreaming = false;
-    this.detections = [];
-    this.selectedId = null;
   }
 
-  connectedCallback() {
-    super.connectedCallback();
-    this.unsubscribeSelectedDevice = $selectedDevice.subscribe(value => this.selectedDevice = value);
-    this.unsubscribeIsStreaming = $isStreaming.subscribe(value => this.isStreaming = value);
-    this.unsubscribeDetections = $detections.subscribe(value => this.detections = value);
-    this.unsubscribeSelectedId = $selectedId.subscribe(value => this.selectedId = value);
-    this.tryAutoStart();
-  }
+  // connectedCallback() {
+  //   super.connectedCallback();
+  //   this.tryAutoStart();
+  // }
 
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    this.unsubscribeSelectedDevice();
-    this.unsubscribeIsStreaming();
-    this.unsubscribeDetections();
-    this.unsubscribeSelectedId();
-    if (this.currentStream) this.stopStream();
-    window.removeEventListener('resize', this.updateOverlaySize);
-  }
+  // disconnectedCallback() {
+  //   super.disconnectedCallback();
+  //   if (this.currentStream) this.stopStream();
+  //   window.removeEventListener('resize', this.updateOverlaySize);
+  // }
 
   render() {
     return html`
@@ -85,16 +56,12 @@ class VideoContainer extends LitElement {
   firstUpdated() {
     this.video = this.shadowRoot.getElementById('video');
     this.svgElement = this.shadowRoot.getElementById('overlay');
-    this.svg = SVG(this.svgElement); // SVG.js global
+    this.svg = SVG(this.svgElement);
     this.updateOverlaySize();
     window.addEventListener('resize', this.updateOverlaySize);
-  }
-
-  updated(changedProperties) {
-    if (changedProperties.has('detections') || changedProperties.has('selectedId')) {
-      this.drawDetections();
-    }
-    this.updateStream();
+    this.video.addEventListener('loadedmetadata', () => {
+      this.video.play();
+    });
   }
 
   async tryAutoStart() {
@@ -107,15 +74,21 @@ class VideoContainer extends LitElement {
       $selectedDevice.set(deviceId);
       $isStreaming.set(true);
     } catch (error) {
-      console.warn('Auto-start failed:', error);
+      console.error('Auto-start failed:', error);
       $isStreaming.set(false);
+      $status.set('Camera access failed.');
     }
   }
 
-  updateStream() {
-    if (this.isStreaming) {
-      if (!this.currentStream || this.selectedDevice !== this.currentDeviceId) {
-        this.startStream(this.selectedDevice);
+  async updated() {
+    await this.updateStream();
+    this.drawDetections();
+  }
+
+  async updateStream() {
+    if (this.#isStreamingController.value) {
+      if (!this.currentStream || this.#selectedDeviceController.value !== this.currentDeviceId) {
+        await this.startStream(this.#selectedDeviceController.value);
       }
     } else if (this.currentStream) {
       this.stopStream();
@@ -123,12 +96,22 @@ class VideoContainer extends LitElement {
   }
 
   async startStream(deviceId) {
-    if (this.currentStream) this.stopStream();
-    const constraints = { video: { deviceId: { exact: deviceId }, width: 640, height: 480 } };
-    this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-    this.video.srcObject = this.currentStream;
-    this.currentDeviceId = deviceId;
-    this.startSendingFrames();
+    if (this.currentStream) {
+      this.stopStream();
+    }
+    try {
+      const constraints = {video: {deviceId: {exact: deviceId}, width: 640, height: 480}};
+      if (!deviceId) {
+        delete constraints.video.deviceId;
+      }
+      this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.video.srcObject = this.currentStream;
+      this.currentDeviceId = deviceId;
+      this.startSendingFrames();
+    } catch (error) {
+      console.error('Failed to start stream:', error);
+      $status.set('Failed to start camera.' + error);
+    }
   }
 
   stopStream() {
@@ -159,8 +142,8 @@ class VideoContainer extends LitElement {
 
   drawDetections() {
     this.svg.clear();
-    this.detections.forEach(det => {
-      const isSelected = det.id === this.selectedId;
+    this.#detectionsController.value.forEach(det => {
+      const isSelected = det.id === this.#selectedIdController.value;
       const points = det.points.map(p => p.join(',')).join(' ');
       this.svg.polygon(points)
         .fill('none')

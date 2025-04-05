@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'https://esm.run/lit';
+import { StoreController } from 'https://esm.run/@nanostores/lit';
 import { $devices, $selectedDevice, $isStreaming, $detections, $selectedId, $status } from './store.js';
 
 class SidebarComponent extends LitElement {
@@ -22,74 +23,51 @@ class SidebarComponent extends LitElement {
     #card-list { flex: 1; overflow-y: auto; }
   `;
 
-  constructor() {
-    super();
-    this.devices = [];
-    this.selectedDevice = null;
-    this.isStreaming = false;
-    this.detections = [];
-    this.selectedId = null;
-    this.status = '';
-  }
-
-  connectedCallback() {
-    super.connectedCallback();
-    this.unsubscribeDevices = $devices.subscribe(value => this.devices = value);
-    this.unsubscribeSelectedDevice = $selectedDevice.subscribe(value => this.selectedDevice = value);
-    this.unsubscribeIsStreaming = $isStreaming.subscribe(value => this.isStreaming = value);
-    this.unsubscribeDetections = $detections.subscribe(value => this.detections = value);
-    this.unsubscribeSelectedId = $selectedId.subscribe(value => this.selectedId = value);
-    this.unsubscribeStatus = $status.subscribe(value => this.status = value);
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    this.unsubscribeDevices();
-    this.unsubscribeSelectedDevice();
-    this.unsubscribeIsStreaming();
-    this.unsubscribeDetections();
-    this.unsubscribeSelectedId();
-    this.unsubscribeStatus();
-  }
+  #devicesController = new StoreController(this, $devices);
+  #selectedDeviceController = new StoreController(this, $selectedDevice);
+  #isStreamingController = new StoreController(this, $isStreaming);
+  #detectionsController = new StoreController(this, $detections);
+  #selectedIdController = new StoreController(this, $selectedId);
+  #statusController = new StoreController(this, $status);
 
   render() {
     return html`
-      <div id="controls">
-        <select @change=${this.onDeviceChange}>
-          ${this.devices.map((device, index) => html`
-            <option value=${device.deviceId} ?selected=${device.deviceId === this.selectedDevice}>
+<div id="controls">
+        <select @change=${this.#onDeviceChange}>
+          ${this.#devicesController.value.map((device, index) => html`
+            <option value=${device.deviceId} ?selected=${device.deviceId === this.#selectedDeviceController.value}>
               ${device.label || `Camera ${index + 1}`}
             </option>
           `)}
         </select>
-        <button @click=${this.onToggleStreaming}>
-          ${this.isStreaming ? 'Stop Streaming' : 'Start Streaming'}
+        <button @click=${this.#onToggleStreaming}>
+          ${this.#isStreamingController.value ? 'Stop Streaming' : 'Start Streaming'}
         </button>
-        <div id="status">${this.status}</div>
+        <div id="status">${this.#statusController.value}</div>
       </div>
       <div id="card-list">
-        ${this.detections.length === 0 ? html`<p>No cards detected</p>` : this.detections.map(det => html`
-          <div @click=${() => $selectedId.set(det.id)} style="cursor: pointer; ${det.id === this.selectedId ? 'border: 2px solid yellow;' : ''}">
+        ${this.#detectionsController.value.length === 0 ? html`<p>No cards detected</p>` : this.#detectionsController.value.map(det => html`
+          <div @click=${() => $selectedId.set(det.id)} style="cursor: pointer; ${det.id === this.#selectedIdController.value ? 'border: 2px solid yellow;' : ''}">
             <img src="data:image/jpeg;base64,${det.img}" style="width: 50px; height: 70px;">
             <span>${det.matches[0]?.name || 'Unknown'}</span>
           </div>
         `)}
       </div>
       <div id="card-info">
-        ${this.selectedId !== null ? this.renderCardInfo() : ''}
+        ${this.#selectedIdController.value !== null ? this.#renderCardInfo() : ''}
       </div>
     `;
   }
 
-  onDeviceChange(event) {
+  #onDeviceChange(event) {
     $selectedDevice.set(event.target.value);
   }
 
-  onToggleStreaming() {
-    $isStreaming.set(!this.isStreaming);
+  #onToggleStreaming() {
+    $isStreaming.set(!this.#isStreamingController.value);
   }
 
-  renderCardInfo() {
+  #renderCardInfo() {
     const det = this.detections.find(d => d.id === this.selectedId);
     if (!det) return '';
     const bestMatch = det.matches[0];
