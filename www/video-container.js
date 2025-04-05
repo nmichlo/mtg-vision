@@ -2,7 +2,7 @@ import SVG from 'https://esm.run/svg.js';
 import { LitElement, html, css } from 'https://esm.run/lit';
 import { StoreController } from 'https://esm.run/@nanostores/lit';
 import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status } from './store.js';
-import { ws } from './websocket.js'; // Import ws for frame sending
+import { ws } from './websocket.js';
 
 /**
  * Populates the $devices atom with available video input devices.
@@ -33,7 +33,6 @@ class VideoContainer extends LitElement {
       height: 100%;
     }
     video {
-      position: absolute;
       top: 0;
       left: 0;
       width: 100%;
@@ -60,6 +59,7 @@ class VideoContainer extends LitElement {
     this.currentDeviceId = null;
     this.originalWidth = null;
     this.originalHeight = null;
+    this.readyPromise = new Promise(resolve => (this.resolveReady = resolve));
   }
 
   connectedCallback() {
@@ -87,36 +87,47 @@ class VideoContainer extends LitElement {
     this.svgElement = this.shadowRoot.getElementById('overlay');
     this.svg = SVG(this.svgElement);
     this.video.addEventListener('loadedmetadata', () => {
+      console.log('Metadata loaded');
       this.originalWidth = this.video.videoWidth;
       this.originalHeight = this.video.videoHeight;
       this.updateOverlaySize();
-      this.video.play();
+      this.video.play().then(() => {
+        console.log('Video playing');
+      }).catch(e => {
+        console.error('Failed to play video in loadedmetadata:', e);
+      });
     });
     window.addEventListener('resize', this.updateOverlaySize);
+    this.resolveReady();
+  }
+
+  async updated() {
+    console.log('updated() called, isStreaming:', this.#isStreamingController.value);
+    await this.updateStream();
+    this.drawDetections();
   }
 
   async tryAutoStart() {
     try {
+      console.log('Attempting auto-start');
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-      this.video.srcObject = stream;
       this.currentStream = stream;
       const deviceId = stream.getVideoTracks()[0].getSettings().deviceId;
       await populateDevices();
       $selectedDevice.set(deviceId);
       $isStreaming.set(true);
+      await this.readyPromise;
+      this.video.srcObject = this.currentStream;
+      console.log('Stream set in tryAutoStart');
     } catch (error) {
       console.error('Auto-start failed:', error);
       $isStreaming.set(false);
-      $status.set('Camera access failed.');
+      $status.set('Camera access failed: ' + error.message);
     }
   }
 
-  async updated() {
-    await this.updateStream();
-    this.drawDetections();
-  }
-
   async updateStream() {
+    console.log('updateStream() called, isStreaming:', this.#isStreamingController.value);
     if (this.#isStreamingController.value) {
       if (!this.currentStream || this.#selectedDeviceController.value !== this.currentDeviceId) {
         await this.startStream(this.#selectedDeviceController.value);
@@ -127,25 +138,26 @@ class VideoContainer extends LitElement {
   }
 
   async startStream(deviceId) {
+    console.log('startStream() called with deviceId:', deviceId);
     if (this.currentStream) {
       this.stopStream();
     }
     try {
-      const constraints = { video: { deviceId: { exact: deviceId }, width: 640, height: 480 } };
-      if (!deviceId) {
-        delete constraints.video.deviceId;
-      }
+      const constraints = { video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: 640, height: 480 } };
       this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log('Stream obtained:', this.currentStream);
+      await this.readyPromise;
       this.video.srcObject = this.currentStream;
       this.currentDeviceId = deviceId;
       this.startSendingFrames();
     } catch (error) {
       console.error('Failed to start stream:', error);
-      $status.set('Failed to start camera: ' + error);
+      $status.set('Failed to start camera: ' + error.message);
     }
   }
 
   stopStream() {
+    console.log('stopStream() called');
     if (this.currentStream) {
       this.currentStream.getTracks().forEach(track => track.stop());
       this.currentStream = null;
