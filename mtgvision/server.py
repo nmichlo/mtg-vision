@@ -1,67 +1,241 @@
+# ========== Imports ==========
+import dataclasses
+import functools
+import hashlib
+import time
+from typing import Hashable
+
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import cv2
 import numpy as np
-from mtgvision.od_cam import CardDetector
-from mtgvision.encoder_export import CoreMlEncoder, MODEL_PATH
+import base64
+from norfair import Tracker, Detection
+from norfair.distances import mean_euclidean
+from qdrant_client.http.models import ScoredPoint
+
+from mtgdata.scryfall import ScryfallCardFace
+from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
+from mtgvision.encoder_export import CoreMlEncoder
+from mtgvision.od_export import CardSegmenter, InstanceSeg
+from mtgvision.qdrant import VectorStoreQdrant
+from mtgvision.util.image import imshow
 
 
-# Initialize the YOLO detector once at startup
-_DATA_ROOT = Path("/Users/nathanmichlo/Desktop/active/mtg/data/gen")
-DETECTOR = CardDetector(_DATA_ROOT / "yolo_mtg_dataset_v3/models/1ipho2mn_best.pt")
-ENCODER = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
+# ========== Global Context ==========
 
-# Create the app
+
+@functools.lru_cache()
+def get_ctx():
+    SEGMENTER = CardSegmenter()
+    ENCODER = CoreMlEncoder()
+    VECS = VectorStoreQdrant()
+    DATA = SyntheticBgFgMtgImages()
+    return SEGMENTER, ENCODER, VECS, DATA
+
+
+@dataclasses.dataclass
+class DetData:
+    seg: InstanceSeg
+
+
+@dataclasses.dataclass
+class TrackedData:
+    # Instance tracking
+    id: int
+    color: str
+    # Update info
+    last_update_time: float = dataclasses.field(default_factory=lambda: time.time())
+    # Last Tracking info
+    last_instance: InstanceSeg = None
+    last_img: np.ndarray = None
+    last_img_encoded: str = None
+    # Embed and search
+    avg_z: np.ndarray = None
+    ave_nearby_points: list[ScoredPoint] = dataclasses.field(default_factory=list)
+    ave_nearby_cards: list[ScryfallCardFace] = dataclasses.field(default_factory=list)
+
+    def to_dict(self):
+        return {
+            "id": str(self.id),
+            "points": self.last_instance.xyxyxyxy.tolist(),
+            "color": self.color,
+            "img": self.last_img_encoded,
+            "score": self.last_instance.conf,
+            "matches": [
+                {
+                    "id": str(match.id),
+                    "score": match.score,
+                    "name": card.name,
+                    "set_name": card.set_name,
+                    "set_code": card.set_code,
+                    "img_uri": card.img_uri,
+                }
+                for match, card in zip(self.ave_nearby_points, self.ave_nearby_cards)
+            ],
+        }
+
+
+class TrackerCtx:
+    segmenter: CardSegmenter
+    encoder: CoreMlEncoder
+    vecs: VectorStoreQdrant
+    data: SyntheticBgFgMtgImages
+
+    def __init__(
+        self,
+        update_wait_sec: float = 0.5,
+        ewma_weight: float = 0.1,
+    ):
+        self.update_wait_sec = update_wait_sec
+        self.ewma_weight = ewma_weight
+        # create
+        self.segmenter, self.encoder, self.vecs, self.data = get_ctx()
+        self.tracker = Tracker(
+            distance_function=mean_euclidean,
+            distance_threshold=200,
+            hit_counter_max=5,
+            initialization_delay=2,
+            past_detections_length=10,
+        )
+        # Dictionary to store persistent data per tracked object
+        self.tracked_data = {}  # {id: {'z_avg': np.ndarray, 'last_query_time': float, 'nearby_points': list, 'nearby_cards': list}}
+
+    def update(self, frame: np.ndarray) -> list[TrackedData]:
+        # 0. Segment the frame (RGB)
+        segments = self.segmenter(frame)
+
+        # 1. Create Norfair detections with minimal initial data
+        detections = []
+        for seg in segments:
+            detection = Detection(
+                points=np.asarray(seg.xyxyxyxy),
+                data=DetData(seg=seg),
+            )
+            detections.append(detection)
+
+        # 2. Track objects
+        tracked_objects = self.tracker.update(detections)
+
+        # 3. Update tracked objects
+        objs = []
+        current_time = time.time()
+        for obj in tracked_objects:
+            # 3.A If we have detections, otherwise we are work on predicted positions
+            #     of detections that are not yet removed
+            if obj.last_detection not in detections:
+                continue
+            seg: InstanceSeg = obj.last_detection.data.seg
+
+            # 3.B Get the object or create it
+            trk: TrackedData = self.tracked_data.get(obj.id)
+            if trk is None:
+                trk = TrackedData(
+                    id=obj.id,
+                    color=get_color(obj.id),
+                    last_update_time=current_time,
+                    last_instance=seg,
+                )
+                self.tracked_data[obj.id] = trk
+
+            # 3.C Update the tracked data
+            # - extract the dewarped image
+            trk.last_instance = seg
+            trk.last_img = seg.extract_dewarped(frame)
+            trk.last_img_encoded = encode_im(trk.last_img)
+            # - if enough time has passed, do a full update instead
+            #   of a partial update
+            if current_time - trk.last_update_time > self.update_wait_sec:
+                # * embed the image
+                _z = self.encoder.predict(trk.last_img)
+                if trk.avg_z is None:
+                    trk.avg_z = _z
+                trk.avg_z = self.ewma_weight * _z + (1 - self.ewma_weight) * trk.avg_z
+                # * query the vector store
+                trk.ave_nearby_points = self.vecs.query_nearby(
+                    trk.avg_z, k=5, with_payload=False, with_vectors=False
+                )
+                trk.ave_nearby_cards = [
+                    self.data.get_card_by_id(p.id) for p in trk.ave_nearby_points
+                ]
+                # * update the last update time
+                trk.last_update_time = current_time
+
+            # 3.D Update detection data with tracked object info
+            objs.append(trk)
+
+        return objs
+
+
+# ========== Utility Functions ==========
+
+
+def get_color(seed: Hashable):
+    hash = hashlib.sha256(str(seed).encode())
+    h = int(hash.hexdigest(), 16)
+    r = (h >> 16) & 0xFF
+    g = (h >> 8) & 0xFF
+    b = h & 0xFF
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def encode_im(im):
+    _, buffer = cv2.imencode(".jpg", im)
+    return base64.b64encode(buffer).decode("utf-8")
+
+
+# ========== FastAPI Setup ==========
+
 app = FastAPI()
+
+# ========== WebSocket Handler ==========
 
 
 @app.websocket("/detect")
 async def detect_websocket(websocket: WebSocket):
-    """Handle WebSocket connections to receive frames and send detection metadata."""
+    ctx = TrackerCtx()
+
     await websocket.accept()
     while True:
         try:
-            # Receive binary image data from the browser
-            data = await websocket.receive_bytes()
+            # 1. Receive binary image data from the browser
+            data = await websocket.receive_bytes()  # RGB bytes
 
-            # Decode the JPEG image
+            # 2. Decode the JPEG image as RGB array (needed for models, must NOT be BGR)
+            print(f"Received {len(data)} bytes")
             nparr = np.frombuffer(data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR_RGB)
             if frame is None:
+                print("Failed to decode frame, skipping...")
                 continue
 
-            # Run YOLO detection
-            detections = DETECTOR(frame)
+            # 3. Process the frame
+            objs = ctx.update(frame)
+            for i, obj in enumerate(objs):
+                print(
+                    obj.id,
+                    [(m["name"], m["set_code"]) for m in obj.to_dict()["matches"]],
+                )
+                if obj.last_img is not None:
+                    imshow(obj.last_img, f"{i}")
 
-            # extract cards
-            dets = []
-            for card in detections.detection_groups[0]:
-                det = {
-                    "points": det.points.tolist(),
-                    "score": float(np.mean(det.scores)),
-                }
-                dets.append(det)
-
-            # Send detection metadata back to the browser
-            await websocket.send_json(
-                {
-                    "detections": det_data,
-                }
-            )
+            # 4. Send results
+            response = {
+                "detections": [obj.to_dict() for obj in objs],
+            }
+            await websocket.send_json(response)
         except Exception as e:
             print(f"WebSocket error: {e}")
-            break
+            raise
 
 
 # Serve static files from the 'www' directory
-# this must be placed AFTER the detect route
 app.mount(
     "/",
     StaticFiles(directory=Path(__file__).parent.parent / "www", html=True),
     name="static",
 )
-
 
 # MAIN
 if __name__ == "__main__":

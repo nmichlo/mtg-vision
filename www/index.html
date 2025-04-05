@@ -1,76 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Card Detection with Backend Inference</title>
-    <style>
-        body {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            background-color: #f0f0f0;
-        }
-        #video-container {
-            position: relative;
-            width: 640px;
-            height: 480px;
-            background-color: black;
-            border-radius: 5px;
-            overflow: hidden;
-        }
-        #video, #overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-        #overlay {
-            pointer-events: none;
-        }
-        #controls {
-            margin-top: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        #select, #startCamera {
-            padding: 10px;
-            margin: 5px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            background-color: #fff;
-            font-size: 16px;
-        }
-        #startCamera {
-            background-color: #007bff;
-            color: white;
-            cursor: pointer;
-        }
-        #status {
-            margin-top: 10px;
-            font-size: 14px;
-            color: #333;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>Video Detection App</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      display: flex;
+      flex-direction: row;
+      min-height: 100vh;
+      margin: 0;
+      background-color: #1e1e1e;
+      color: #fff;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    video-container { flex: 1; }
+    sidebar-component { width: 300px; }
+    @media (max-width: 768px) {
+      body {
+        flex-direction: column;
+      }
+      sidebar-component {
+        width: 100%;
+      }
+    }
+  </style>
 </head>
 <body>
-    <div id="video-container">
-        <video id="video" width="640" height="480" autoplay muted playsinline></video>
-        <svg id="overlay" width="640" height="480"></svg>
-    </div>
-    <div id="controls">
-        <select id="select"></select>
-        <button id="startCamera">Start Camera</button>
-        <div id="status">Click "Start Camera" to begin.</div>
-    </div>
-    <script src="app.js"></script>
-    <script>
-        main();
-    </script>
+  <video-container></video-container>
+  <sidebar-component></sidebar-component>
+  <script type="module" src="app.js"></script>
+  <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'92b55e35ed4353c4',t:'MTc0MzgxNzU0Ny4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script>
 </body>
 </html>

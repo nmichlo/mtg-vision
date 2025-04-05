@@ -4,6 +4,7 @@ Export a trained encoder to coreml or other formats.
 
 import argparse
 import functools
+import warnings
 from pathlib import Path
 
 import coremltools as ct
@@ -18,10 +19,12 @@ from mtgvision.encoder_train import (
 )
 from mtgvision.util.image import img_float32
 
-MODEL_PATH = Path(
-    "/Users/nathanmichlo/Desktop/active/mtg/data/gen/embeddings"
-    "/cnvnxt2ae-tiny9x128-ssim5l1-lr0.001-bs32__odcpoea5_265000.ckpt"
-)
+
+MODEL_DETAILS = {
+    "head_type": "conv+linear",
+    "path": "/Users/nathanmichlo/Desktop/active/mtg/data/gen/embeddings/encoder_nano_aivb8jvk/checkpoints/epoch=0-step=47500.ckpt",
+}
+MODEL_PATH = Path(MODEL_DETAILS["path"])
 
 
 @functools.lru_cache(maxsize=1)
@@ -36,37 +39,47 @@ def _export(path: Path, debug: bool = True):
     # LOAD
     print("loading model from", path)
     model: MtgVisionEncoder = MtgVisionEncoder.load_from_checkpoint(path)
+    has_decoder = model.hparams.loss_recon is not None
 
     # DEBUG
     if debug:
-        for img in _get_data()[:1]:
-            plt.imshow(img["x"][0])
-            plt.show()
-            plt.imshow(model.forward_img(img["x"][0]))
-            plt.show()
+        if has_decoder:
+            for img in _get_data():
+                plt.imshow(img["x"][0])
+                plt.show()
+                plt.imshow(model.forward_img(img["x"][0]))
+                plt.show()
+        else:
+            warnings.warn("Model does not have decoder, skipping debug images.")
 
     # CONVERT
     coreml_encoder_path = path.with_suffix(".encoder.mlpackage")
-    # if model.model.encoder is not None:
-    #     print("Exporting encoder to", coreml_encoder_path)
-    #     encoder = model.model.encoder.to_coreml()
-    #     encoder.save(coreml_encoder_path)
+    if model.model.encoder is not None:
+        print("Exporting encoder to", coreml_encoder_path)
+        encoder = model.model.encoder.to_coreml()
+        encoder.save(coreml_encoder_path)
 
-    coreml_decoder_path = path.with_suffix(".decoder.mlpackage")
-    # if model.model.decoder is not None:
-    #     print("Encoder exported to", coreml_decoder_path)
-    #     decoder = model.model.decoder.to_coreml()
-    #     decoder.save(coreml_decoder_path)
+    decoder = None
+    if has_decoder:
+        coreml_decoder_path = path.with_suffix(".decoder.mlpackage")
+        if model.model.decoder is not None:
+            print("Encoder exported to", coreml_decoder_path)
+            decoder = model.model.decoder.to_coreml()
+            decoder.save(coreml_decoder_path)
 
     # DEBUG
     if debug:
         encoder = CoreMlEncoder(coreml_encoder_path)
-        decoder = CoreMlDecoder(coreml_decoder_path)
+        if has_decoder:
+            decoder = CoreMlDecoder(coreml_decoder_path)
         for img in _get_data()[:1]:
             plt.imshow(img["x"][0])
             plt.show()
-            plt.imshow(decoder.predict(encoder.predict(img["x"][0])))
-            plt.show()
+            z = encoder.predict(img["x"][0])
+            if has_decoder:
+                x_recon = decoder.predict(z)
+                plt.imshow(x_recon)
+                plt.show()
 
 
 class CoreMlEncoder:
