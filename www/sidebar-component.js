@@ -38,6 +38,9 @@ class SidebarComponent extends LitElement {
       width: 100%;
       max-width: 200px;
     }
+    #card-info p {
+      margin: 5px 0;
+    }
   `;
 
   #detectionsController = new StoreController(this, $detections);
@@ -68,11 +71,10 @@ class SidebarComponent extends LitElement {
         ${this.#detectionsController.value.length === 0 ? html`<p>No cards detected</p>` : this.#detectionsController.value.map(det => html`
           <div class="detection-item ${det.id === this.#selectedIdController.value ? 'selected' : ''}" @click=${() => {
             const currentSelectedId = this.#selectedIdController.value;
-            if (currentSelectedId === det.id) {
-              $selectedId.set(null);
-            } else {
-              $selectedId.set(det.id);
-            }
+            $selectedId.set(
+                currentSelectedId === det.id ? null : det.id
+                // det.id
+            );
           }}>
             <img src="data:image/jpeg;base64,${det.img}" style="width: 50px; height: 70px;">
             <span>${det.matches[0]?.name || 'Unknown'}</span>
@@ -93,14 +95,8 @@ class SidebarComponent extends LitElement {
 
   loadStoredDevice() {
     const storedDeviceId = localStorage.getItem('selectedDeviceId');
-    if (storedDeviceId) {
-      const deviceExists = this.#devicesController.value.some(device => device.deviceId === storedDeviceId);
-      if (deviceExists) {
-        $selectedDevice.set(storedDeviceId);
-      } else {
-        localStorage.removeItem('selectedDeviceId');
-        this.setDefaultDevice();
-      }
+    if (storedDeviceId && this.#devicesController.value.some(device => device.deviceId === storedDeviceId)) {
+      $selectedDevice.set(storedDeviceId);
     } else {
       this.setDefaultDevice();
     }
@@ -122,6 +118,9 @@ class SidebarComponent extends LitElement {
     return html`
       <h3>${bestMatch.name}</h3>
       <p>Set: ${bestMatch.set_name || 'Unknown'} (${bestMatch.set_code || ''})</p>
+      <p>Type: ${bestMatch.type_line || 'N/A'}</p>
+      <p>Price: ${bestMatch.price ? `$${bestMatch.price}` : 'N/A'}</p>
+      <p>${bestMatch.oracle_text || ''}</p>
       <img src="${bestMatch.img_uri || 'data:image/jpeg;base64,' + det.img}" alt="${bestMatch.name}">
     `;
   }

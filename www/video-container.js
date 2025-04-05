@@ -20,7 +20,78 @@ export async function populateDevices() {
   }
 }
 
+/**
+ * Represents a single card detection with its own SVG elements.
+ */
+class Card {
+  /**
+   * Creates a new Card instance.
+   * @param {Object} detection - The detection data (e.g., { id, points, color, matches }).
+   * @param {SVG.Container} svg - The SVG container to render the card in.
+   * @param {Function} onClick - Callback function for handling clicks on the card.
+   */
+  constructor(detection, svg, onClick) {
+    this.id = detection.id;
+    this.svg = svg;
+    this.onClick = onClick;
+
+    // Create SVG group and elements
+    this.group = this.svg.group();
+    this.polygon = this.group.polygon()
+      .fill('rgba(0, 255, 0, 0.2)')
+      .stroke({ color: detection.color, width: 2 })
+      .attr('pointer-events', 'all');
+    this.text = this.group.text('')
+      .font({ fill: 'white', size: 12 });
+
+    // Attach click handler to the group
+    this.group.on('click', (e) => {
+      e.stopPropagation(); // Prevent bubbling to SVG background
+      this.onClick(this.id);
+    });
+  }
+
+  /**
+   * Updates the card’s position and appearance.
+   * @param {Object} detection - Updated detection data.
+   * @param {boolean} isSelected - Whether the card is currently selected.
+   * @param {number} scaleX - Scaling factor for X coordinates.
+   * @param {number} scaleY - Scaling factor for Y coordinates.
+   */
+  update(detection, isSelected, scaleX, scaleY) {
+    // Update polygon points
+    const scaledPoints = detection.points.map(p => [p[0] * scaleX, p[1] * scaleY]);
+    const pointsStr = scaledPoints.map(p => p.join(',')).join(' ');
+    this.polygon.plot(pointsStr);
+    this.polygon.stroke({ color: isSelected ? 'yellow' : detection.color, width: isSelected ? 4 : 2 });
+
+    // Update text (e.g., best match name)
+    const bestMatch = detection.matches[0];
+    if (bestMatch) {
+      const [p1, p2] = scaledPoints.slice(0, 2);
+      const midX = (p1[0] + p2[0]) / 2;
+      const midY = (p1[1] + p2[1]) / 2;
+      const angle = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * (180 / Math.PI);
+      this.text.text(bestMatch.name).move(midX, midY).rotate(angle, midX, midY);
+    }
+  }
+
+  /**
+   * Removes the card’s SVG elements from the container.
+   */
+  remove() {
+    this.group.remove();
+  }
+}
+
+
 class VideoContainer extends LitElement {
+
+  #selectedDeviceController = new StoreController(this, $selectedDevice);
+  #isStreamingController = new StoreController(this, $isStreaming);
+  #detectionsController = new StoreController(this, $detections);
+  #selectedIdController = new StoreController(this, $selectedId);
+
   static styles = css`
     :host {
       display: block;
@@ -36,6 +107,7 @@ class VideoContainer extends LitElement {
       width: 100%;
       height: 100%;
       object-fit: contain;
+      pointer-events: none;
     }
     svg {
       position: absolute;
@@ -43,13 +115,10 @@ class VideoContainer extends LitElement {
       left: 0;
       width: 100%;
       height: 100%;
+      pointer-events: auto;
+      z-index: 1;
     }
   `;
-
-  #selectedDeviceController = new StoreController(this, $selectedDevice);
-  #isStreamingController = new StoreController(this, $isStreaming);
-  #detectionsController = new StoreController(this, $detections);
-  #selectedIdController = new StoreController(this, $selectedId);
 
   constructor() {
     super();
@@ -58,6 +127,7 @@ class VideoContainer extends LitElement {
     this.originalWidth = null;
     this.originalHeight = null;
     this.readyPromise = new Promise(resolve => (this.resolveReady = resolve));
+    this.cardMap = new Map(); // Store Card instances by detection ID
   }
 
   connectedCallback() {
@@ -84,30 +154,32 @@ class VideoContainer extends LitElement {
     this.video = this.shadowRoot.getElementById('video');
     this.svgElement = this.shadowRoot.getElementById('overlay');
     this.svg = SVG(this.svgElement);
+
     this.video.addEventListener('loadedmetadata', () => {
-      console.log('Metadata loaded');
       this.originalWidth = this.video.videoWidth;
       this.originalHeight = this.video.videoHeight;
       this.updateOverlaySize();
-      this.video.play().then(() => {
-        console.log('Video playing');
-      }).catch(e => {
-        console.error('Failed to play video in loadedmetadata:', e);
-      });
+      this.video.play().catch(e => console.error('Failed to play video:', e));
     });
     window.addEventListener('resize', this.updateOverlaySize);
+
+    // Add click handler to SVG background to clear selection
+    this.svg.on('click', (e) => {
+      if (e.target === this.svgElement) { // Check if click is on the SVG itself, not a child
+        $selectedId.set(null);
+      }
+    });
+
     this.resolveReady();
   }
 
   async updated() {
-    console.log('updated() called, isStreaming:', this.#isStreamingController.value);
     await this.updateStream();
     this.drawDetections();
   }
 
   async tryAutoStart() {
     try {
-      console.log('Attempting auto-start');
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       this.currentStream = stream;
       const deviceId = stream.getVideoTracks()[0].getSettings().deviceId;
@@ -116,7 +188,6 @@ class VideoContainer extends LitElement {
       $isStreaming.set(true);
       await this.readyPromise;
       this.video.srcObject = this.currentStream;
-      console.log('Stream set in tryAutoStart');
     } catch (error) {
       console.error('Auto-start failed:', error);
       $isStreaming.set(false);
@@ -125,7 +196,6 @@ class VideoContainer extends LitElement {
   }
 
   async updateStream() {
-    console.log('updateStream() called, isStreaming:', this.#isStreamingController.value);
     if (this.#isStreamingController.value) {
       if (!this.currentStream || this.#selectedDeviceController.value !== this.currentDeviceId) {
         await this.startStream(this.#selectedDeviceController.value);
@@ -136,14 +206,10 @@ class VideoContainer extends LitElement {
   }
 
   async startStream(deviceId) {
-    console.log('startStream() called with deviceId:', deviceId);
-    if (this.currentStream) {
-      this.stopStream();
-    }
+    if (this.currentStream) this.stopStream();
     try {
       const constraints = { video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: 640, height: 480 } };
       this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('Stream obtained:', this.currentStream);
       await this.readyPromise;
       this.video.srcObject = this.currentStream;
       this.currentDeviceId = deviceId;
@@ -155,7 +221,6 @@ class VideoContainer extends LitElement {
   }
 
   stopStream() {
-    console.log('stopStream() called');
     if (this.currentStream) {
       this.currentStream.getTracks().forEach(track => track.stop());
       this.currentStream = null;
@@ -182,32 +247,36 @@ class VideoContainer extends LitElement {
   }
 
   drawDetections() {
-    this.svg.clear();
     if (!this.originalWidth || !this.originalHeight) return;
+
     const scaleX = this.originalWidth / 640;
     const scaleY = this.originalHeight / 480;
+    const currentIds = new Set();
+
     this.#detectionsController.value.forEach(det => {
-      const scaledPoints = det.points.map(p => [p[0] * scaleX, p[1] * scaleY]);
-      const pointsStr = scaledPoints.map(p => p.join(',')).join(' ');
-      const isSelected = det.id === this.#selectedIdController.value;
-      this.svg.polygon(pointsStr)
-        .fill('transparent') // Make interior clickable
-        .stroke({ color: isSelected ? 'yellow' : det.color, width: isSelected ? 4 : 2 })
-        .attr('pointer-events', 'all') // Allow clicks on interior
-        .on('click', () => {
-          const currentSelectedId = this.#selectedIdController.value;
-          if (currentSelectedId === det.id) {
-            $selectedId.set(null);
-          } else {
-            $selectedId.set(det.id);
+      const id = det.id;
+      currentIds.add(id);
+      let card = this.cardMap.get(id);
+
+      if (!card) {
+        card = new Card(det, this.svg, (clickedId) => {
+          // Only select if not already selected
+          if (this.#selectedIdController.value !== clickedId) {
+            $selectedId.set(clickedId);
           }
+          // Do nothing if already selected, keeping it clicked
         });
-      const bestMatch = det.matches[0];
-      if (bestMatch) {
-        const topPoint = scaledPoints.reduce((a, b) => a[1] < b[1] ? a : b);
-        this.svg.text(bestMatch.name)
-          .move(topPoint[0], topPoint[1] - 15)
-          .font({ fill: 'white', size: 12 });
+        this.cardMap.set(id, card);
+      }
+
+      const isSelected = id === this.#selectedIdController.value;
+      card.update(det, isSelected, scaleX, scaleY);
+    });
+
+    this.cardMap.forEach((card, id) => {
+      if (!currentIds.has(id)) {
+        card.remove();
+        this.cardMap.delete(id);
       }
     });
   }
