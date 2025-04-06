@@ -1,8 +1,8 @@
 import SVG from 'https://esm.run/svg.js';
 import { LitElement, html, css } from 'https://esm.run/lit';
 import { StoreController } from 'https://esm.run/@nanostores/lit';
-import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status, $stats } from './store.js';
-import { wsSendBlob, wsCanSend } from './websocket.js';
+import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status } from './util-store.js';
+import { wsSendBlob, wsCanSend } from './util-websocket.js';
 
 /**
  * Populates the $devices atom with available video input devices.
@@ -23,7 +23,7 @@ export async function populateDevices() {
 /**
  * Represents a single card detection with its own SVG elements.
  */
-class Card {
+class SvgCard {
   /**
    * Creates a new Card instance.
    * @param {Object} detection - The detection data (e.g., { id, points, color, matches }).
@@ -85,41 +85,7 @@ class Card {
 }
 
 
-class StatsOverlay extends LitElement {
-  #statsController = new StoreController(this, $stats);
-
-  static styles = css`
-    .stats-overlay {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      background: rgba(0, 0, 0, 0.7);
-      color: white;
-      padding: 5px 10px;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-    .message-stats {
-      display: flex;
-      flex-direction: column;
-    }
-  `
-
-  render() {
-    return html`
-      <div class="stats-overlay">
-        <div class="message-stats">
-          <span>sent: ${this.#statsController.value.messagesSent}</span>
-          <span>recv: ${this.#statsController.value.messagesReceived}</span>
-        </div>
-      </div>
-    `
-  }
-}
-customElements.define('stats-overlay', StatsOverlay);
-
-
-class VideoContainer extends LitElement {
+class ComponentVideo extends LitElement {
 
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #isStreamingController = new StoreController(this, $isStreaming);
@@ -295,7 +261,7 @@ class VideoContainer extends LitElement {
       let card = this.cardMap.get(id);
 
       if (!card) {
-        card = new Card(det, this.svg, (clickedId) => {
+        card = new SvgCard(det, this.svg, (clickedId) => {
           // Only select if not already selected
           if (this.#selectedIdController.value !== clickedId) {
             $selectedId.set(clickedId);
@@ -324,4 +290,4 @@ class VideoContainer extends LitElement {
   };
 }
 
-customElements.define('video-container', VideoContainer);
+customElements.define('video-container', ComponentVideo);

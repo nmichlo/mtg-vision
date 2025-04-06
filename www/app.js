@@ -1,9 +1,13 @@
-import './store.js';
-import './websocket.js';
-import './video-container.js';
-import './sidebar-component.js';
-import { connectWebSocket } from './websocket.js';
 import { LitElement, html, css } from 'https://esm.run/lit';
+import './util-store.js';
+import './util-websocket.js';
+import './component-video.js';
+import './component-video-overlay-cards.js';
+import './component-video-overlay-stats.js';
+import './component-sidebar.js';
+import './component-sidebar-match-info.js';
+import './component-sidebar-controller.js';
+import { connectWebSocket } from './util-websocket.js';
 
 class AppContainer extends LitElement {
 

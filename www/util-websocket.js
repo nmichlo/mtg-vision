@@ -1,4 +1,4 @@
-import { $detections, $status, $stats } from './store.js';
+import { $detections, $status, $stats } from './util-store.js';
 
 export let ws;
 
