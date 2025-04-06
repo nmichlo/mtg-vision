@@ -2,7 +2,7 @@ import SVG from 'https://esm.run/svg.js';
 import { LitElement, html, css } from 'https://esm.run/lit';
 import { StoreController } from 'https://esm.run/@nanostores/lit';
 import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status, $stats } from './store.js';
-import { ws } from './websocket.js';
+import { wsSendBlob, wsCanSend } from './websocket.js';
 
 /**
  * Populates the $devices atom with available video input devices.
@@ -85,13 +85,47 @@ class Card {
 }
 
 
+class StatsOverlay extends LitElement {
+  #statsController = new StoreController(this, $stats);
+
+  static styles = css`
+     .stats-overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .message-stats {
+      display: flex;
+      flex-direction: column;
+    }
+  `
+
+  render() {
+    return html`
+      <div class="stats-overlay">
+        <div class="message-stats">
+          <span>sent: ${this.#statsController.value.messagesSent}</span>
+          <span>recv: ${this.#statsController.value.messagesReceived}</span>
+        </div>
+      </div>
+    `
+  }
+}
+customElements.define('stats-overlay', StatsOverlay);
+
+
 class VideoContainer extends LitElement {
 
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #isStreamingController = new StoreController(this, $isStreaming);
   #detectionsController = new StoreController(this, $detections);
   #selectedIdController = new StoreController(this, $selectedId);
-  #statsController = new StoreController(this, $stats);
+
 
   static styles = css`
     :host {
@@ -118,21 +152,6 @@ class VideoContainer extends LitElement {
       height: 100%;
       pointer-events: auto;
       z-index: 1;
-    }
-    .stats-overlay {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      background: rgba(0, 0, 0, 0.7);
-      color: white;
-      padding: 5px 10px;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-
-    .message-stats {
-      display: flex;
-      flex-direction: column;
     }
   `;
 
@@ -162,12 +181,7 @@ class VideoContainer extends LitElement {
       <div class="container">
         <video id="video" autoplay muted playsinline></video>
         <svg id="overlay"></svg>
-        <div class="stats-overlay">
-          <div class="message-stats">
-            <span>Messages: ${this.#statsController.value.sent}/${this.#statsController.value}</span>
-            <span>Ratio: ${this.#statsController.value.average} (avg)</span>
-          </div>
-        </div>
+        <stats-overlay/>
       </div>
     `;
   }
@@ -261,9 +275,9 @@ class VideoContainer extends LitElement {
     canvas.height = 480;
     const ctx = canvas.getContext('2d');
     this.sendInterval = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (wsCanSend()) {
         ctx.drawImage(this.video, 0, 0, 640, 480);
-        canvas.toBlob(blob => ws.send(blob), 'image/jpeg', 0.5);
+        canvas.toBlob(wsSendBlob, 'image/jpeg', 0.5);
       }
     }, 100);
   }

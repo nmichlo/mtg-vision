@@ -35,19 +35,14 @@ import { atom } from 'https://esm.run/nanostores';
 
 /** @type {Atom<Device[]>} */
 export const $devices = atom([]);
-
 /** @type {Atom<string|null>} */
 export const $selectedDevice = atom(null);
-
 /** @type {Atom<boolean>} */
 export const $isStreaming = atom(false);
-
 /** @type {Atom<Detection[]>} */
 export const $detections = atom([]);
-
 /** @type {Atom<number|null>} */
 export const $selectedId = atom(null);
-
 /** @type {Atom<string>} */
 export const $status = atom('Click "Start Streaming" to begin.');
 
@@ -57,5 +52,5 @@ export const $status = atom('Click "Start Streaming" to begin.');
  * @property {string} messagesReceived
  */
 
-/** @type {Atom<string>} */
+/** @type {Atom<Stats>} */
 export const $stats = atom({messagesSent: 0, messagesReceived: 0});
