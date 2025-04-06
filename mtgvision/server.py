@@ -49,8 +49,8 @@ class TrackedData:
     last_update_time: float = dataclasses.field(default_factory=lambda: time.time())
     # Last Tracking info
     last_instance: InstanceSeg = None
-    last_img: np.ndarray = None
-    last_img_encoded: str = None
+    last_rgb_im: np.ndarray = None
+    last_rgb_im_encoded: str = None
     # Embed and search
     avg_z: np.ndarray = None
     ave_nearby_points: list[ScoredPoint] = dataclasses.field(default_factory=list)
@@ -61,7 +61,7 @@ class TrackedData:
             "id": str(self.id),
             "points": self.last_instance.xyxyxyxy.tolist(),
             "color": self.color,
-            "img": self.last_img_encoded,
+            "img": self.last_rgb_im_encoded,
             "score": self.last_instance.conf,
             "matches": [
                 {
@@ -102,9 +102,9 @@ class TrackerCtx:
         # Dictionary to store persistent data per tracked object
         self.tracked_data = {}  # {id: {'z_avg': np.ndarray, 'last_query_time': float, 'nearby_points': list, 'nearby_cards': list}}
 
-    def update(self, frame: np.ndarray) -> list[TrackedData]:
+    def update(self, rgb_frame: np.ndarray) -> list[TrackedData]:
         # 0. Segment the frame (RGB)
-        segments = self.segmenter(frame)
+        segments = self.segmenter(rgb_frame)
 
         # 1. Create Norfair detections with minimal initial data
         detections = []
@@ -142,13 +142,13 @@ class TrackerCtx:
             # 3.C Update the tracked data
             # - extract the dewarped image
             trk.last_instance = seg
-            trk.last_img = seg.extract_dewarped(frame)
-            trk.last_img_encoded = encode_im(trk.last_img)
+            trk.last_rgb_im = seg.extract_dewarped(rgb_frame)
+            trk.last_rgb_im_encoded = encode_rgb_im(trk.last_rgb_im)
             # - if enough time has passed, do a full update instead
             #   of a partial update
             if current_time - trk.last_update_time > self.update_wait_sec:
                 # * embed the image
-                _z = self.encoder.predict(trk.last_img)
+                _z = self.encoder.predict(trk.last_rgb_im)
                 if trk.avg_z is None:
                     trk.avg_z = _z
                 trk.avg_z = self.ewma_weight * _z + (1 - self.ewma_weight) * trk.avg_z
@@ -180,8 +180,9 @@ def get_color(seed: Hashable):
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def encode_im(im):
-    _, buffer = cv2.imencode(".jpg", im)
+def encode_rgb_im(rgb_im):
+    bgr_im = cv2.cvtColor(rgb_im, cv2.COLOR_RGB2BGR)
+    _, buffer = cv2.imencode(".jpg", bgr_im, [cv2.IMWRITE_JPEG_QUALITY, 50])
     return base64.b64encode(buffer).decode("utf-8")
 
 
@@ -217,8 +218,8 @@ async def detect_websocket(websocket: WebSocket):
                     obj.id,
                     [(m["name"], m["set_code"]) for m in obj.to_dict()["matches"]],
                 )
-                if obj.last_img is not None:
-                    imshow(obj.last_img, f"{i}")
+                if obj.last_rgb_im is not None:
+                    imshow(obj.last_rgb_im, f"{i}")
 
             # 4. Send results
             response = {
