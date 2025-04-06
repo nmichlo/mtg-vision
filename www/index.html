@@ -13,33 +13,22 @@
       font-family: 'goudy', serif;
     }
     body {
-      display: flex;
-      flex-direction: row;
-      min-height: 100vh;
       margin: 0;
       background-color: #1e1e1e;
       color: #fff;
-      font-family: 'Courier New', Courier, monospace;
     }
-    video-container {
+    app-container {
+      display: flex;
+      flex-direction: row;
       flex: 1;
-    }
-    sidebar-component {
-      width: 300px;
-    }
-    @media (max-width: 768px) {
-      body {
-        flex-direction: column;
-      }
-      sidebar-component {
-        width: 100%;
-      }
+      min-width: 100vw;
+      min-height: 100vh;
+      min-height: -webkit-fill-available;
     }
   </style>
 </head>
 <body>
-  <video-container></video-container>
-  <sidebar-component></sidebar-component>
+  <app-container></app-container>
   <script type="module" src="app.js"></script>
 </body>
 </html>

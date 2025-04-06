@@ -89,7 +89,7 @@ class StatsOverlay extends LitElement {
   #statsController = new StoreController(this, $stats);
 
   static styles = css`
-     .stats-overlay {
+    .stats-overlay {
       position: absolute;
       top: 10px;
       left: 10px;
