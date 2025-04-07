@@ -6,7 +6,7 @@ import { $detections, $selectedId } from './util-store.js';
 class ComponentSidebar extends LitElement {
   static styles = css`
     :host {
-      width: 350px;
+      width: 400px;
       background-color: #2e2e2e;
       padding: 10px;
       display: flex;
