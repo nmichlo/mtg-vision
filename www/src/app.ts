@@ -1,13 +1,13 @@
-import { LitElement, html, css } from 'https://esm.run/lit';
-import './util-store.js';
-import './util-websocket.js';
-import './component-video.js';
-import './component-video-overlay-cards.js';
-import './component-video-overlay-stats.js';
-import './component-sidebar.js';
-import './component-sidebar-match-info.js';
-import './component-sidebar-controller.js';
-import { connectWebSocket } from './util-websocket.js';
+import { LitElement, html, css } from 'lit';
+import './util-store';
+import './util-websocket';
+import './component-video';
+import './component-video-overlay-cards';
+import './component-video-overlay-stats';
+import './component-sidebar';
+import './component-sidebar-match-info';
+import './component-sidebar-controller';
+import { connectWebSocket } from './util-websocket';
 
 class AppContainer extends LitElement {
   static styles = css`

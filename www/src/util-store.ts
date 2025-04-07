@@ -1,4 +1,4 @@
-import { atom } from 'https://esm.run/nanostores';
+import { atom } from 'nanostores';
 
 /**
  * @typedef {Object} Device

@@ -1,7 +1,7 @@
 
-import { LitElement, html, css } from 'https://esm.run/lit';
-import { StoreController } from 'https://esm.run/@nanostores/lit';
-import { $devices, $isStreaming, $selectedDevice } from './util-store.js';
+import { LitElement, html, css } from 'lit';
+import { StoreController } from '@nanostores/lit';
+import { $devices, $isStreaming, $selectedDevice } from './util-store';
 
 
 class StreamController extends LitElement {

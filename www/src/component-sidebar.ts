@@ -1,6 +1,6 @@
-import { LitElement, html, css } from 'https://esm.run/lit';
-import { StoreController } from 'https://esm.run/@nanostores/lit';
-import { $detections, $selectedId } from './util-store.js';
+import { LitElement, html, css } from 'lit';
+import { StoreController } from '@nanostores/lit';
+import { $detections, $selectedId } from './util-store';
 
 
 class ComponentSidebar extends LitElement {

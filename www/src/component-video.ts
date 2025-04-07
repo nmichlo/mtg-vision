@@ -1,8 +1,8 @@
-import SVG from 'https://esm.run/svg.js';
-import { LitElement, html, css } from 'https://esm.run/lit';
-import { StoreController } from 'https://esm.run/@nanostores/lit';
-import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status } from './util-store.js';
-import { wsSendBlob, wsCanSend } from './util-websocket.js';
+import SVG from 'svg.js';
+import { LitElement, html, css } from 'lit';
+import { StoreController } from '@nanostores/lit';
+import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status } from './util-store';
+import { wsSendBlob, wsCanSend } from './util-websocket';
 
 /**
  * Populates the $devices atom with available video input devices.
