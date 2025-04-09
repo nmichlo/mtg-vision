@@ -1,8 +1,9 @@
-import SVG from 'svg.js';
+import * as SVG from 'svg.js';
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
 import { $selectedDevice, $isStreaming, $detections, $selectedId, $devices, $status } from './util-store';
 import { wsSendBlob, wsCanSend } from './util-websocket';
+import {Detection, SvgInHtml} from "./types";
 
 /**
  * Populates the $devices atom with available video input devices.
@@ -24,25 +25,38 @@ export async function populateDevices() {
  * Represents a single card detection with its own SVG elements.
  */
 class SvgCard {
+
+  id: number;
+
+
+  svg: SVG.Container;
+  group: SVG.G;
+  polygon: SVG.Polygon;
+  textGroup: SVG.G;
+  text: SVG.Text;
+
+  onClick: (id: number) => void;
+
   /**
    * Creates a new Card instance.
    * @param {Object} detection - The detection data (e.g., { id, points, color, matches }).
    * @param {SVG.Container} svg - The SVG container to render the card in.
    * @param {Function} onClick - Callback function for handling clicks on the card.
    */
-  constructor(detection, svg, onClick) {
+  constructor(detection: Detection, svg: SVG.Container, onClick: (id: number) => void) {
     this.id = detection.id;
     this.svg = svg;
     this.onClick = onClick;
 
     // Create SVG group and elements
     this.group = this.svg.group();
-    this.polygon = this.group.polygon()
+    this.polygon = this.group.polygon([])
       .fill('rgba(0, 255, 0, 0.2)')
       .stroke({ color: detection.color, width: 2 })
       .attr('pointer-events', 'all');
-    this.text = this.group.text('')
-      .font({ fill: 'white', size: 12 });
+    this.textGroup = this.group.group();  // translate this
+    this.text = this.textGroup.text('')  // rotate this
+      .font({ size: 12, style: 'fill: white' })
 
     // Attach click handler to the group
     this.group.on('click', (e) => {
@@ -55,24 +69,26 @@ class SvgCard {
    * Updates the card’s position and appearance.
    * @param {Object} detection - Updated detection data.
    * @param {boolean} isSelected - Whether the card is currently selected.
-   * @param {number} scaleX - Scaling factor for X coordinates.
-   * @param {number} scaleY - Scaling factor for Y coordinates.
    */
-  update(detection, isSelected, scaleX, scaleY) {
-    // Update polygon points
-    const scaledPoints = detection.points.map(p => [p[0] * scaleX, p[1] * scaleY]);
-    const pointsStr = scaledPoints.map(p => p.join(',')).join(' ');
+  update(detection, isSelected) {
+    // draw polygon
+    const pointsStr = detection.points.map(p => p.join(',')).join(' ');
     this.polygon.plot(pointsStr);
     this.polygon.stroke({ color: isSelected ? 'yellow' : detection.color, width: isSelected ? 4 : 2 });
 
-    // Update text (e.g., best match name)
+    // draw text
     const bestMatch = detection.matches[0];
     if (bestMatch) {
-      const [p1, p2] = scaledPoints.slice(0, 2);
+      const [p1, p2] = detection.points.slice(0, 2);
       const midX = (p1[0] + p2[0]) / 2;
       const midY = (p1[1] + p2[1]) / 2;
       const angle = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * (180 / Math.PI);
-      this.text.text(bestMatch.name).move(midX, midY).rotate(angle, midX, midY);
+
+      this.text.move(0, 0); // Reset position before moving
+      this.textGroup.x(midX);
+      this.textGroup.y(midY);
+      this.text.text(bestMatch.name);
+      this.text.rotate(angle);
     }
   }
 
@@ -121,6 +137,18 @@ class ComponentVideo extends LitElement {
     }
   `;
 
+  currentStream: MediaStream | null;
+  currentDeviceId: string | null;
+  originalWidth: number | null;
+  originalHeight: number | null;
+  readyPromise: Promise<void>;
+  resolveReady: () => void;
+  cardMap: Map<number, SvgCard>;
+  video: HTMLVideoElement;
+  svgElement: SvgInHtml;
+  svg: SVG.Container;
+  sendInterval: number | null = null;
+
   constructor() {
     super();
     this.currentStream = null;
@@ -153,8 +181,8 @@ class ComponentVideo extends LitElement {
   }
 
   firstUpdated() {
-    this.video = this.shadowRoot.getElementById('video');
-    this.svgElement = this.shadowRoot.getElementById('overlay');
+    this.video = this.shadowRoot.getElementById('video') as HTMLVideoElement;
+    this.svgElement = this.shadowRoot.getElementById('overlay') as SvgInHtml;
     this.svg = SVG(this.svgElement);
 
     this.video.addEventListener('loadedmetadata', () => {
@@ -251,8 +279,6 @@ class ComponentVideo extends LitElement {
   drawDetections() {
     if (!this.originalWidth || !this.originalHeight) return;
 
-    const scaleX = this.originalWidth / 640;
-    const scaleY = this.originalHeight / 480;
     const currentIds = new Set();
 
     this.#detectionsController.value.forEach(det => {
@@ -272,7 +298,7 @@ class ComponentVideo extends LitElement {
       }
 
       const isSelected = id === this.#selectedIdController.value;
-      card.update(det, isSelected, scaleX, scaleY);
+      card.update(det, isSelected);
     });
 
     this.cardMap.forEach((card, id) => {
