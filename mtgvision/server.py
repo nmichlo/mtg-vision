@@ -1,9 +1,11 @@
 # ========== Imports ==========
+import asyncio
 import dataclasses
 import functools
 import hashlib
+import requests
 import time
-from typing import Hashable
+from typing import Hashable, Dict, Set
 
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
@@ -106,6 +108,28 @@ class TrackerCtx:
         )
         # Dictionary to store persistent data per tracked object
         self.tracked_data = {}  # {id: {'z_avg': np.ndarray, 'last_query_time': float, 'nearby_points': list, 'nearby_cards': list}}
+        # Set to track card IDs that are currently being fetched from Scryfall
+        self.fetching_card_ids: Set[str] = set()
+        # Dictionary to store tasks for async operations
+        self.async_tasks: Dict[str, asyncio.Task] = {}
+
+    async def fetch_missing_payloads(self, card_id: str):
+        """Asynchronously fetch missing payloads for a card ID."""
+        # check if we're already fetching this card ID
+        if card_id in self.fetching_card_ids:
+            return
+        self.fetching_card_ids.add(card_id)
+        # start the async task to fetch the card data and clean up
+        try:
+            task = asyncio.create_task(async_query_scryfall(card_id, self.vecs))
+            self.async_tasks[card_id] = task
+            await task
+        except Exception as e:
+            print(f"Error fetching card {card_id}: {e}")
+        finally:
+            self.fetching_card_ids.remove(card_id)
+            if card_id in self.async_tasks:
+                del self.async_tasks[card_id]
 
     def update(self, rgb_frame: np.ndarray) -> list[TrackedData]:
         # 0. Segment the frame (RGB)
@@ -168,6 +192,12 @@ class TrackerCtx:
                 trk.ave_nearby_cards = [
                     self.data.get_card_by_id(p.id) for p in trk.ave_nearby_points
                 ]
+
+                # Check for missing payloads and trigger async fetching
+                for point in trk.ave_nearby_points:
+                    if not point.payload and point.id not in self.fetching_card_ids:
+                        asyncio.create_task(self.fetch_missing_payloads(point.id))
+
                 # * update the last update time
                 trk.last_update_time = current_time
 
@@ -193,6 +223,29 @@ def encode_rgb_im(rgb_im):
     bgr_im = cv2.cvtColor(rgb_im, cv2.COLOR_RGB2BGR)
     _, buffer = cv2.imencode(".jpg", bgr_im, [cv2.IMWRITE_JPEG_QUALITY, 50])
     return base64.b64encode(buffer).decode("utf-8")
+
+
+async def async_query_scryfall(card_id: str, vecs: VectorStoreQdrant):
+    """Asynchronously query Scryfall API for card data and update Qdrant payload."""
+    try:
+        # Use requests in a separate thread to not block the event loop
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None, lambda: requests.get(f"https://api.scryfall.com/cards/{card_id}")
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Async: Got Card ID: {card_id}")
+            # Update the payload in Qdrant
+            vecs.update_payload(card_id, data)
+            return data
+        else:
+            print(f"Async: Error fetching card {card_id}: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Async: Exception while fetching card {card_id}: {e}")
+        return None
 
 
 # ========== FastAPI Setup ==========
