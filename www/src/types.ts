@@ -11,6 +11,9 @@ export interface Match {
     set_name?: string;
     set_code?: string;
     img_uri?: string;
+    type_line?: string;
+    price?: string;
+    oracle_text?: string;
 }
 
 export interface Detection {

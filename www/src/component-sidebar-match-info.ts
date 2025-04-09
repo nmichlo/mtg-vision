@@ -1,25 +1,12 @@
 import { LitElement, html, css } from 'lit';
-import { StoreController } from '@nanostores/lit';
-import { $detections, $selectedId, $devices, $isStreaming, $selectedDevice } from './util-store';
+import {Match} from "./types";
 
 
 class MatchInfo extends LitElement {
 
-  /**
-   * @typedef {Object} CardMatch
-   * @property {string} name - Name of the card
-   * @property {string} set_name - Optional set name of the card
-   * @property {string} set_code - Optional set code of the card
-   * @property {string} img_uri - Optional URI of the card’s image
-   * @property {string} type_line - Optional type line of the card
-   * @property {string} oracle_text - Optional oracle text of the card
-   * @property {number} price - Optional price of the card
-   */
+  match: Match;
 
-  /**
-   * @param {CardMatch} match
-   */
-  constructor(match) {
+  constructor(match: Match) {
     super();
     this.match = match;
   }
