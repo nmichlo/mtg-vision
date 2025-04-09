@@ -96,7 +96,7 @@ class ComponentSidebar extends LitElement {
       <br/>
       <p>Set: ${match.set_name || 'Unknown'} (${match.set_code || ''})</p>
       <p>Type: ${data?.type_line || 'N/A'}</p>
-      <p>Price: ${data?.price ? `$${data?.price}` : 'N/A'}</p>
+      <p>Price: ${data?.prices?.usd ? `$${data.prices.usd}` : 'N/A'}</p>
       <p>${data?.oracle_text || ''}</p>
       <img src="${match.img_uri}" alt="${match.name}">
     `;
