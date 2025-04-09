@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $detections, $selectedId } from './util-store';
+import { $detections, $selectedId, $videoDimensions } from './util-store';
 import * as SVG from "svg.js";
 import { Detection, SvgInHtml } from "./types";
 
@@ -76,6 +76,7 @@ class CardsOverlay extends LitElement {
 
   #detectionsController = new StoreController(this, $detections);
   #selectedIdController = new StoreController(this, $selectedId);
+  #videoDimensionsController = new StoreController(this, $videoDimensions);
 
   static styles = css`
     :host {
@@ -132,13 +133,15 @@ class CardsOverlay extends LitElement {
   }
 
   updated() {
-    this.drawDetections();
-  }
+    // Check if video dimensions are available
+    const dimensions = this.#videoDimensionsController.value;
+    if (dimensions) {
+      this.originalWidth = dimensions.width;
+      this.originalHeight = dimensions.height;
+      this.updateOverlaySize();
+    }
 
-  setDimensions(width: number, height: number) {
-    this.originalWidth = width;
-    this.originalHeight = height;
-    this.updateOverlaySize();
+    this.drawDetections();
   }
 
   drawDetections() {

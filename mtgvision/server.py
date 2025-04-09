@@ -57,23 +57,26 @@ class TrackedData:
     ave_nearby_cards: list[ScryfallCardFace] = dataclasses.field(default_factory=list)
 
     def to_dict(self):
+        matches = []
+        for point, card in zip(self.ave_nearby_points, self.ave_nearby_cards):
+            match = {
+                "id": str(point.id),
+                "score": point.score,
+                "name": card.name,
+                "set_name": card.set_name,
+                "set_code": card.set_code,
+                "img_uri": card.img_uri,
+                "all_data": point.payload,  # fetched from scryfall
+            }
+            matches.append(match)
+
         return {
             "id": str(self.id),
             "points": self.last_instance.xyxyxyxy.tolist(),
             "color": self.color,
             "img": self.last_rgb_im_encoded,
             "score": self.last_instance.conf,
-            "matches": [
-                {
-                    "id": str(match.id),
-                    "score": match.score,
-                    "name": card.name,
-                    "set_name": card.set_name,
-                    "set_code": card.set_code,
-                    "img_uri": card.img_uri,
-                }
-                for match, card in zip(self.ave_nearby_points, self.ave_nearby_cards)
-            ],
+            "matches": matches,
         }
 
 

@@ -7,13 +7,15 @@ export interface Device {
 }
 
 export interface Match {
+    id: string;
     name: string;
+    score: number
+
     set_name?: string;
     set_code?: string;
     img_uri?: string;
-    type_line?: string;
-    price?: string;
-    oracle_text?: string;
+
+    all_data?: object
 }
 
 export interface Detection {

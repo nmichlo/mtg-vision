@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $selectedDevice, $isStreaming, $status, populateDevices } from './util-store';
+import { $selectedDevice, $isStreaming, $status, $videoDimensions, populateDevices } from './util-store';
 import { wsSendBlob, wsCanSend } from './util-websocket';
 
 // Import the CardsOverlay component
@@ -31,25 +31,19 @@ class ComponentVideo extends LitElement {
       object-fit: contain;
       pointer-events: none;
     }
-
   `;
 
   currentStream: MediaStream | null;
   currentDeviceId: string | null;
-  originalWidth: number | null;
-  originalHeight: number | null;
   readyPromise: Promise<void>;
   resolveReady: () => void;
   video: HTMLVideoElement;
-  cardsOverlay: HTMLElement;
   sendInterval: number | null = null;
 
   constructor() {
     super();
     this.currentStream = null;
     this.currentDeviceId = null;
-    this.originalWidth = null;
-    this.originalHeight = null;
     this.readyPromise = new Promise(resolve => (this.resolveReady = resolve));
   }
 
@@ -60,35 +54,30 @@ class ComponentVideo extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this.currentStream) this.stopStream();
+    if (this.currentStream) {
+      this.stopStream();
+    }
   }
 
   render() {
     return html`
       <div class="container">
         <video id="video" autoplay muted playsinline></video>
-        <cards-overlay id="cards-overlay"></cards-overlay>
-        <stats-overlay/>
+        <cards-overlay></cards-overlay>
+        <stats-overlay></stats-overlay>
       </div>
     `;
   }
 
   firstUpdated() {
     this.video = this.shadowRoot.getElementById('video') as HTMLVideoElement;
-    this.cardsOverlay = this.shadowRoot.getElementById('cards-overlay');
-
     this.video.addEventListener('loadedmetadata', () => {
-      this.originalWidth = this.video.videoWidth;
-      this.originalHeight = this.video.videoHeight;
-
-      // Set dimensions on the cards overlay
-      if (this.cardsOverlay && 'setDimensions' in this.cardsOverlay) {
-        (this.cardsOverlay as any).setDimensions(this.originalWidth, this.originalHeight);
-      }
-
+      $videoDimensions.set({
+        width: this.video.videoWidth,
+        height: this.video.videoHeight,
+      });
       this.video.play().catch(e => console.error('Failed to play video:', e));
     });
-
     this.resolveReady();
   }
 
@@ -159,12 +148,10 @@ class ComponentVideo extends LitElement {
     this.sendInterval = setInterval(() => {
       if (wsCanSend()) {
         ctx.drawImage(this.video, 0, 0, 640, 480);
-        canvas.toBlob(wsSendBlob, 'image/jpeg', 0.5);
+        canvas.toBlob(wsSendBlob, 'image/jpeg', 0.6);
       }
     }, 100);
   }
-
-
 }
 
 customElements.define('video-container', ComponentVideo);
