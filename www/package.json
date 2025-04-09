@@ -2,9 +2,13 @@
   "name": "mtgvision",
   "version": "1.0.0",
   "description": "MTG card detection and recognition frontend for mtgvision.",
-  "main": "index.js",
+  "source": "public/index.html",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "parcel",
+    "build": "parcel build",
+    "watch": "parcel watch",
+    "serve": "parcel serve",
+    "dev": "parcel serve"
   },
   "keywords": [],
   "author": "Nathan Michlo",
@@ -17,7 +21,6 @@
     "svg.js": "^2.7.1"
   },
   "devDependencies": {
-    "@swc/cli": "^0.6.0",
-    "@swc/core": "^1.11.16"
+    "parcel": "^2.14.4"
   }
 }
