@@ -1,5 +1,6 @@
 import { $detections, $status, $stats } from './util-store';
 import {Payload} from "./types";
+import {augmentDetections} from "./scryfall";
 
 export let ws;
 
@@ -33,7 +34,7 @@ export function connectWebSocket(port?: number) {
 
   ws.onmessage = (event) => {
     const data: Payload = JSON.parse(event.data);
-    $detections.set(data.detections);
+    $detections.set(augmentDetections(data.detections));
     const stats = $stats.get()
     $stats.set({
       ...stats,

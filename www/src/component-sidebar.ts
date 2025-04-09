@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
 import { $detections, $selectedId } from './util-store';
 import {Match} from "./types";
+import {replaceSymbols} from "./scryfall";
 
 
 class ComponentSidebar extends LitElement {
@@ -45,12 +46,16 @@ class ComponentSidebar extends LitElement {
   #detectionsController = new StoreController(this, $detections);
   #selectedIdController = new StoreController(this, $selectedId);
 
+  connectedCallback() {
+    super.connectedCallback();
+  }
+
   #onItemClick(det) {
     const currentSelectedId = this.#selectedIdController.value;
     $selectedId.set(currentSelectedId === det.id ? null : det.id);
   }
 
-  #getSelectedCardMatch() {
+  #getSelectedCardMatch(): Match | undefined {
     const det = this.#detectionsController.value.find(d => d.id === this.#selectedIdController.value);
     if (!det || !det.matches) {
       return null;
@@ -71,13 +76,15 @@ class ComponentSidebar extends LitElement {
           !detections ? (
               html`<p>No cards detected</p>`
           ) : (
-            detections.map(det => html`
-              <div class="detection-item ${det.id === selectedId ? 'selected' : ''}" @click=${() => this.#onItemClick(det)}>
-                <img src="data:image/jpeg;base64,${det.img}" style="height: 70px;">
-                <!--<img src="${det.matches[0].img_uri}" style="height: 70px;">-->
-                <span class="detection-item-text">${det.matches[0]?.name || 'Unknown'}</span>
-              </div>
-            `)
+            detections.map(det => {
+              const match = det.matches[0];
+              return html`
+                <div class="detection-item ${det.id === selectedId ? 'selected' : ''}" @click=${() => this.#onItemClick(det)}>
+                  <img src="data:image/jpeg;base64,${det.img}" style="height: 70px;">
+                  <span class="detection-item-text">${match?.name || 'Unknown'} ${match?.extra_data?.mana_cost ?? ''} $${match?.all_data?.prices?.usd || '0'}</span>
+                </div>
+                `
+            })
           )
         }
       </div>
@@ -89,15 +96,17 @@ class ComponentSidebar extends LitElement {
   }
 
   renderMatchInfo (match: Match) {
-    const data = match.all_data
+    const data = match.all_data;
+    const formattedOracleText = match?.extra_data?.oracle_text ?? '';
+    const formattedCost = match?.extra_data?.mana_cost ?? '';
     return html`
-      <h3>${match.name}</h3>
+      <h3>${match.name} ${formattedCost}</h3>
       <p style="font-size: 12px">Match Score: ${match.score}</p>
       <br/>
-      <p>Set: ${match.set_name || 'Unknown'} (${match.set_code || ''})</p>
-      <p>Type: ${data?.type_line || 'N/A'}</p>
-      <p>Price: ${data?.prices?.usd ? `$${data.prices.usd}` : 'N/A'}</p>
-      <p>${data?.oracle_text || ''}</p>
+      <p><span style="color: yellow;">Set:</span> ${match.set_name || 'Unknown'} (${match.set_code || ''})</p>
+      <p><span style="color: yellow;">Type:</span> ${data?.type_line || 'N/A'}</p>
+      <p><span style="color: yellow;">Price:</span> ${data?.prices?.usd ? `$${data.prices.usd}` : 'N/A'}</p>
+      <pre style="font-size: 12px">${formattedOracleText}</pre>
       <img src="${match.img_uri}" alt="${match.name}">
     `;
   }

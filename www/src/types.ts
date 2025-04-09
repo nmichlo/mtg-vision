@@ -1,3 +1,4 @@
+import {TemplateResult} from "lit";
 
 
 export interface Device {
@@ -268,6 +269,12 @@ export interface Match {
     img_uri?: string;
 
     all_data?: ScryfallCardData
+
+    // computed data on received
+    extra_data?: {
+        mana_cost: (string | TemplateResult)[];
+        oracle_text: (string | TemplateResult)[];
+    }
 }
 
 export interface Detection {
@@ -294,3 +301,34 @@ export interface Payload {
 
 
 export type SvgInHtml = HTMLElement & SVGElement;
+
+
+export interface ScryfallCardSymbol {
+    /**
+     * From https://api.scryfall.com/symbology
+     * e.g.
+     * {"object":"card_symbol","symbol":"{T}","svg_uri":"https://svgs.scryfall.io/card-symbols/T.svg","loose_variant":null,"english":"tap this permanent","transposable":false,"represents_mana":false,"appears_in_mana_costs":false,"mana_value":0.0,"hybrid":false,"phyrexian":false,"cmc":0.0,"funny":false,"colors":[],"gatherer_alternates":["ocT","oT"]},
+     * {"object":"card_symbol","symbol":"{Q}","svg_uri":"https://svgs.scryfall.io/card-symbols/Q.svg","loose_variant":null,"english":"untap this permanent","transposable":false,"represents_mana":false,"appears_in_mana_costs":false,"mana_value":0.0,"hybrid":false,"phyrexian":false,"cmc":0.0,"funny":false,"colors":[],"gatherer_alternates":null},
+     */
+    object: "card_symbol";
+    symbol: string;
+    svg_uri: string;
+    loose_variant: string | null;
+    english: string;
+    transposable: boolean;
+    represents_mana: boolean;
+    appears_in_mana_costs: boolean;
+    mana_value: number;
+    hybrid: boolean;
+    phyrexian: boolean;
+    cmc: number;
+    funny: boolean;
+    colors: string[];
+    gatherer_alternates: string[] | null;
+}
+
+export interface ScryfallSymbolsResponse {
+    object: "list";
+    has_more: boolean;
+    data: ScryfallCardSymbol[];
+}

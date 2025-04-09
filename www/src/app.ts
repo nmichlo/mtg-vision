@@ -7,6 +7,7 @@ import './component-video-overlay-stats';
 import './component-sidebar';
 import './component-sidebar-controller';
 import { connectWebSocket } from './util-websocket';
+import {fetchSymbology} from "./scryfall";
 
 class AppContainer extends LitElement {
   static styles = css`
@@ -43,5 +44,7 @@ class AppContainer extends LitElement {
 }
 customElements.define('app-container', AppContainer);
 
-// Initialize WebSocket
+
+// Initialize WebSocket connection and fetch Scryfall symbology
 connectWebSocket();
+fetchSymbology();
