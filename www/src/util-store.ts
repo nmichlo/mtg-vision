@@ -7,8 +7,18 @@ export const $isStreaming = atom<boolean>(false);
 export const $detections = atom<Detection[]>([]);
 export const $selectedId = atom<number|null>(null);
 export const $status = atom<string>('Click "Start Streaming" to begin.');
-export const $stats = atom<Stats>({messagesSent: 0, messagesReceived: 0});
+export const $stats = atom<Stats>({messagesSent: 0, messagesReceived: 0, processTime: null});
 export const $videoDimensions = atom<{width: number, height: number} | null>(null);
+
+
+// overlay modes
+export const $showOverlayPolygon = atom<boolean>(false);
+export const $showOverlayPolygonClosed = atom<boolean>(false);
+export const $showOverlayXyxyxyxy = atom<boolean>(true);
+
+// send delay
+export const $sendPeriodMs = atom<number>(1000/15);  // 15FPS
+export const $sendQuality = atom<number>(0.5);
 
 
 /**

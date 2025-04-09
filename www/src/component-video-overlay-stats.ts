@@ -24,11 +24,13 @@ class StatsOverlay extends LitElement {
   `
 
   render() {
+    const fps = 1 / this.#statsController.value.processTime;
+    const roundedFps = Math.round(fps * 10) / 10;
     return html`
       <div class="stats-overlay">
         <div class="message-stats">
-          <span>sent: ${this.#statsController.value.messagesSent}</span>
-          <span>recv: ${this.#statsController.value.messagesReceived}</span>
+          <span>sent/recv: ${this.#statsController.value.messagesSent}/${this.#statsController.value.messagesReceived}</span>
+          <span>server fps: ${roundedFps}</span>
         </div>
       </div>
     `

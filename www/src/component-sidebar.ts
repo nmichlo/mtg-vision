@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
 import { $detections, $selectedId } from './util-store';
+import {Match} from "./types";
 
 
 class ComponentSidebar extends LitElement {
@@ -20,9 +21,17 @@ class ComponentSidebar extends LitElement {
     .detection-item {
       margin-bottom: 10px;
       cursor: pointer;
+      display: flex;
+      flex-direction: row;
+      justify-content: flex-start;
+      align-items: center;
     }
     .detection-item.selected {
       border: 2px solid yellow;
+    }
+    .detection-item-text {
+        margin-left: 10px;
+        color: white;
     }
     #card-info img {
       width: 100%;
@@ -65,7 +74,8 @@ class ComponentSidebar extends LitElement {
             detections.map(det => html`
               <div class="detection-item ${det.id === selectedId ? 'selected' : ''}" @click=${() => this.#onItemClick(det)}>
                 <img src="data:image/jpeg;base64,${det.img}" style="height: 70px;">
-                <span>${det.matches[0]?.name || 'Unknown'}</span>
+                <!--<img src="${det.matches[0].img_uri}" style="height: 70px;">-->
+                <span class="detection-item-text">${det.matches[0]?.name || 'Unknown'}</span>
               </div>
             `)
           )
@@ -73,8 +83,22 @@ class ComponentSidebar extends LitElement {
       </div>
 
       <div id="card-info">
-        ${selectedCardMatch ? html`<match-info .match=${selectedCardMatch}></match-info>` : ''}
+        ${selectedCardMatch ? this.renderMatchInfo(selectedCardMatch) : ''}
       </div>
+    `;
+  }
+
+  renderMatchInfo (match: Match) {
+    const data = match.all_data
+    return html`
+      <h3>${match.name}</h3>
+      <p style="font-size: 12px">Match Score: ${match.score}</p>
+      <br/>
+      <p>Set: ${match.set_name || 'Unknown'} (${match.set_code || ''})</p>
+      <p>Type: ${data?.type_line || 'N/A'}</p>
+      <p>Price: ${data?.price ? `$${data?.price}` : 'N/A'}</p>
+      <p>${data?.oracle_text || ''}</p>
+      <img src="${match.img_uri}" alt="${match.name}">
     `;
   }
 }

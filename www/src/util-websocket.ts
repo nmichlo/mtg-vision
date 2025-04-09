@@ -1,4 +1,5 @@
 import { $detections, $status, $stats } from './util-store';
+import {Payload} from "./types";
 
 export let ws;
 
@@ -31,10 +32,14 @@ export function connectWebSocket(port?: number) {
   };
 
   ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
+    const data: Payload = JSON.parse(event.data);
     $detections.set(data.detections);
     const stats = $stats.get()
-    $stats.set({...stats, messagesReceived: stats.messagesReceived + 1})
+    $stats.set({
+      ...stats,
+      messagesReceived: stats.messagesReceived + 1,
+      processTime: (stats) ? 0.1 * data.process_time + 0.9 * stats.processTime : data.process_time,
+    })
   };
 
   ws.onerror = () => {

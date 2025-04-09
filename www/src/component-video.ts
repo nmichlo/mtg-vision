@@ -1,6 +1,14 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $selectedDevice, $isStreaming, $status, $videoDimensions, populateDevices } from './util-store';
+import {
+  $selectedDevice,
+  $isStreaming,
+  $status,
+  $videoDimensions,
+  $sendPeriodMs,
+  populateDevices,
+  $sendQuality
+} from './util-store';
 import { wsSendBlob, wsCanSend } from './util-websocket';
 
 // Import the CardsOverlay component
@@ -148,9 +156,10 @@ class ComponentVideo extends LitElement {
     this.sendInterval = setInterval(() => {
       if (wsCanSend()) {
         ctx.drawImage(this.video, 0, 0, 640, 480);
-        canvas.toBlob(wsSendBlob, 'image/jpeg', 0.6);
+        canvas.toBlob(wsSendBlob, 'image/jpeg', $sendQuality.get());
       }
-    }, 100);
+    }, $sendPeriodMs.get());
+
   }
 }
 

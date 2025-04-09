@@ -15,7 +15,7 @@ export interface Match {
     set_code?: string;
     img_uri?: string;
 
-    all_data?: object
+    all_data?: any
 }
 
 export interface Detection {
@@ -29,6 +29,13 @@ export interface Detection {
 export interface Stats {
     messagesSent: number;
     messagesReceived: number;
+    processTime: number | null;
+}
+
+export interface Payload {
+    detections: Detection[];
+    process_time: number; // seconds
+    send_time: number; // seconds
 }
 
 

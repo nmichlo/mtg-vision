@@ -17,7 +17,11 @@ class SvgCard {
   id: number;
   svg: SVG.Container;
   group: SVG.G;
+
+  points: SVG.Polygon;
   polygon: SVG.Polygon;
+  polygonClosed: SVG.Polygon;
+
   textGroup: SVG.G;
   text: SVG.Text;
   onClick: (id: number) => void;
@@ -29,10 +33,11 @@ class SvgCard {
 
     // Create SVG group and elements
     this.group = this.svg.group();
-    this.polygon = this.group.polygon([])
+    this.points = this.group.polygon([])
       .fill('rgba(0, 255, 0, 0.0)')
       .stroke({ color: detection.color, width: 2 })
       .attr('pointer-events', 'all');
+
     this.textGroup = this.group.group();  // translate this
     this.text = this.textGroup.text('')  // rotate this
       .font({ size: 10, style: 'fill: white', family: 'goudy, serif' })
@@ -47,8 +52,8 @@ class SvgCard {
   update(detection: Detection, isSelected: boolean) {
     // draw polygon
     const pointsStr = detection.points.map(p => p.join(',')).join(' ');
-    this.polygon.plot(pointsStr);
-    this.polygon.stroke({ color: isSelected ? 'yellow' : detection.color, width: isSelected ? 4 : 2 });
+    this.points.plot(pointsStr);
+    this.points.stroke({ color: isSelected ? 'yellow' : detection.color, width: isSelected ? 2 : 1 });
 
     // draw text
     const bestMatch = detection.matches[0];
@@ -148,8 +153,14 @@ class CardsOverlay extends LitElement {
     if (!this.originalWidth || !this.originalHeight) return;
 
     const currentIds = new Set();
+    const detections = this.#detectionsController.value;
 
-    this.#detectionsController.value.forEach(det => {
+    // Auto-select the first card if there are detections and nothing is currently selected
+    if (detections.length > 0 && this.#selectedIdController.value === null) {
+      $selectedId.set(detections[0].id);
+    }
+
+    detections.forEach(det => {
       const id = det.id;
       currentIds.add(id);
       let card = this.cardMap.get(id);
@@ -169,12 +180,29 @@ class CardsOverlay extends LitElement {
       card.update(det, isSelected);
     });
 
+    // Handle removed cards
+    const selectedId = this.#selectedIdController.value;
+    let selectedCardRemoved = false;
     this.cardMap.forEach((card, id) => {
       if (!currentIds.has(id)) {
+        if (id === selectedId) {
+          selectedCardRemoved = true;
+        }
         card.remove();
         this.cardMap.delete(id);
       }
     });
+
+    // If the selected card was removed
+    // - Select the first available one if we have other cards
+    // - Clear selection if no cards are left
+    if (selectedCardRemoved) {
+      if (detections.length > 0) {
+        $selectedId.set(detections[0].id);
+      } else {
+        $selectedId.set(null);
+      }
+    }
   }
 
   updateOverlaySize = () => {

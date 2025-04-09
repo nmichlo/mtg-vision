@@ -5,7 +5,6 @@ import './component-video';
 import './component-video-overlay-cards';
 import './component-video-overlay-stats';
 import './component-sidebar';
-import './component-sidebar-match-info';
 import './component-sidebar-controller';
 import { connectWebSocket } from './util-websocket';
 

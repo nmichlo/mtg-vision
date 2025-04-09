@@ -73,6 +73,8 @@ class TrackedData:
         return {
             "id": str(self.id),
             "points": self.last_instance.xyxyxyxy.tolist(),
+            "polygon": self.last_instance.points.tolist(),
+            "polygon_closed": self.last_instance.points_closed.tolist(),
             "color": self.color,
             "img": self.last_rgb_im_encoded,
             "score": self.last_instance.conf,
@@ -88,7 +90,7 @@ class TrackerCtx:
 
     def __init__(
         self,
-        update_wait_sec: float = 0.5,
+        update_wait_sec: float = 0.25,
         ewma_weight: float = 0.1,
     ):
         self.update_wait_sec = update_wait_sec
@@ -148,8 +150,12 @@ class TrackerCtx:
             trk.last_rgb_im = seg.extract_dewarped(rgb_frame)
             trk.last_rgb_im_encoded = encode_rgb_im(trk.last_rgb_im)
             # - if enough time has passed, do a full update instead
-            #   of a partial update
-            if current_time - trk.last_update_time > self.update_wait_sec:
+            #   of a partial update OR if no update has been done yet
+            #   then force an update
+            if (
+                current_time - trk.last_update_time > self.update_wait_sec
+                or trk.avg_z is None
+            ):
                 # * embed the image
                 _z = self.encoder.predict(trk.last_rgb_im)
                 if trk.avg_z is None:
@@ -157,7 +163,7 @@ class TrackerCtx:
                 trk.avg_z = self.ewma_weight * _z + (1 - self.ewma_weight) * trk.avg_z
                 # * query the vector store
                 trk.ave_nearby_points = self.vecs.query_nearby(
-                    trk.avg_z, k=5, with_payload=False, with_vectors=False
+                    trk.avg_z, k=3, with_payload=True, with_vectors=False
                 )
                 trk.ave_nearby_cards = [
                     self.data.get_card_by_id(p.id) for p in trk.ave_nearby_points
@@ -205,6 +211,7 @@ async def detect_websocket(websocket: WebSocket):
         try:
             # 1. Receive binary image data from the browser
             data = await websocket.receive_bytes()  # RGB bytes
+            t = time.time()
 
             # 2. Decode the JPEG image as RGB array (needed for models, must NOT be BGR)
             print(f"Received {len(data)} bytes")
@@ -227,6 +234,7 @@ async def detect_websocket(websocket: WebSocket):
             # 4. Send results
             response = {
                 "detections": [obj.to_dict() for obj in objs],
+                "process_time": time.time() - t,
             }
             await websocket.send_json(response)
         except Exception as e:

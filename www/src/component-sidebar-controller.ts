@@ -1,7 +1,7 @@
 
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $devices, $isStreaming, $selectedDevice } from './util-store';
+import { $devices, $isStreaming, $selectedDevice, $showOverlayPolygon, $showOverlayPolygonClosed, $showOverlayXyxyxyxy, $sendPeriodMs, $sendQuality } from './util-store';
 
 
 class StreamController extends LitElement {
@@ -24,6 +24,14 @@ class StreamController extends LitElement {
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #devicesController = new StoreController(this, $devices);
   #isStreamingController = new StoreController(this, $isStreaming);
+
+  #showOverlayPolygonController = new StoreController(this, $showOverlayPolygon);
+  #showOverlayPolygonClosedController = new StoreController(this, $showOverlayPolygonClosed);
+  #showOverlayXyxyxyxyController = new StoreController(this, $showOverlayXyxyxyxy);
+
+  #sendPeriodMsController = new StoreController(this, $sendPeriodMs);
+  #sendQualityController = new StoreController(this, $sendQuality);
+
 
   connectedCallback() {
     super.connectedCallback();
@@ -74,6 +82,21 @@ class StreamController extends LitElement {
       <button @click=${() => $isStreaming.set(!isStreaming)}>
         ${isStreaming ? 'Stop' : 'Start'} Stream
       </button>
+
+      <div style="margin-bottom: 32px; margin-top: 16px">
+        <input type="checkbox" id="showOverlayPolygon" ?checked=${this.#showOverlayPolygonController.value} @change=${(e) => $showOverlayPolygon.set(e.target.checked)}>
+        <label for="showOverlayPolygon">Polygon</label>
+        <input type="checkbox" id="showOverlayPolygonClosed" ?checked=${this.#showOverlayPolygonClosedController.value} @change=${(e) => $showOverlayPolygonClosed.set(e.target.checked)}>
+        <label for="showOverlayPolygonClosed">Closed Poly</label>
+        <input type="checkbox" id="showOverlayXyxyxyxy" ?checked=${this.#showOverlayXyxyxyxyController.value} @change=${(e) => $showOverlayXyxyxyxy.set(e.target.checked)}>
+        <label for="showOverlayXyxyxyxy">Box</label>
+        <input type="range" min="1" max="60" value="10" class="slider" id="myRange" @input=${(e) => $sendPeriodMs.set(1000 / e.target.value)}>
+        <label for="myRange">Send Fps: ${Math.round(1000 / this.#sendPeriodMsController.value * 10) / 10}</label>
+        <input type="range" min="10" max="100" value="50" class="slider" id="myRange2" @input=${(e) => $sendQuality.set(e.target.value / 100)}>
+        <label for="myRange2">Send quality %: ${this.#sendQualityController.value * 100}</label>
+      </div>
+
+
     `
   }
 }
