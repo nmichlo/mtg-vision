@@ -234,7 +234,7 @@ async def detect_websocket(websocket: WebSocket):
 # Serve static files from the 'www' directory
 app.mount(
     "/",
-    StaticFiles(directory=Path(__file__).parent.parent / "www", html=True),
+    StaticFiles(directory=Path(__file__).parent.parent / "www" / "dist", html=True),
     name="static",
 )
 

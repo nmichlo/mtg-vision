@@ -21,9 +21,9 @@ export function wsSendBlob(blob) {
 /**
  * Connects to the WebSocket server and handles messages.
  */
-export function connectWebSocket() {
+export function connectWebSocket(port?: number) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/detect`;
+  const wsUrl = `${protocol}//${window.location.hostname}:${port || 8000}/detect`;
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
