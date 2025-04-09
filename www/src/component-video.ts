@@ -51,12 +51,12 @@ class SvgCard {
     // Create SVG group and elements
     this.group = this.svg.group();
     this.polygon = this.group.polygon([])
-      .fill('rgba(0, 255, 0, 0.2)')
+      .fill('rgba(0, 255, 0, 0.0)')
       .stroke({ color: detection.color, width: 2 })
       .attr('pointer-events', 'all');
     this.textGroup = this.group.group();  // translate this
     this.text = this.textGroup.text('')  // rotate this
-      .font({ size: 12, style: 'fill: white' })
+      .font({ size: 10, style: 'fill: white', family: 'goudy, serif' })
 
     // Attach click handler to the group
     this.group.on('click', (e) => {
@@ -79,16 +79,11 @@ class SvgCard {
     // draw text
     const bestMatch = detection.matches[0];
     if (bestMatch) {
-      const [p1, p2] = detection.points.slice(0, 2);
-      const midX = (p1[0] + p2[0]) / 2;
-      const midY = (p1[1] + p2[1]) / 2;
-      const angle = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * (180 / Math.PI);
-
-      this.text.move(0, 0); // Reset position before moving
-      this.textGroup.x(midX);
-      this.textGroup.y(midY);
-      this.text.text(bestMatch.name);
-      this.text.rotate(angle);
+      const [[x0, y0], [x1, y1]] = detection.points.slice(0, 2);
+      const angle = Math.atan2(y1 - y0, x1 - x0) * (180 / Math.PI);
+      this.text.text(bestMatch.name)
+      this.text.transform({rotation: angle, cx: 0, cy: 0});
+      this.textGroup.transform({x: x0, y: y0})
     }
   }
 
