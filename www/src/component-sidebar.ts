@@ -40,6 +40,31 @@ class ComponentSidebar extends LitElement {
     }
     #card-info p {
       margin: 5px 0;
+      color: white;
+    }
+
+    .oracle-text-container {
+      max-height: 150px;
+      margin: 10px 0;
+    }
+
+    pre.oracle-text {
+      font-size: 12px;
+      white-space: pre-wrap;
+      overflow: auto;
+      max-height: 150px;
+      background-color: #1e1e1e;
+      padding: 8px;
+      border-radius: 4px;
+      color: white;
+      margin: 0;
+    }
+
+    .total-cost {
+      font-weight: bold;
+      color: #00cc00;
+      margin-top: 10px;
+      text-align: right;
     }
   `;
 
@@ -63,13 +88,35 @@ class ComponentSidebar extends LitElement {
     return det.matches[0];
   }
 
+  #calculateTotalCost(detections) {
+    if (!detections || detections.length === 0) return 0;
+
+    let totalCost = 0;
+    detections.forEach(det => {
+      const match = det.matches?.[0];
+      if (match?.all_data?.prices?.usd) {
+        const price = parseFloat(match.all_data.prices.usd);
+        if (!isNaN(price)) {
+          totalCost += price;
+        }
+      }
+    });
+
+    return totalCost.toFixed(2);
+  }
+
   render() {
     const selectedId = this.#selectedIdController.value;
     const detections = this.#detectionsController.value;
     const selectedCardMatch = this.#getSelectedCardMatch();
+    const totalCost = this.#calculateTotalCost(detections);
 
     return html`
       <stream-controller></stream-controller>
+
+      ${detections && detections.length > 0 ? html`
+        <div class="total-cost">Total Value: $${totalCost}</div>
+      ` : ''}
 
       <div id="card-list">
         ${
@@ -101,13 +148,14 @@ class ComponentSidebar extends LitElement {
     const formattedCost = match?.extra_data?.mana_cost ?? '';
     return html`
       <h3>${match.name} ${formattedCost}</h3>
-      <p style="font-size: 12px">Match Score: ${match.score}</p>
-      <br/>
       <p><span style="color: yellow;">Set:</span> ${match.set_name || 'Unknown'} (${match.set_code || ''})</p>
       <p><span style="color: yellow;">Type:</span> ${data?.type_line || 'N/A'}</p>
       <p><span style="color: yellow;">Price:</span> ${data?.prices?.usd ? `$${data.prices.usd}` : 'N/A'}</p>
-      <pre style="font-size: 12px">${formattedOracleText}</pre>
+      <div class="oracle-text-container">
+        <pre class="oracle-text">${formattedOracleText}</pre>
+      </div>
       <img src="${match.img_uri}" alt="${match.name}">
+      <p style="font-size: 12px">Match Score: ${match.score}</p>
     `;
   }
 }
