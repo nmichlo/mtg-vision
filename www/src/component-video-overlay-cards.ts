@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $detections, $selectedId, $videoDimensions } from './util-store';
+import { $detections, $selectedId, $videoDimensions, $showOverlayXyxyxyxy, $showOverlayPolygonClosed, $showOverlayPolygon } from './util-store';
 import * as SVG from "svg.js";
 import { Detection, SvgInHtml } from "./types";
 
@@ -35,9 +35,10 @@ class SvgCard {
     this.group = this.svg.group();
     this.points = this.group.polygon([])
       .fill('rgba(0, 255, 0, 0.0)')
-      .stroke({ color: detection.color, width: 2 })
+      .stroke({ color: detection.color, width: 1 })
       .attr('pointer-events', 'all');
-
+    this.polygon = this.group.polygon([]).stroke({ color: '#ffffff', width: 1 }).fill('rgba(255, 255, 255, 0.2)');
+    this.polygonClosed = this.group.polygon([]).stroke({ color: '#000000', width: 1 }).fill('rgba(0, 0, 0, 0.1)');
     this.textGroup = this.group.group();  // translate this
     this.text = this.textGroup.text('')  // rotate this
       .font({ size: 10, style: 'fill: white', family: 'goudy, serif' })
@@ -50,10 +51,28 @@ class SvgCard {
   }
 
   update(detection: Detection, isSelected: boolean) {
-    // draw polygon
+    // draw xyxyxyxy
     const pointsStr = detection.points.map(p => p.join(',')).join(' ');
     this.points.plot(pointsStr);
-    this.points.stroke({ color: isSelected ? 'yellow' : detection.color, width: isSelected ? 2 : 1 });
+    if ($showOverlayXyxyxyxy.get()) {
+      this.points.stroke({color: isSelected ? 'yellow' : detection.color, width: isSelected ? 2 : 1});
+    } else {
+      this.points.stroke({color: 'rgba(0, 0, 0, 0.0)', width: 1});
+    }
+
+    // draw polygon
+    if ($showOverlayPolygon.get()) {
+      this.polygon.plot(detection.polygon.map(p => p.join(',')).join(' '));
+    } else {
+      this.polygon.plot([]);
+    }
+
+    // draw polygon closed
+    if ($showOverlayPolygonClosed.get()) {
+      this.polygonClosed.plot(detection.polygon_closed.map(p => p.join(',')).join(' '));
+    } else {
+      this.polygonClosed.plot([]);
+    }
 
     // draw text
     const bestMatch = detection.matches[0];

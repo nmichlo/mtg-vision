@@ -22,6 +22,8 @@ export interface Detection {
     id: number;
     color: string;
     points: number[][];
+    polygon: number[][];
+    polygon_closed: number[][];
     img: string;
     matches: Match[];
 }
