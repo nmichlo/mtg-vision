@@ -4,6 +4,9 @@ import {augmentDetections} from "./scryfall";
 
 export let ws;
 
+/**
+ * Returns the WebSocket URL based on the current location and optional port
+ */
 export const getWsUrl = (port?: number): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.hostname}:${port || 8000}/detect`;
@@ -58,7 +61,8 @@ export function connectWebSocket() {
   // Set up a periodic connection status checker
   connectionCheckerInterval = setInterval(updateConnectionStatus, 2000);
 
-  ws = new WebSocket(getWsUrl());
+  const wsUrl = getWsUrl();
+  ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
     $status.set('Connected to server.');

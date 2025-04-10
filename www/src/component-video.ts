@@ -7,7 +7,8 @@ import {
   $videoDimensions,
   $sendPeriodMs,
   populateDevices,
-  $sendQuality, $stats, $devices
+  $sendQuality,
+  $stats
 } from './util-store';
 import { wsSendBlob, wsCanSend } from './util-websocket';
 
@@ -83,9 +84,8 @@ class ComponentVideo extends LitElement {
     try {
       // Get the stored device ID if available
       const storedDeviceId = localStorage.getItem('selectedDeviceId');
-      // Set up video constraints
+      // Set up video constraints, and if we have a stored device ID, try to use it
       const constraints = {video: {width: 640, height: 480, deviceId: undefined}};
-      // If we have a stored device ID, try to use it
       if (storedDeviceId) {
         constraints.video.deviceId = { exact: storedDeviceId };
       }
@@ -94,7 +94,6 @@ class ComponentVideo extends LitElement {
       this.currentStream = stream;
       // Get the actual device ID that was used
       const deviceId = stream.getVideoTracks()[0].getSettings().deviceId;
-      // Update the selected device in the store
       $selectedDevice.set(deviceId);
       localStorage.setItem('selectedDeviceId', deviceId);
       // Now that we have camera access, populate the device list

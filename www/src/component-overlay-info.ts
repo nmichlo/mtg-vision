@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
 import { $stats, $devices, $isStreaming, $selectedDevice, $showOverlayPolygon, $showOverlayPolygonClosed, $showOverlayXyxyxyxy, $sendPeriodMs, $sendQuality, $wsConnected } from './util-store';
+import { getWsUrl } from './util-websocket';
 
 
 class StatsOverlay extends LitElement {
@@ -157,15 +158,16 @@ class StatsOverlay extends LitElement {
     const devices = this.#devicesController.value;
     const selectedDeviceId = this.#selectedDeviceController.value;
     const isStreaming = this.#isStreamingController.value;
-
-    // Check if we have device labels
-    const hasLabels = devices.some(device => device.label);
-
     const wsConnected = this.#wsConnectedController.value;
+
+    // Get the WebSocket URL for the tooltip
+    const wsUrl = getWsUrl();
+    const connectionStatus = wsConnected ? 'Connected' : 'Disconnected';
+    const tooltipText = `WebSocket ${connectionStatus}: ${wsUrl}`;
 
     return html`
       <div class="message-stats">
-        <div class="connection-indicator ${wsConnected ? 'connected' : ''}" title="${wsConnected ? 'WebSocket Connected' : 'WebSocket Disconnected'}"></div>
+        <div class="connection-indicator ${wsConnected ? 'connected' : ''}" title="${tooltipText}"></div>
         <span>sent/recv: ${this.#statsController.value.messagesSent}/${this.#statsController.value.messagesReceived}</span>
         <span>server fps: ${roundedFps}</span>
       </div>

@@ -13,7 +13,6 @@ class ComponentSidebar extends LitElement {
       display: flex;
       flex-direction: column;
     }
-
     #card-list {
       flex: 1;
       overflow-y: auto;
@@ -46,7 +45,6 @@ class ComponentSidebar extends LitElement {
       max-height: 150px;
       margin: 10px 0;
     }
-
     pre.oracle-text {
       font-size: 12px;
       white-space: pre-wrap;
@@ -58,7 +56,6 @@ class ComponentSidebar extends LitElement {
       color: white;
       margin: 0;
     }
-
     .total-cost {
       font-weight: bold;
       color: #00cc00;
