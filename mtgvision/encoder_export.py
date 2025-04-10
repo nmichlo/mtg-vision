@@ -88,14 +88,14 @@ class CoreMlEncoder:
             model_path = MODEL_PATH.with_suffix(".encoder.mlpackage")
         self.model = ct.models.MLModel(str(model_path))
 
-    def predict(self, img: np.ndarray):
-        img = img_float32(img)
-        assert img.ndim == 3, f"{img.shape}"
-        assert img.shape[-1] == 3, f"{img.shape}"
-        assert img.dtype == np.float32, f"{img.dtype}"
-        img = img.transpose(2, 0, 1)[None, ...]
+    def predict(self, rgb_im: np.ndarray):
+        rgb_im = img_float32(rgb_im)
+        assert rgb_im.ndim == 3, f"{rgb_im.shape}"
+        assert rgb_im.shape[-1] == 3, f"{rgb_im.shape}"
+        assert rgb_im.dtype == np.float32, f"{rgb_im.dtype}"
+        rgb_im = rgb_im.transpose(2, 0, 1)[None, ...]
         # print(img.dtype, img.shape)
-        z = self.model.predict({"x": np.array(img)})["z"]
+        z = self.model.predict({"x": np.array(rgb_im)})["z"]
         assert z.ndim == 2
         assert z.shape[0] == 1
         return z[0]

@@ -146,8 +146,8 @@ class CardSegmenter:
 
         self.yolo = YOLO(model_path, task="segment", verbose=False)
 
-    def __call__(self, frame: np.ndarray) -> list[InstanceSeg]:
-        results = self.yolo([frame], verbose=False)[0]
+    def __call__(self, rgb_im: np.ndarray) -> list[InstanceSeg]:
+        results = self.yolo([rgb_im], verbose=False)[0]
         detections = []
         if results.masks and results.boxes:
             for points, conf in zip(results.masks.xy, results.boxes.conf):
