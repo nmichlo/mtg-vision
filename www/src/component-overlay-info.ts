@@ -113,6 +113,10 @@ class StatsOverlay extends LitElement {
       display: flex;
       align-items: center;
     }
+    .stat {
+        font-family: monospace;
+        font-size: 12px;
+    }
   `
 
   connectedCallback() {
@@ -159,8 +163,8 @@ class StatsOverlay extends LitElement {
   }
 
   render() {
-    const fps = 1 / this.#statsController.value.processTime;
-    const roundedFps = Math.round(fps * 10) / 10;
+    const round = (num, d=1) => Math.round(num * Math.pow(10, d)) / Math.pow(10, d);
+    const stats = this.#statsController.value;
     const devices = this.#devicesController.value;
     const selectedDeviceId = this.#selectedDeviceController.value;
     const isStreaming = this.#isStreamingController.value;
@@ -174,8 +178,9 @@ class StatsOverlay extends LitElement {
     return html`
       <div class="message-stats">
         <div class="connection-indicator ${wsConnected ? 'connected' : ''}" title="${tooltipText}"></div>
-        <span>sent/recv: ${this.#statsController.value.messagesSent}/${this.#statsController.value.messagesReceived}</span>
-        <span>server fps: ${roundedFps}</span>
+        <span>sent/recv: ${this.#statsController.value.messagesSent} / ${this.#statsController.value.messagesReceived}</span>
+        <span>proc time/period: <span class="stat">${round(stats.serverProcessTime*1000)} ms / ${round(stats.serverProcessPeriod*1000)} ms</span></span>
+        <span>bytes send/recv: <span class="stat">${round(stats.serverRecvImBytes / stats.serverProcessPeriod / 1000, 0)} kbps / ${round(stats.serverSendImBytes / stats.serverProcessPeriod / 1000, 0)} kbps</span></span>
       </div>
 
       <div class="controls-container">

@@ -183,7 +183,12 @@ class ComponentVideo extends LitElement {
     // calculate the next delay
     const delay = Math.max(
       $sendPeriodMs.get(),
-      ($stats.value.processTime ?? 0) * 1100 + 5,
+      // logic is probably wrong. Should actually have UUID sent with messages
+      // from FE side, and track response times of this.
+      Math.min(
+        ($stats.value.serverProcessTime ?? 0.01) * 1000 * 1.1,
+        ($stats.value.serverProcessPeriod ?? 0.01) * 1000 * 0.9,
+      )
     );
     // Schedule the next frame using the current period value (recursive)
     // Only send if connection is open

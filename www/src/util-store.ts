@@ -7,7 +7,7 @@ export const $isStreaming = atom<boolean>(false);
 export const $detections = atom<Detection[]>([]);
 export const $selectedId = atom<number|null>(null);
 export const $status = atom<string>('Click "Start Streaming" to begin.');
-export const $stats = atom<Stats>({messagesSent: 0, messagesReceived: 0, processTime: null});
+export const $stats = atom<Stats>({messagesSent: 0, messagesReceived: 0, serverProcessTime: null, serverProcessPeriod: null, serverRecvImBytes: null, serverSendImBytes: null});
 export const $videoDimensions = atom<{width: number, height: number} | null>(null);
 export const $wsConnected = atom<boolean>(false);
 
