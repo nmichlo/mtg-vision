@@ -169,13 +169,13 @@ class StatsOverlay extends LitElement {
           </div>
 
           <div class="control-row">
-            <label for="myRange">FPS: ${Math.round(1000 / this.#sendPeriodMsController.value * 10) / 10}</label>
-            <input type="range" min="1" max="60" value="10" class="slider" id="myRange" @input=${(e) => $sendPeriodMs.set(1000 / e.target.value)} style="flex: 1">
+            <label for="sendPeriod">FPS: ${Math.round(1000 / this.#sendPeriodMsController.value * 10) / 10}</label>
+            <input type="range" min="1" max="60" value="10" class="slider" id="sendPeriod" @input=${(e) => $sendPeriodMs.set(1000 / e.target.value)} style="flex: 1">
           </div>
 
           <div class="control-row">
-            <label for="myRange2">Quality: ${Math.round(this.#sendQualityController.value * 100)}%</label>
-            <input type="range" min="10" max="100" value="50" class="slider" id="myRange2" @input=${(e) => $sendQuality.set(e.target.value / 100)} style="flex: 1">
+            <label for="quality">Quality: ${Math.round(this.#sendQualityController.value * 100)}%</label>
+            <input type="range" min="10" max="100" value="50" class="slider" id="quality" @input=${(e) => $sendQuality.set(e.target.value / 100)} style="flex: 1">
           </div>
         </div>
       </div>

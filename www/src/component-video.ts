@@ -7,7 +7,7 @@ import {
   $videoDimensions,
   $sendPeriodMs,
   populateDevices,
-  $sendQuality
+  $sendQuality, $stats
 } from './util-store';
 import { wsSendBlob, wsCanSend } from './util-websocket';
 
@@ -16,8 +16,6 @@ class ComponentVideo extends LitElement {
 
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #isStreamingController = new StoreController(this, $isStreaming);
-  #sendPeriodMsController = new StoreController(this, $sendPeriodMs);
-  #sendQualityController = new StoreController(this, $sendQuality);
 
   static styles = css`
     :host {
@@ -39,8 +37,8 @@ class ComponentVideo extends LitElement {
   readyPromise: Promise<void>;
   resolveReady: () => void;
   video: HTMLVideoElement;
-  sendInterval: number | null = null;
-  periodMsUnlisten: Function | null = null;
+  sendingActive: boolean = false;
+  sendTimeoutId: number | null = null;
 
   constructor() {
     super();
@@ -60,11 +58,6 @@ class ComponentVideo extends LitElement {
     super.disconnectedCallback();
     if (this.currentStream) {
       this.stopStream();
-    }
-    // Clean up any listeners
-    if (this.periodMsUnlisten) {
-      this.periodMsUnlisten();
-      this.periodMsUnlisten = null;
     }
   }
 
@@ -134,42 +127,46 @@ class ComponentVideo extends LitElement {
       this.currentStream = null;
     }
     this.video.srcObject = null;
-    if (this.sendInterval) {
-      clearInterval(this.sendInterval);
-      this.sendInterval = null;
+    this.sendingActive = false;
+    if (this.sendTimeoutId) {
+      clearTimeout(this.sendTimeoutId);
+      this.sendTimeoutId = null;
     }
   }
 
   startSendingFrames() {
+    if (this.sendingActive) {
+      return;
+    }
     // Create canvas once
     const canvas = document.createElement('canvas');
     canvas.width = 640;
     canvas.height = 480;
     const ctx = canvas.getContext('2d');
-    // Setup the interval with current period
-    this.updateSendingInterval(canvas, ctx);
-    // Listen for changes to sendPeriodMs
-    this.periodMsUnlisten = $sendPeriodMs.listen((newPeriod) => {
-      if (this.sendInterval && this.currentStream) {
-        this.updateSendingInterval(canvas, ctx);
-      }
-    });
-    // No need to listen for sendQuality changes as it's used directly in the interval
+    // Start the recursive sending process
+    this.sendingActive = true;
+    this.sendNextFrame(canvas, ctx);
   }
 
-  updateSendingInterval(canvas, ctx) {
-    // Clear existing interval if it exists
-    if (this.sendInterval) {
-      clearInterval(this.sendInterval);
-      this.sendInterval = null;
+  sendNextFrame(canvas, ctx) {
+    // If we're no longer active, don't schedule the next frame
+    if (!this.sendingActive) {
+      return;
     }
-    // Create new interval with current period
-    this.sendInterval = setInterval(() => {
+    // calculate the next delay
+    const delay = Math.max(
+      $sendPeriodMs.get(),
+      ($stats.value.processTime ?? 0) * 1100 + 5,
+    );
+    // Schedule the next frame using the current period value (recursive)
+    // Only send if connection is open
+    this.sendTimeoutId = setTimeout(() => {
       if (wsCanSend()) {
         ctx.drawImage(this.video, 0, 0, 640, 480);
-        canvas.toBlob(wsSendBlob, 'image/jpeg', this.#sendQualityController.value);
+        canvas.toBlob(wsSendBlob, 'image/jpeg', $sendQuality.get());
       }
-    }, this.#sendPeriodMsController.value);
+      this.sendNextFrame(canvas, ctx);
+    }, delay);
   }
 
   // RENDER //

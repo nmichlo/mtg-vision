@@ -92,7 +92,7 @@ class TrackerCtx:
 
     def __init__(
         self,
-        update_wait_sec: float = 0.25,
+        update_wait_sec: float = 0.5,
         ewma_weight: float = 0.1,
     ):
         self.update_wait_sec = update_wait_sec
@@ -101,7 +101,7 @@ class TrackerCtx:
         self.segmenter, self.encoder, self.vecs, self.data = get_ctx()
         self.tracker = Tracker(
             distance_function=mean_euclidean,
-            distance_threshold=200,
+            distance_threshold=300,
             hit_counter_max=5,
             initialization_delay=2,
             past_detections_length=10,
