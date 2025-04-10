@@ -7,7 +7,7 @@ import {
   $videoDimensions,
   $sendPeriodMs,
   populateDevices,
-  $sendQuality, $stats
+  $sendQuality, $stats, $devices
 } from './util-store';
 import { wsSendBlob, wsCanSend } from './util-websocket';
 
@@ -81,11 +81,51 @@ class ComponentVideo extends LitElement {
 
   async tryAutoStart() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-      this.currentStream = stream;
-      const deviceId = stream.getVideoTracks()[0].getSettings().deviceId;
+      // First populate the devices list - this will handle Safari permissions
       await populateDevices();
+
+      // Check if we have a stored device ID
+      const storedDeviceId = localStorage.getItem('selectedDeviceId');
+      let deviceConstraints = { width: 640, height: 480 };
+      let useStoredDevice = false;
+
+      // Get the current list of devices
+      const availableDevices = $devices.get();
+
+      // If we have a stored device and it's in the available devices, use it
+      if (storedDeviceId && availableDevices.some(device => device.deviceId === storedDeviceId)) {
+        deviceConstraints = {
+          deviceId: { exact: storedDeviceId },
+          width: 640,
+          height: 480
+        };
+        console.log('Using stored device:', storedDeviceId);
+        useStoredDevice = true;
+      }
+
+      // Get the stream with the appropriate constraints
+      const stream = await navigator.mediaDevices.getUserMedia({ video: deviceConstraints });
+      this.currentStream = stream;
+
+      // Get the actual device ID that was used
+      const deviceId = stream.getVideoTracks()[0].getSettings().deviceId;
+
+      // Set the selected device
       $selectedDevice.set(deviceId);
+
+      // Save to localStorage if we didn't use the stored device or if it's different
+      if (!useStoredDevice || storedDeviceId !== deviceId) {
+        console.log('Saving new device ID to localStorage:', deviceId);
+        localStorage.setItem('selectedDeviceId', deviceId);
+      }
+
+      // After getting a stream, refresh the device list again to ensure we have all devices with labels
+      // This is especially important for Safari
+      if (availableDevices.some(device => !device.label)) {
+        console.log('Refreshing device list after stream access');
+        await populateDevices();
+      }
+
       $isStreaming.set(true);
       await this.readyPromise;
       this.video.srcObject = this.currentStream;
