@@ -46,6 +46,12 @@ class StatsOverlay extends LitElement {
       height: 8px;
       border-radius: 50%;
       background-color: red;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .connection-indicator:hover {
+      transform: scale(1.2);
+      box-shadow: 0 0 8px rgba(0, 0, 0, 0.7);
     }
     .connection-indicator.connected {
       background-color: #00ff00;
