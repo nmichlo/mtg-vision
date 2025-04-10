@@ -11,24 +11,15 @@ import {
 } from './util-store';
 import { wsSendBlob, wsCanSend } from './util-websocket';
 
-// Import the CardsOverlay component
-import './component-video-overlay-cards';
-
-
 
 class ComponentVideo extends LitElement {
 
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #isStreamingController = new StoreController(this, $isStreaming);
 
-
   static styles = css`
     :host {
       display: block;
-      width: 100%;
-      height: 100%;
-    }
-    .container {
       position: relative;
       width: 100%;
       height: 100%;
@@ -55,6 +46,8 @@ class ComponentVideo extends LitElement {
     this.readyPromise = new Promise(resolve => (this.resolveReady = resolve));
   }
 
+  // OVERRIDES //
+
   connectedCallback() {
     super.connectedCallback();
     this.tryAutoStart();
@@ -65,16 +58,6 @@ class ComponentVideo extends LitElement {
     if (this.currentStream) {
       this.stopStream();
     }
-  }
-
-  render() {
-    return html`
-      <div class="container">
-        <video id="video" autoplay muted playsinline></video>
-        <cards-overlay></cards-overlay>
-        <stats-overlay></stats-overlay>
-      </div>
-    `;
   }
 
   firstUpdated() {
@@ -92,6 +75,8 @@ class ComponentVideo extends LitElement {
   async updated() {
     await this.updateStream();
   }
+
+  // STREAM //
 
   async tryAutoStart() {
     try {
@@ -159,7 +144,15 @@ class ComponentVideo extends LitElement {
         canvas.toBlob(wsSendBlob, 'image/jpeg', $sendQuality.get());
       }
     }, $sendPeriodMs.get());
+  }
 
+  // RENDER //
+
+  render() {
+    return html`
+      <cards-overlay></cards-overlay>
+      <video id="video" autoplay muted playsinline></video>
+    `;
   }
 }
 

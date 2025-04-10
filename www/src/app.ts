@@ -3,9 +3,8 @@ import './util-store';
 import './util-websocket';
 import './component-video';
 import './component-video-overlay-cards';
-import './component-video-overlay-stats';
+import './component-overlay-info';
 import './component-sidebar';
-import './component-sidebar-controller';
 import { connectWebSocket } from './util-websocket';
 import {fetchSymbology} from "./scryfall";
 
@@ -37,6 +36,7 @@ class AppContainer extends LitElement {
 
   render() {
     return html`
+      <stats-overlay></stats-overlay>
       <video-container></video-container>
       <sidebar-component></sidebar-component>
     `;

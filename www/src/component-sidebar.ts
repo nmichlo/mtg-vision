@@ -2,7 +2,6 @@ import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
 import { $detections, $selectedId } from './util-store';
 import {Match} from "./types";
-import {replaceSymbols} from "./scryfall";
 
 
 class ComponentSidebar extends LitElement {
@@ -112,8 +111,6 @@ class ComponentSidebar extends LitElement {
     const totalCost = this.#calculateTotalCost(detections);
 
     return html`
-      <stream-controller></stream-controller>
-
       ${detections && detections.length > 0 ? html`
         <div class="total-cost">Total Value: $${totalCost}</div>
       ` : ''}
