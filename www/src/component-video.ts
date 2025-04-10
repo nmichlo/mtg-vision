@@ -16,6 +16,8 @@ class ComponentVideo extends LitElement {
 
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #isStreamingController = new StoreController(this, $isStreaming);
+  #sendPeriodMsController = new StoreController(this, $sendPeriodMs);
+  #sendQualityController = new StoreController(this, $sendQuality);
 
   static styles = css`
     :host {
@@ -38,6 +40,7 @@ class ComponentVideo extends LitElement {
   resolveReady: () => void;
   video: HTMLVideoElement;
   sendInterval: number | null = null;
+  periodMsUnlisten: Function | null = null;
 
   constructor() {
     super();
@@ -57,6 +60,11 @@ class ComponentVideo extends LitElement {
     super.disconnectedCallback();
     if (this.currentStream) {
       this.stopStream();
+    }
+    // Clean up any listeners
+    if (this.periodMsUnlisten) {
+      this.periodMsUnlisten();
+      this.periodMsUnlisten = null;
     }
   }
 
@@ -133,17 +141,35 @@ class ComponentVideo extends LitElement {
   }
 
   startSendingFrames() {
-    if (this.sendInterval) return;
+    // Create canvas once
     const canvas = document.createElement('canvas');
     canvas.width = 640;
     canvas.height = 480;
     const ctx = canvas.getContext('2d');
+    // Setup the interval with current period
+    this.updateSendingInterval(canvas, ctx);
+    // Listen for changes to sendPeriodMs
+    this.periodMsUnlisten = $sendPeriodMs.listen((newPeriod) => {
+      if (this.sendInterval && this.currentStream) {
+        this.updateSendingInterval(canvas, ctx);
+      }
+    });
+    // No need to listen for sendQuality changes as it's used directly in the interval
+  }
+
+  updateSendingInterval(canvas, ctx) {
+    // Clear existing interval if it exists
+    if (this.sendInterval) {
+      clearInterval(this.sendInterval);
+      this.sendInterval = null;
+    }
+    // Create new interval with current period
     this.sendInterval = setInterval(() => {
       if (wsCanSend()) {
         ctx.drawImage(this.video, 0, 0, 640, 480);
-        canvas.toBlob(wsSendBlob, 'image/jpeg', $sendQuality.get());
+        canvas.toBlob(wsSendBlob, 'image/jpeg', this.#sendQualityController.value);
       }
-    }, $sendPeriodMs.get());
+    }, this.#sendPeriodMsController.value);
   }
 
   // RENDER //
