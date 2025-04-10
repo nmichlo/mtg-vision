@@ -81,51 +81,40 @@ class ComponentVideo extends LitElement {
 
   async tryAutoStart() {
     try {
-      // First populate the devices list - this will handle Safari permissions
-      await populateDevices();
-
-      // Check if we have a stored device ID
+      // Get the stored device ID if available
       const storedDeviceId = localStorage.getItem('selectedDeviceId');
-      let deviceConstraints = { width: 640, height: 480 };
-      let useStoredDevice = false;
 
-      // Get the current list of devices
-      const availableDevices = $devices.get();
-
-      // If we have a stored device and it's in the available devices, use it
-      if (storedDeviceId && availableDevices.some(device => device.deviceId === storedDeviceId)) {
-        deviceConstraints = {
-          deviceId: { exact: storedDeviceId },
+      // Set up video constraints
+      const constraints = {
+        video: {
           width: 640,
           height: 480
-        };
-        console.log('Using stored device:', storedDeviceId);
-        useStoredDevice = true;
+        }
+      };
+
+      // If we have a stored device ID, try to use it
+      if (storedDeviceId) {
+        constraints.video.deviceId = { exact: storedDeviceId };
       }
 
-      // Get the stream with the appropriate constraints
-      const stream = await navigator.mediaDevices.getUserMedia({ video: deviceConstraints });
+      // Request camera access - this will trigger browser permission prompt if needed
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       this.currentStream = stream;
 
       // Get the actual device ID that was used
       const deviceId = stream.getVideoTracks()[0].getSettings().deviceId;
 
-      // Set the selected device
+      // Update the selected device in the store
       $selectedDevice.set(deviceId);
 
-      // Save to localStorage if we didn't use the stored device or if it's different
-      if (!useStoredDevice || storedDeviceId !== deviceId) {
-        console.log('Saving new device ID to localStorage:', deviceId);
-        localStorage.setItem('selectedDeviceId', deviceId);
-      }
+      // Save the device ID to localStorage
+      localStorage.setItem('selectedDeviceId', deviceId);
 
-      // After getting a stream, refresh the device list again to ensure we have all devices with labels
-      // This is especially important for Safari
-      if (availableDevices.some(device => !device.label)) {
-        console.log('Refreshing device list after stream access');
-        await populateDevices();
-      }
+      // Now that we have camera access, populate the device list
+      // This ensures we get device labels (especially important for Safari)
+      await populateDevices();
 
+      // Set streaming state and update video element
       $isStreaming.set(true);
       await this.readyPromise;
       this.video.srcObject = this.currentStream;
@@ -151,10 +140,23 @@ class ComponentVideo extends LitElement {
     try {
       const constraints = { video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: 640, height: 480 } };
       this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // Get the actual device ID that was used (important for Safari)
+      const actualDeviceId = this.currentStream.getVideoTracks()[0].getSettings().deviceId;
+
+      // Update the device ID in localStorage if it's different
+      if (actualDeviceId !== deviceId) {
+        localStorage.setItem('selectedDeviceId', actualDeviceId);
+        $selectedDevice.set(actualDeviceId);
+      }
+
       await this.readyPromise;
       this.video.srcObject = this.currentStream;
-      this.currentDeviceId = deviceId;
+      this.currentDeviceId = actualDeviceId;
       this.startSendingFrames();
+
+      // Refresh the device list to ensure we have labels (for Safari)
+      await populateDevices();
     } catch (error) {
       console.error('Failed to start stream:', error);
       $status.set('Failed to start camera: ' + error.message);

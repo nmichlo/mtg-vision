@@ -96,18 +96,17 @@ class StatsOverlay extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    // Check if devices are already populated
-    if (this.#devicesController.value.length > 0) {
-      this.loadStoredDevice();
-    } else {
-      // If not, set up a one-time listener for when devices are populated
-      const unsubscribe = $devices.listen(devices => {
-        if (devices.length > 0) {
-          this.loadStoredDevice();
-          unsubscribe();
-        }
-      });
-    }
+
+    // Set up a listener for device changes
+    this.#devicesController.hostUpdated();
+
+    // Load the stored device when devices are available
+    const unsubscribe = $devices.listen(devices => {
+      if (devices.length > 0) {
+        this.loadStoredDevice();
+        unsubscribe();
+      }
+    });
   }
 
   #onDeviceChange(event) {
@@ -120,16 +119,13 @@ class StatsOverlay extends LitElement {
     const storedDeviceId = localStorage.getItem('selectedDeviceId');
     const devices = this.#devicesController.value;
 
-    // Only proceed if we have devices available
-    if (devices.length === 0) {
-      return; // Will be called again when devices are available
-    }
+    if (devices.length === 0) return;
 
-    // Check if the stored device exists in the available devices
+    // If we have a stored device and it exists in available devices, use it
     if (storedDeviceId && devices.some(device => device.deviceId === storedDeviceId)) {
-      console.log('Restoring saved device:', storedDeviceId);
       $selectedDevice.set(storedDeviceId);
-    } else {
+    } else if ($selectedDevice.get() === null) {
+      // Only set a default if no device is currently selected
       this.setDefaultDevice();
     }
   }
@@ -150,9 +146,8 @@ class StatsOverlay extends LitElement {
     const selectedDeviceId = this.#selectedDeviceController.value;
     const isStreaming = this.#isStreamingController.value;
 
-    // Check if we have device labels (important for Safari)
+    // Check if we have device labels
     const hasLabels = devices.some(device => device.label);
-    const hasMultipleDevices = devices.length > 1;
 
     return html`
       <div class="message-stats">
@@ -162,31 +157,18 @@ class StatsOverlay extends LitElement {
 
       <div class="controls-container">
         <div class="control-row">
-          <select @change=${this.#onDeviceChange} style="flex: 1" ?disabled=${!hasLabels && devices.length > 0}>
+          <select @change=${this.#onDeviceChange} style="flex: 1">
             <optgroup label="devices">
               ${devices.length === 0 ? html`<option value="">No cameras found</option>` : ''}
-              ${!hasLabels && devices.length > 0 ? html`<option value="">Camera access needed</option>` : ''}
               ${devices.map(device => html`
                 <option value=${device.deviceId} ?selected=${device.deviceId === selectedDeviceId}>
-                  ${device.label || (hasLabels ? 'Unknown camera' : 'Camera')}
+                  ${device.label || 'Camera'}
                 </option>
               `)}
             </optgroup>
           </select>
-          <button @click=${() => {
-            if (!hasLabels && devices.length > 0) {
-              // If we don't have labels, clicking the button should trigger permission request
-              populateDevices().then(() => {
-                // Only toggle streaming if we now have labels
-                if (this.#devicesController.value.some(d => d.label)) {
-                  $isStreaming.set(!isStreaming);
-                }
-              });
-            } else {
-              $isStreaming.set(!isStreaming);
-            }
-          }}>
-            ${isStreaming ? 'Stop' : (hasLabels ? 'Start' : 'Allow Camera')}
+          <button @click=${() => $isStreaming.set(!isStreaming)}>
+            ${isStreaming ? 'Stop' : 'Start'}
           </button>
         </div>
 
