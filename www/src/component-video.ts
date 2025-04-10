@@ -83,37 +83,23 @@ class ComponentVideo extends LitElement {
     try {
       // Get the stored device ID if available
       const storedDeviceId = localStorage.getItem('selectedDeviceId');
-
       // Set up video constraints
-      const constraints = {
-        video: {
-          width: 640,
-          height: 480
-        }
-      };
-
+      const constraints = {video: {width: 640, height: 480, deviceId: undefined}};
       // If we have a stored device ID, try to use it
       if (storedDeviceId) {
         constraints.video.deviceId = { exact: storedDeviceId };
       }
-
       // Request camera access - this will trigger browser permission prompt if needed
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       this.currentStream = stream;
-
       // Get the actual device ID that was used
       const deviceId = stream.getVideoTracks()[0].getSettings().deviceId;
-
       // Update the selected device in the store
       $selectedDevice.set(deviceId);
-
-      // Save the device ID to localStorage
       localStorage.setItem('selectedDeviceId', deviceId);
-
       // Now that we have camera access, populate the device list
       // This ensures we get device labels (especially important for Safari)
       await populateDevices();
-
       // Set streaming state and update video element
       $isStreaming.set(true);
       await this.readyPromise;

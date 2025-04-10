@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $stats, $devices, $isStreaming, $selectedDevice, $showOverlayPolygon, $showOverlayPolygonClosed, $showOverlayXyxyxyxy, $sendPeriodMs, $sendQuality, populateDevices } from './util-store';
+import { $stats, $devices, $isStreaming, $selectedDevice, $showOverlayPolygon, $showOverlayPolygonClosed, $showOverlayXyxyxyxy, $sendPeriodMs, $sendQuality, $wsConnected } from './util-store';
 
 
 class StatsOverlay extends LitElement {
@@ -9,6 +9,7 @@ class StatsOverlay extends LitElement {
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #devicesController = new StoreController(this, $devices);
   #isStreamingController = new StoreController(this, $isStreaming);
+  #wsConnectedController = new StoreController(this, $wsConnected);
 
   #showOverlayPolygonController = new StoreController(this, $showOverlayPolygon);
   #showOverlayPolygonClosedController = new StoreController(this, $showOverlayPolygonClosed);
@@ -34,6 +35,19 @@ class StatsOverlay extends LitElement {
       display: flex;
       flex-direction: column;
       margin-bottom: 8px;
+      position: relative;
+    }
+    .connection-indicator {
+      position: absolute;
+      top: 0;
+      right: -5px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: red;
+    }
+    .connection-indicator.connected {
+      background-color: #00ff00;
     }
     .controls-container {
       display: flex;
@@ -96,10 +110,8 @@ class StatsOverlay extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-
     // Set up a listener for device changes
-    this.#devicesController.hostUpdated();
-
+    this.#devicesController.hostConnected();
     // Load the stored device when devices are available
     const unsubscribe = $devices.listen(devices => {
       if (devices.length > 0) {
@@ -149,8 +161,11 @@ class StatsOverlay extends LitElement {
     // Check if we have device labels
     const hasLabels = devices.some(device => device.label);
 
+    const wsConnected = this.#wsConnectedController.value;
+
     return html`
       <div class="message-stats">
+        <div class="connection-indicator ${wsConnected ? 'connected' : ''}" title="${wsConnected ? 'WebSocket Connected' : 'WebSocket Disconnected'}"></div>
         <span>sent/recv: ${this.#statsController.value.messagesSent}/${this.#statsController.value.messagesReceived}</span>
         <span>server fps: ${roundedFps}</span>
       </div>

@@ -9,6 +9,7 @@ export const $selectedId = atom<number|null>(null);
 export const $status = atom<string>('Click "Start Streaming" to begin.');
 export const $stats = atom<Stats>({messagesSent: 0, messagesReceived: 0, processTime: null});
 export const $videoDimensions = atom<{width: number, height: number} | null>(null);
+export const $wsConnected = atom<boolean>(false);
 
 
 // overlay modes
