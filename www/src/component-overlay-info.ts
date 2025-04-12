@@ -131,6 +131,14 @@ class StatsOverlay extends LitElement {
         unsubscribe();
       }
     });
+
+    // Add event listener for device changes (when devices are plugged in or removed)
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', async () => {
+        console.log('Device change detected, updating device list');
+        await populateDevices();
+      });
+    }
   }
 
   #onDeviceChange(event) {
