@@ -1,5 +1,6 @@
 import { atom } from 'nanostores';
 import type {Detection, Device, Stats} from "./types";
+import {augmentDetections} from "./scryfall";
 
 export const $devices = atom<Device[]>([]);
 export const $selectedDevice = atom<string|null>(null);
@@ -19,7 +20,21 @@ export const $showOverlayXyxyxyxy = atom<boolean>(true);
 
 // send delay
 export const $sendPeriodMs = atom<number>(1000/15);  // 15FPS
-export const $sendQuality = atom<number>(0.5);
+export const $sendQuality = atom<number>(0.7);
+export const $matchThreshold = atom<number>(0.5);
+
+
+export function setDetections(detections: Detection[]) {
+  $detections.set(augmentDetections(detections));
+}
+
+export function getDetections(): Detection[] {
+  const dets = $detections.get();
+  const thresh = $matchThreshold.get();
+  return dets.filter(
+    (detection) => detection.matches && detection.matches[0].score > thresh
+  );
+}
 
 
 /**

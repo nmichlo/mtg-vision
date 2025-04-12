@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $stats, $devices, $isStreaming, $selectedDevice, $showOverlayPolygon, $showOverlayPolygonClosed, $showOverlayXyxyxyxy, $sendPeriodMs, $sendQuality, $wsConnected } from './util-store';
+import { $stats, $devices, $isStreaming, $selectedDevice, $showOverlayPolygon, $showOverlayPolygonClosed, $showOverlayXyxyxyxy, $sendPeriodMs, $sendQuality, $wsConnected, $matchThreshold, populateDevices } from './util-store';
 import { getWsUrl } from './util-websocket';
 
 
@@ -18,6 +18,7 @@ class StatsOverlay extends LitElement {
 
   #sendPeriodMsController = new StoreController(this, $sendPeriodMs);
   #sendQualityController = new StoreController(this, $sendQuality);
+  #matchThresholdController = new StoreController(this, $matchThreshold);
 
   static styles = css`
     :host {
@@ -224,6 +225,11 @@ class StatsOverlay extends LitElement {
           <div class="control-row">
             <label for="quality">Quality: ${Math.round(this.#sendQualityController.value * 100)}%</label>
             <input type="range" min="10" max="100" value="50" class="slider" id="quality" @input=${(e) => $sendQuality.set(e.target.value / 100)} style="flex: 1">
+          </div>
+
+          <div class="control-row">
+            <label for="matchThresh">Match Thresh: ${Math.round(this.#matchThresholdController.value * 100)}%</label>
+            <input type="range" min="0" max="100" value="50" class="slider" id="matchThresh" @input=${(e) => $matchThreshold.set(e.target.value / 100)} style="flex: 1">
           </div>
         </div>
       </div>
