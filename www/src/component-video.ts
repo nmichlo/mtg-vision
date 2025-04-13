@@ -61,20 +61,30 @@ class ComponentVideo extends LitElement {
     this.stopStreamAndClearVideo();
   }
 
-  firstUpdated() {
-    this.video = this.shadowRoot.getElementById('video') as HTMLVideoElement;
-    this.video.addEventListener('loadedmetadata', () => {
-      $videoDimensions.set({
-        width: this.video.videoWidth,
-        height: this.video.videoHeight,
-      });
-      // Only auto-play if we intend to be streaming
-      if ($isStreaming.get()) {
-        this.video.play().catch(e => console.error('Failed to play video initially:', e));
-      }
+firstUpdated() {
+  this.video = this.shadowRoot.getElementById('video') as HTMLVideoElement;
+
+  // Existing listener for initial dimensions
+  this.video.addEventListener('loadedmetadata', () => {
+    $videoDimensions.set({
+      width: this.video.videoWidth,
+      height: this.video.videoHeight,
     });
-    this.resolveReady();
-  }
+    if ($isStreaming.get()) {
+      this.video.play().catch(e => console.error('Failed to play video initially:', e));
+    }
+  });
+
+  // New listener for dimension changes on rotation
+  this.video.addEventListener('resize', () => {
+    $videoDimensions.set({
+      width: this.video.videoWidth,
+      height: this.video.videoHeight,
+    });
+  });
+
+  this.resolveReady();
+}
 
   async updated() {
     await this.manageStreamState();

@@ -109,6 +109,9 @@ class CardsOverlay extends LitElement {
   // don't remove even though unused
   #thresholdController = new StoreController(this, $matchThreshold);
   #detectionsController = new StoreController(this, $detections);
+  #showOverlayXyxyxyxyController = new StoreController(this, $showOverlayXyxyxyxy)
+  #showOverlayPolygonClosedController = new StoreController(this, $showOverlayPolygonClosed)
+  #showOverlayPolygonController = new StoreController(this, $showOverlayPolygon)
   #selectedIdController = new StoreController(this, $selectedId);
   #videoDimensionsController = new StoreController(this, $videoDimensions);
 
@@ -167,14 +170,12 @@ class CardsOverlay extends LitElement {
   }
 
   updated() {
-    // Check if video dimensions are available
     const dimensions = this.#videoDimensionsController.value;
     if (dimensions) {
       this.originalWidth = dimensions.width;
       this.originalHeight = dimensions.height;
       this.updateOverlaySize();
     }
-
     this.drawDetections();
   }
 

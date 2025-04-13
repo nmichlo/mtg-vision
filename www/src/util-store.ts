@@ -12,6 +12,8 @@ export const $stats = atom<Stats>({messagesSent: 0, messagesReceived: 0, serverP
 export const $videoDimensions = atom<{width: number, height: number} | null>(null);
 export const $wsConnected = atom<boolean>(false);
 
+// controlls
+export const $showControls = atom<boolean>(false);
 
 // overlay modes
 export const $showOverlayPolygon = atom<boolean>(false);
