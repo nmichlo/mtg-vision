@@ -17,6 +17,13 @@ class ComponentSidebar extends LitElement {
       flex: 1;
       overflow-y: auto;
     }
+
+    @media (max-width: 768px) {
+        #card-list {
+          display: none;
+        }
+    }
+
     .detection-item {
       margin-bottom: 10px;
       cursor: pointer;
