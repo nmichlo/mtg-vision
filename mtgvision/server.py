@@ -22,7 +22,6 @@ from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.od_export import CardSegmenter, InstanceSeg
 from mtgvision.qdrant import VectorStoreQdrant
-from mtgvision.util.image import imshow
 
 
 # ========== Global Context ==========
@@ -259,15 +258,16 @@ app = FastAPI()
 async def detect_websocket(websocket: WebSocket):
     ctx = TrackerCtx()
 
+    times = [time.time(), time.time()]
+
     await websocket.accept()
     while True:
         try:
             # 1. Receive binary image data from the browser
             data = await websocket.receive_bytes()  # RGB bytes
-            t = time.time()
+            t1 = time.time()
 
             # 2. Decode the JPEG image as RGB array (needed for models, must NOT be BGR)
-            print(f"Received {len(data)} bytes")
             nparr = np.frombuffer(data, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR_RGB)
             if frame is None:
@@ -276,23 +276,28 @@ async def detect_websocket(websocket: WebSocket):
 
             # 3. Process the frame
             objs = ctx.update(frame)
-            for i, obj in enumerate(objs):
-                print(
-                    obj.id,
-                    [(m["name"], m["set_code"]) for m in obj.to_dict()["matches"]],
-                )
-                if obj.last_rgb_im is not None:
-                    imshow(obj.last_rgb_im, f"{i}")
 
             # 4. Send results
             response = {
                 "detections": [obj.to_dict() for obj in objs],
-                "process_time": time.time() - t,
+                "server_process_time": time.time() - t1,
+                "server_process_period": times[1] - times[0],
+                "server_recv_im_bytes": len(data),
+                "server_send_im_bytes": sum(
+                    [
+                        len(obj.last_rgb_im_encoded)
+                        for obj in objs
+                        if obj.last_rgb_im_encoded
+                    ]
+                    + [0]
+                ),
             }
             await websocket.send_json(response)
         except Exception as e:
             print(f"WebSocket error: {e}")
             raise
+        # update delta
+        times = [times[1], time.time()]
 
 
 # Serve static files from the 'www' directory

@@ -1,6 +1,20 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $stats, $devices, $isStreaming, $selectedDevice, $showOverlayPolygon, $showOverlayPolygonClosed, $showOverlayXyxyxyxy, $sendPeriodMs, $sendQuality, $wsConnected } from './util-store';
+import {
+  $stats,
+  $devices,
+  $isStreaming,
+  $selectedDevice,
+  $showOverlayPolygon,
+  $showOverlayPolygonClosed,
+  $showOverlayXyxyxyxy,
+  $sendPeriodMs,
+  $sendQuality,
+  $wsConnected,
+  $matchThreshold,
+  populateDevices,
+  $showControls // <-- Already imported
+} from './util-store';
 import { getWsUrl } from './util-websocket';
 
 
@@ -12,36 +26,48 @@ class StatsOverlay extends LitElement {
   #isStreamingController = new StoreController(this, $isStreaming);
   #wsConnectedController = new StoreController(this, $wsConnected);
 
+  #showControlsController = new StoreController(this, $showControls); // <-- Already initialized
+
   #showOverlayPolygonController = new StoreController(this, $showOverlayPolygon);
   #showOverlayPolygonClosedController = new StoreController(this, $showOverlayPolygonClosed);
   #showOverlayXyxyxyxyController = new StoreController(this, $showOverlayXyxyxyxy);
 
   #sendPeriodMsController = new StoreController(this, $sendPeriodMs);
   #sendQualityController = new StoreController(this, $sendQuality);
+  #matchThresholdController = new StoreController(this, $matchThreshold);
 
   static styles = css`
     :host {
       position: absolute;
-      top: 10px;
-      left: 10px;
-      background: rgba(0, 0, 0, 0.7);
-      color: white;
-      padding: 5px 10px;
-      border-radius: 4px;
-      font-size: 14px;
+      top: 0px;
+      left: 0px;
+      width: 100%;
       z-index: 2;
-      font-family: "Lucinda Grande", "Lucinda Sans Unicode", Helvetica, Arial, Verdana, sans-serif
+      box-sizing: border-box; /* Add box-sizing */
+    }
+    .container {
+        padding: 5px;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
     }
     .message-stats {
       display: flex;
       flex-direction: column;
       margin-bottom: 8px;
       position: relative;
+      font-size: 12px;
     }
+    .stat {
+        font-family: monospace;
+        font-size: 10px;
+    }
+
     .connection-indicator {
       position: absolute;
       top: 0;
-      right: -5px;
+      right: -5px; /* Adjusted position */
       width: 8px;
       height: 8px;
       border-radius: 50%;
@@ -63,14 +89,18 @@ class StatsOverlay extends LitElement {
     }
     .control-row {
       display: flex;
+      justify-content: space-between;
       align-items: center;
       gap: 8px;
     }
+    .button-row {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 8px;
+    }
     .control-group {
-      background: rgba(0, 0, 0, 0.7);
-      border-radius: 4px;
-      padding: 5px;
-      margin-top: 5px;
+        width: 164px;
     }
     select, button {
       background: rgba(0, 0, 0, 0.5);
@@ -80,6 +110,7 @@ class StatsOverlay extends LitElement {
       padding: 3px 6px;
       font-size: 12px;
       margin: 0;
+      cursor: pointer; /* Add cursor pointer */
     }
     button:hover {
       background: rgba(255, 255, 255, 0.2);
@@ -113,6 +144,25 @@ class StatsOverlay extends LitElement {
       display: flex;
       align-items: center;
     }
+
+    /* Style for the new toggle button */
+    .toggle-controls-button {
+      position: absolute;
+      top: 5px;
+      right: 5px; /* Position near the top right */
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      font-size: 16px;
+      line-height: 18px; /* Adjust for vertical centering */
+      text-align: center;
+      z-index: 3; /* Ensure it's above the container */
+    }
+    .pause-button-alt {
+      position: absolute;
+      top: 5px;
+      left: 5px; /* Position near the top right */
+    }
   `
 
   connectedCallback() {
@@ -126,6 +176,14 @@ class StatsOverlay extends LitElement {
         unsubscribe();
       }
     });
+
+    // Add event listener for device changes (when devices are plugged in or removed)
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', async () => {
+        console.log('Device change detected, updating device list');
+        await populateDevices();
+      });
+    }
   }
 
   #onDeviceChange(event) {
@@ -159,12 +217,13 @@ class StatsOverlay extends LitElement {
   }
 
   render() {
-    const fps = 1 / this.#statsController.value.processTime;
-    const roundedFps = Math.round(fps * 10) / 10;
+    const round = (num, d=1) => Math.round(num * Math.pow(10, d)) / Math.pow(10, d);
+    const stats = this.#statsController.value;
     const devices = this.#devicesController.value;
     const selectedDeviceId = this.#selectedDeviceController.value;
     const isStreaming = this.#isStreamingController.value;
     const wsConnected = this.#wsConnectedController.value;
+    const showControls = this.#showControlsController.value; // Get current state
 
     // Get the WebSocket URL for the tooltip
     const wsUrl = getWsUrl();
@@ -172,34 +231,41 @@ class StatsOverlay extends LitElement {
     const tooltipText = `WebSocket ${connectionStatus}: ${wsUrl}`;
 
     return html`
-      <div class="message-stats">
-        <div class="connection-indicator ${wsConnected ? 'connected' : ''}" title="${tooltipText}"></div>
-        <span>sent/recv: ${this.#statsController.value.messagesSent}/${this.#statsController.value.messagesReceived}</span>
-        <span>server fps: ${roundedFps}</span>
-      </div>
+      <!-- Toggle Button -->
+      <button
+        class="toggle-controls-button"
+        @click=${() => $showControls.set(!showControls)}
+        title=${showControls ? 'Hide Controls' : 'Show Controls'}
+      >
+        ${showControls ? '-' : '+'}
+      </button>
 
-      <div class="controls-container">
-        <div class="control-row">
-          <select @change=${this.#onDeviceChange} style="flex: 1">
-            <optgroup label="devices">
-              ${devices.length === 0 ? html`<option value="">No cameras found</option>` : ''}
-              ${devices.map(device => html`
-                <option value=${device.deviceId} ?selected=${device.deviceId === selectedDeviceId}>
-                  ${device.label || 'Camera'}
-                </option>
-              `)}
-            </optgroup>
-          </select>
-          <button @click=${() => $isStreaming.set(!isStreaming)}>
-            ${isStreaming ? 'Stop' : 'Start'}
-          </button>
-        </div>
+      <button class="pause-button-alt" @click=${() => $isStreaming.set(!isStreaming)} style="max-height: 24px; ${isStreaming ? 'color: yellow' : 'color: green'}; ${showControls ? 'display: none;' : 'display: flex;'}">
+        ${isStreaming ? 'Pause' : 'Start'}
+        <div class="connection-indicator ${wsConnected ? 'connected' : ''}" title="${tooltipText}"></div>
+      </button>
+
+
+      <!-- Main Controls Container -->
+      <div class="container" style="${showControls ? 'display: flex;' : 'display: none;'}">
 
         <div class="control-group">
+          <div class="control-row">
+            <label for="sendPeriod">FPS: ${Math.round(1000 / this.#sendPeriodMsController.value * 10) / 10}</label>
+            <input type="range" min="1" max="60" .value=${1000 / this.#sendPeriodMsController.value} class="slider" id="sendPeriod" @input=${(e) => $sendPeriodMs.set(1000 / e.target.value)} style="flex: 1; max-width: 90px">
+          </div>
+          <div class="control-row">
+            <label for="quality">Qual: ${Math.round(this.#sendQualityController.value * 100)}%</label>
+            <input type="range" min="10" max="100" .value=${this.#sendQualityController.value * 100} class="slider" id="quality" @input=${(e) => $sendQuality.set(e.target.value / 100)} style="flex: 1; max-width: 90px;">
+          </div>
+          <div class="control-row">
+            <label for="matchThresh">Thresh: ${Math.round(this.#matchThresholdController.value * 100)}%</label>
+            <input type="range" min="0" max="100" .value=${this.#matchThresholdController.value * 100} class="slider" id="matchThresh" @input=${(e) => $matchThreshold.set(e.target.value / 100)} style="flex: 1; max-width: 90px;">
+          </div>
           <div class="checkbox-group">
             <div class="checkbox-item">
               <input type="checkbox" id="showOverlayPolygon" ?checked=${this.#showOverlayPolygonController.value} @change=${(e) => $showOverlayPolygon.set(e.target.checked)}>
-              <label for="showOverlayPolygon">Polygon</label>
+              <label for="showOverlayPolygon">Poly</label>
             </div>
             <div class="checkbox-item">
               <input type="checkbox" id="showOverlayPolygonClosed" ?checked=${this.#showOverlayPolygonClosedController.value} @change=${(e) => $showOverlayPolygonClosed.set(e.target.checked)}>
@@ -210,17 +276,31 @@ class StatsOverlay extends LitElement {
               <label for="showOverlayXyxyxyxy">Box</label>
             </div>
           </div>
-
-          <div class="control-row">
-            <label for="sendPeriod">FPS: ${Math.round(1000 / this.#sendPeriodMsController.value * 10) / 10}</label>
-            <input type="range" min="1" max="60" value="10" class="slider" id="sendPeriod" @input=${(e) => $sendPeriodMs.set(1000 / e.target.value)} style="flex: 1">
-          </div>
-
-          <div class="control-row">
-            <label for="quality">Quality: ${Math.round(this.#sendQualityController.value * 100)}%</label>
-            <input type="range" min="10" max="100" value="50" class="slider" id="quality" @input=${(e) => $sendQuality.set(e.target.value / 100)} style="flex: 1">
-          </div>
         </div>
+
+        <div class="button-row">
+          <select @change=${this.#onDeviceChange} style="flex: 1; max-width: 70px; max-height: 24px">
+            <optgroup label="devices">
+              ${devices.length === 0 ? html`<option value="">No cameras found</option>` : ''}
+              ${devices.map(device => html`
+                <option value=${device.deviceId} ?selected=${device.deviceId === selectedDeviceId}>
+                  ${device.label || 'Camera'}
+                </option>
+              `)}
+            </optgroup>
+          </select>
+          <button @click=${() => $isStreaming.set(!isStreaming)} style="max-height: 24px; ${isStreaming ? 'color: yellow' : 'color: green'}">
+            ${isStreaming ? 'Pause' : 'Start'}
+          </button>
+        </div>
+
+        <div class="message-stats">
+          <div class="connection-indicator ${wsConnected ? 'connected' : ''}" title="${tooltipText}"></div>
+          <span>sent/recv: ${this.#statsController.value.messagesSent} / ${this.#statsController.value.messagesReceived}</span>
+          <span>sent/recv: <span class="stat">${round(stats.serverRecvImBytes / stats.serverProcessPeriod / 1000, 0)} / ${round(stats.serverSendImBytes / stats.serverProcessPeriod / 1000, 0)} kbps</span></span>
+          <span>proc: <span class="stat">${round(stats.serverProcessTime*1000)} / ${round(stats.serverProcessPeriod*1000)} ms</span></span>
+        </div>
+
       </div>
     `
   }

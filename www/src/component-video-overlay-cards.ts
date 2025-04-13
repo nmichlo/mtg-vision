@@ -1,6 +1,14 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $detections, $selectedId, $videoDimensions, $showOverlayXyxyxyxy, $showOverlayPolygonClosed, $showOverlayPolygon } from './util-store';
+import {
+  $detections,
+  $selectedId,
+  $videoDimensions,
+  $showOverlayXyxyxyxy,
+  $showOverlayPolygonClosed,
+  $showOverlayPolygon,
+  getDetections, $matchThreshold
+} from './util-store';
 import * as SVG from "svg.js";
 import { Detection, SvgInHtml } from "./types";
 
@@ -98,7 +106,12 @@ class SvgCard {
 
 class CardsOverlay extends LitElement {
 
+  // don't remove even though unused
+  #thresholdController = new StoreController(this, $matchThreshold);
   #detectionsController = new StoreController(this, $detections);
+  #showOverlayXyxyxyxyController = new StoreController(this, $showOverlayXyxyxyxy)
+  #showOverlayPolygonClosedController = new StoreController(this, $showOverlayPolygonClosed)
+  #showOverlayPolygonController = new StoreController(this, $showOverlayPolygon)
   #selectedIdController = new StoreController(this, $selectedId);
   #videoDimensionsController = new StoreController(this, $videoDimensions);
 
@@ -157,14 +170,12 @@ class CardsOverlay extends LitElement {
   }
 
   updated() {
-    // Check if video dimensions are available
     const dimensions = this.#videoDimensionsController.value;
     if (dimensions) {
       this.originalWidth = dimensions.width;
       this.originalHeight = dimensions.height;
       this.updateOverlaySize();
     }
-
     this.drawDetections();
   }
 
@@ -172,7 +183,7 @@ class CardsOverlay extends LitElement {
     if (!this.originalWidth || !this.originalHeight) return;
 
     const currentIds = new Set();
-    const detections = this.#detectionsController.value;
+    const detections = getDetections(); // this.#detectionsController.value;
 
     // Auto-select the first card if there are detections and nothing is currently selected
     if (detections.length > 0 && this.#selectedIdController.value === null) {

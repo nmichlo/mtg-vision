@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
-import { $detections, $selectedId } from './util-store';
+import {$detections, $matchThreshold, $selectedId, getDetections} from './util-store';
 import {Match} from "./types";
 
 
@@ -17,6 +17,13 @@ class ComponentSidebar extends LitElement {
       flex: 1;
       overflow-y: auto;
     }
+
+    @media (max-width: 768px) {
+        #card-list {
+          display: none;
+        }
+    }
+
     .detection-item {
       margin-bottom: 10px;
       cursor: pointer;
@@ -64,6 +71,8 @@ class ComponentSidebar extends LitElement {
     }
   `;
 
+  // don't remove even though unused
+  #thresholdController = new StoreController(this, $matchThreshold);
   #detectionsController = new StoreController(this, $detections);
   #selectedIdController = new StoreController(this, $selectedId);
 
@@ -77,7 +86,7 @@ class ComponentSidebar extends LitElement {
   }
 
   #getSelectedCardMatch(): Match | undefined {
-    const det = this.#detectionsController.value.find(d => d.id === this.#selectedIdController.value);
+    const det = getDetections().find(d => d.id === this.#selectedIdController.value);
     if (!det || !det.matches) {
       return null;
     }
@@ -103,7 +112,7 @@ class ComponentSidebar extends LitElement {
 
   render() {
     const selectedId = this.#selectedIdController.value;
-    const detections = this.#detectionsController.value;
+    const detections = getDetections(); // this.#detectionsController.value;
     const selectedCardMatch = this.#getSelectedCardMatch();
     const totalCost = this.#calculateTotalCost(detections);
 

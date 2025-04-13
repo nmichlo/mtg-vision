@@ -290,13 +290,19 @@ export interface Detection {
 export interface Stats {
     messagesSent: number;
     messagesReceived: number;
-    processTime: number | null;
+    // server response data
+    serverProcessTime: number | null;
+    serverProcessPeriod: number | null;
+    serverRecvImBytes: number | null;
+    serverSendImBytes: number | null;
 }
 
 export interface Payload {
     detections: Detection[];
-    process_time: number; // seconds
-    send_time: number; // seconds
+    server_process_time: number;
+    server_process_period: number;
+    server_recv_im_bytes: number;
+    server_send_im_bytes: number;
 }
 
 
