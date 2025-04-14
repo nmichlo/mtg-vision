@@ -450,6 +450,9 @@ class IlsvrcImages:
         if not root.is_dir():
             print(self._get_download_message(root, subdir))
         self._paths: "list[str]" = sorted(ufls.get_image_paths(root, prefixed=True))
+        assert len(self._paths) > 0, (
+            f"Dataset is empty. Please download the dataset. {root}"
+        )
 
     def _load_image(self, path):
         return uimg.imread_float(path)
@@ -820,8 +823,13 @@ class SyntheticBgFgMtgImages:
 
 
 if __name__ == "__main__":
-    mtg = SyntheticBgFgMtgImages(img_type="small")
+    mtg = SyntheticBgFgMtgImages(img_type="small", predownload=False)
     ilsvrc = IlsvrcImages()
+
+    # with tqdm(total=len(mtg)) as pbar:
+    #     for card in mtg.card_iter():
+    #         if card.img_path.exists():
+    #             pbar.update(1)
 
     for i in tqdm(range(10)):
         _o = mtg.ran()
@@ -833,6 +841,7 @@ if __name__ == "__main__":
     # 100%|██████████| 1000/1000 [00:10<00:00, 94.77it/s]
     for i in tqdm(range(1000)):
         _o = mtg.ran()
+        # _o = mtg.get_image_by_id('9dd3c43f-c5ff-42ee-a220-82aa7aef88e7')
         _l = ilsvrc.ran()
 
         x, y = SyntheticBgFgMtgImages.make_virtual_pair(
@@ -840,4 +849,4 @@ if __name__ == "__main__":
         )
 
         uimg.imshow_loop(x, "asdf")
-        # uimg.imshow_loop(y, "asdf")
+        uimg.imshow_loop(y, "asdf")
