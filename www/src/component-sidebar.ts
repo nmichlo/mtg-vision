@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { StoreController } from '@nanostores/lit';
 import {$detections, $matchThreshold, $selectedId, getDetections} from './util-store';
-import {Match} from "./types";
+import {Detection, Match} from "./types";
 
 
 class ComponentSidebar extends LitElement {
@@ -38,6 +38,9 @@ class ComponentSidebar extends LitElement {
     .detection-item-text {
         margin-left: 10px;
         color: white;
+    }
+    .detection-item-img {
+        height: 80px;
     }
     #card-info img {
       width: 100%;
@@ -85,8 +88,16 @@ class ComponentSidebar extends LitElement {
     $selectedId.set(currentSelectedId === det.id ? null : det.id);
   }
 
-  #getSelectedCardMatch(): Match | undefined {
+  #getSelectedCard(): Detection | undefined {
     const det = getDetections().find(d => d.id === this.#selectedIdController.value);
+    if (!det) {
+      return null;
+    }
+    return det;
+  }
+
+  #getSelectedCardMatch(): Match | undefined {
+    const det = this.#getSelectedCard();
     if (!det || !det.matches) {
       return null;
     }
@@ -130,7 +141,7 @@ class ComponentSidebar extends LitElement {
               const match = det.matches[0];
               return html`
                 <div class="detection-item ${det.id === selectedId ? 'selected' : ''}" @click=${() => this.#onItemClick(det)}>
-                  <img src="data:image/jpeg;base64,${det.img}" style="height: 70px;">
+                  <img src="data:image/jpeg;base64,${det.img}" class="detection-item-img">
                   <span class="detection-item-text">${match?.name || 'Unknown'} ${match?.extra_data?.mana_cost ?? ''} $${match?.all_data?.prices?.usd || '0'}</span>
                 </div>
                 `
@@ -158,6 +169,7 @@ class ComponentSidebar extends LitElement {
         <pre class="oracle-text">${formattedOracleText}</pre>
       </div>
       <img src="${match.img_uri}" alt="${match.name}">
+<!--      <img src="data:image/jpeg;base64,${this.#getSelectedCard().img}" alt="${match.name}">-->
       <p style="font-size: 12px">Match Score: ${match.score}</p>
     `;
   }

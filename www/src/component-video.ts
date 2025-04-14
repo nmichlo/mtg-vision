@@ -95,7 +95,12 @@ firstUpdated() {
   async tryAutoStart() {
     try {
       const storedDeviceId = localStorage.getItem('selectedDeviceId');
-      const constraints = {video: {width: 640, height: 480, deviceId: undefined}};
+      const constraints = {video: {
+        width: 640,
+        height: 480,
+        //   height: 720,
+        deviceId: undefined
+      }};
       if (storedDeviceId) {
         constraints.video.deviceId = { exact: storedDeviceId };
       }
@@ -148,7 +153,13 @@ firstUpdated() {
       this.stopStreamAndClearVideo();
     }
     try {
-      const constraints = { video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: 640, height: 480 } };
+      const constraints = { video: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+          width: 640,
+          height: 480,
+          // height: 720,
+        }
+      };
       this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
       const actualDeviceId = this.currentStream.getVideoTracks()[0].getSettings().deviceId;
 
