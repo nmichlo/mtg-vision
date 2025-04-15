@@ -242,6 +242,12 @@ The demo application consists of
    cloudflared tunnel --url http://localhost:8000
    ```
 
+--------------
+
+## Model File Downloads
+
+- [download here from google drive](https://drive.google.com/drive/folders/1B-ojlXtgIkRo9C6_aGwrl4s7fvWKL4vx)
+
 
 --------------
 
