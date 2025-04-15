@@ -71,6 +71,8 @@
       - [ ] model definition
       - [ ] model training
 
+--------------
+
 ## Overview
 
 ### Obtaining Data
@@ -78,12 +80,12 @@
 All data is collected from Scryfall using the `mtgdata` python package
 as well as `doorway` for image downloads.
 
-<img src="docs/qr-doorway.png" width="128" />
-<img src="docs/qr-mtg-dataset.png" width="128" />
-
 ### Card Orientation
 
-<img src="docs/card-bboxes-requirement.jpg" />
+<p align="center">
+<img src="docs/card-bboxes-requirement.jpg" width="384" />
+</p>
+
 
 **Bounding Box Requirements**
 1. the worst is standard bounding boxes showing only visible regions
@@ -91,11 +93,15 @@ as well as `doorway` for image downloads.
 3. even better is minimal oriented bounding boxes (e.g. ultralytics OBB, doesn't do true 360deg orientation)
 4. best is truly oriented POLYGONS not bounding boxes so we can handle perspective too.
 
+<p align="center">
 <img src="docs/card-bboxes.jpg" />
+</p>
 
 **Orientation approaches that don't work**
 
+<p align="center">
 <img src="docs/card-orient-broken.jpg" />
+</p>
 
 **Hack for oriented bounding boxes**
 1. Use segmentation but with a cutout at the bottom so we can get the card orientation
@@ -103,7 +109,9 @@ as well as `doorway` for image downloads.
 3. Simplify the polygon to get corners using `cv2.approxPolyN` with `N=4`
 4. Take the center of mass of the cutout polygon and the closed polygon and draw a line through them extending to the simplified polygon to find the top and orientation.
 
+<p align="center">
 <img src="docs/card-orient.jpg" />
+</p>
 
 ### Data - Embedding Model Inputs & Batch Formation
 
@@ -111,7 +119,9 @@ as well as `doorway` for image downloads.
 
 - this is used as inputs to train the embedding model `ConvNeXt V2`
 
-<img src="docs/data-emb-example.jpg" />
+<p align="center">
+<img src="docs/data-emb-example.jpg" width="512" />
+</p>
 
 **Form batch of images for training**
 - We use `CircleLoss` from `pytorch-metric-learning` which requires a batch of images
@@ -123,7 +133,9 @@ as well as `doorway` for image downloads.
 - We also need to do hard-negative mining so we randomly swap out some cards with cards of the
   same name, so that the model learns to distinguish minor differences like set code.
 
-<img src="docs/data-emb-batch-formation.jpg" />
+<p align="center">
+<img src="docs/data-emb-batch-formation.jpg" width="512" />
+</p>
 
 ### Data - Detection Model Inputs
 
@@ -133,7 +145,9 @@ as well as `doorway` for image downloads.
 - Cards are placed and warped randomly onto random background images using rejection sampling.
   If cards overlap too much, then we retry for another placement.
 
+<p align="center">
 <img src="docs/data-dets.jpg" />
+</p>
 
 ### Matching - Qdrant
 
@@ -144,7 +158,9 @@ as well as `doorway` for image downloads.
 
 **Example embedding visualisation - Colored by card `border_color`**
 
-<img src="docs/qdrant-tsne-border-colors.png" />
+<p align="center">
+<img src="docs/qdrant-tsne-border-colors.png" width="512" />
+</p>
 
 ### Demo
 
@@ -154,7 +170,9 @@ The demo application consists of
 - websocket client written in typescript using `lit html`, sends images from a webcam over websockets and displays
   results and matched card information in an SVG overlay over the video.
 
+<p align="center">
 <img src="docs/mtgvision-app-preview.jpg" />
+</p>
 
 **Run the demo**
 
@@ -217,3 +235,12 @@ The demo application consists of
    ```bash
    cloudflared tunnel --url http://localhost:8000
    ```
+
+
+--------------
+
+<p float="left">
+<img src="docs/qr-doorway.png" width="128" />
+<img src="docs/qr-mtg-dataset.png" width="128" />
+<img src="docs/qr-mtg-vision.png" width="128" />
+</p>
