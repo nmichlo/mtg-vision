@@ -96,12 +96,16 @@ class ComponentSidebar extends LitElement {
     return det;
   }
 
-  #getSelectedCardMatch(): Match | undefined {
+  #getSelectedCardMatches(): Match[] {
     const det = this.#getSelectedCard();
     if (!det || !det.matches) {
-      return null;
+      return [];
     }
-    return det.matches[0];
+    const matches = det?.matches || [];
+    // sort matches by score, highest first
+    matches.sort((a, b) => b.score - a.score);
+    // at most return 3 matches
+    return matches.slice(0, 3);
   }
 
   #calculateTotalCost(detections) {
@@ -124,7 +128,6 @@ class ComponentSidebar extends LitElement {
   render() {
     const selectedId = this.#selectedIdController.value;
     const detections = getDetections(); // this.#detectionsController.value;
-    const selectedCardMatch = this.#getSelectedCardMatch();
     const totalCost = this.#calculateTotalCost(detections);
 
     return html`
@@ -150,9 +153,11 @@ class ComponentSidebar extends LitElement {
         }
       </div>
 
-      <div id="card-info">
-        ${selectedCardMatch ? this.renderMatchInfo(selectedCardMatch) : ''}
-      </div>
+      ${this.#getSelectedCardMatches().map(match => html`
+          <div id="card-info">
+              ${this.renderMatchInfo(match)}
+          </div>
+      `)}
     `;
   }
 
