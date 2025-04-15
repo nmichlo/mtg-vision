@@ -206,8 +206,10 @@ The demo application consists of
 3. prepare
 
    ```bash
-   # populate qdrant
+   # populate qdrant vectors (needs to be run first)
    python -m mtgvision.qdrant_populate
+   # populate qdrant payloads, run after populating vectors
+   python -m mtgvision.qdrant_populate_card_info
 
    # other
    # $ python -m mtgvision.encoder_train

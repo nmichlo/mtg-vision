@@ -27,8 +27,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "doorway[extras]~=0.6.0",
-    "mtgdata[convert]~=0.2.4",
+    "doorway[extras]~=0.6.3",
+    "mtgdata[convert]~=0.3.0",
     "ultralytics~=8.3.80",
     "wandb",
     "mlx",
@@ -39,6 +39,7 @@ dependencies = [
     "kornia",
     "pytorch_lightning",
     "pytorch-metric-learning",
+    "ijson",
 ]
 
 

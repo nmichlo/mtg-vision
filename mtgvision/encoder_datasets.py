@@ -57,7 +57,7 @@ from mtgvision.util.image import ensure_float32
 import mtgvision.util.image as uimg
 import mtgvision.util.random as uran
 import mtgvision.util.files as ufls
-from mtgdata.scryfall import ScryfallCardFace
+from mtgdata.scryfall import ScryfallBulkType, ScryfallCardFace
 
 
 # ========================================================================= #
@@ -522,24 +522,41 @@ class SyntheticBgFgMtgImages:
     """
 
     def __init__(
-        self, img_type=ScryfallImageType.small, predownload=False, force_update=False
+        self,
+        img_type: ScryfallImageType = ScryfallImageType.small,
+        bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards,
+        predownload: bool = False,
+        force_update: bool = False,
     ):
         path = Path(__file__).parent.parent.parent / "data/ds/load.lock"
+        self.img_type = img_type
+        self.bulk_type = bulk_type
+        self._predownload = predownload
+        self._force_update = force_update
         with FileLock(path, blocking=True, timeout=10):
-            self._init_(
-                img_type=img_type, predownload=predownload, force_update=force_update
-            )
+            self._init_()
 
-    def _init_(
-        self, img_type=ScryfallImageType.small, predownload=False, force_update=False
+    def make_scryfall_data(
+        self,
+        force_update: bool = None,
+        predownload: bool = None,
     ):
-        # LOAD CARDS ... TEMPORARY
+        if predownload is None:
+            predownload = self._predownload
+        if force_update is None:
+            force_update = self._force_update
         ds = ScryfallDataset(
-            img_type=img_type,
+            img_type=self.img_type,
+            bulk_type=self.bulk_type,
             data_root=Path(__file__).parent.parent.parent / "data/ds",
             force_update=force_update,
             download_mode="now" if predownload else "none",
         )
+        return ds
+
+    def _init_(self):
+        # LOAD CARDS ... TEMPORARY
+        ds = self.make_scryfall_data()
         # cards
         self._card_by_id: dict[str, ScryfallCardFace] = {}
         self._card_ids: List[str] = []
