@@ -244,11 +244,15 @@ The demo application consists of
 --------------
 
 <p float="left" align="center">
-<img src="docs/qr-doorway.png" width="128" />
-    &nbsp;
-    &nbsp;
-<img src="docs/qr-mtg-dataset.png" width="128" />
-    &nbsp;
-    &nbsp;
-<img src="docs/qr-mtg-vision.png" width="128" />
+    <a href="https://github.com/nmichlo/doorway">
+        <img src="docs/qr-doorway.png" width="128" />
+    </a>
+    &nbsp;&nbsp;
+    <a href="https://github.com/nmichlo/mtg-dataset">
+        <img src="docs/qr-mtg-dataset.png" width="128" />
+    </a>
+    &nbsp;&nbsp;
+    <a href="https://github.com/nmichlo/mtg-vision">
+        <img src="docs/qr-mtg-vision.png" width="128" />
+    </a>
 </p>
