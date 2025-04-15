@@ -11,10 +11,10 @@
     <a href="https://choosealicense.com/licenses/mit/" target="_blank">
         <img alt="license" src="https://img.shields.io/github/license/nmichlo/mtg-vision?style=flat-square&color=lightgrey"/>
     </a>
-    <a href="https://pypi.org/project/mtg-vision" target="_blank">
+    <a href="https://pypi.org/project/mtgvision" target="_blank">
         <img alt="python versions" src="https://img.shields.io/pypi/pyversions/mtgvision?style=flat-square"/>
     </a>
-    <a href="https://pypi.org/project/mtg-vision" target="_blank">
+    <a href="https://pypi.org/project/mtgvision" target="_blank">
         <img alt="pypi version" src="https://img.shields.io/pypi/v/mtgvision?style=flat-square&color=blue"/>
     </a>
     <a href="https://github.com/nmichlo/mtg-vision/actions/workflows/python-test.yml">
