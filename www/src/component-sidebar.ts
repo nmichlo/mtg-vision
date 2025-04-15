@@ -16,6 +16,7 @@ class ComponentSidebar extends LitElement {
     #card-list {
       flex: 1;
       overflow-y: auto;
+      min-height: 100px;
     }
 
     @media (max-width: 768px) {
@@ -35,25 +36,43 @@ class ComponentSidebar extends LitElement {
     .detection-item.selected {
       border: 2px solid yellow;
     }
-    .detection-item-text {
+    .detection-item-info {
         margin-left: 10px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: flex-start;
+    }
+    .detection-item-text {
         color: white;
+    }
+    .detection-item-score {
+        font-size: 9px;
+        color: #c0ffee;
     }
     .detection-item-img {
         height: 80px;
     }
-    #card-info img {
+    .all-card-matches {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: stretch;
+        overflow: auto;
+        max-height: 600px;
+    }
+    .card-match img {
       width: 100%;
       max-width: 200px;
     }
-    #card-info p {
+    .card-match p {
       margin: 5px 0;
       color: white;
     }
 
     .oracle-text-container {
-      max-height: 150px;
-      margin: 10px 0;
+      max-height: 120px;
+      margin: 10px 0 8px;
     }
     pre.oracle-text {
       font-size: 12px;
@@ -145,7 +164,10 @@ class ComponentSidebar extends LitElement {
               return html`
                 <div class="detection-item ${det.id === selectedId ? 'selected' : ''}" @click=${() => this.#onItemClick(det)}>
                   <img src="data:image/jpeg;base64,${det.img}" class="detection-item-img">
-                  <span class="detection-item-text">${match?.name || 'Unknown'} ${match?.extra_data?.mana_cost ?? ''} $${match?.all_data?.prices?.usd || '0'}</span>
+                    <div class="detection-item-info">
+                        <span class="detection-item-text">${match?.name || 'Unknown'} ${match?.extra_data?.mana_cost ?? ''} $${match?.all_data?.prices?.usd || '0'}</span>
+                        <span class="detection-item-score">score: ${match?.score || '0'}</span>
+                    </div>
                 </div>
                 `
             })
@@ -153,11 +175,13 @@ class ComponentSidebar extends LitElement {
         }
       </div>
 
-      ${this.#getSelectedCardMatches().map(match => html`
-          <div id="card-info">
-              ${this.renderMatchInfo(match)}
-          </div>
-      `)}
+      <div class="all-card-matches">
+        ${this.#getSelectedCardMatches().map(match => html`
+            <div class="card-match">
+                ${this.renderMatchInfo(match)}
+            </div>
+        `)}
+      </div>
     `;
   }
 
@@ -166,7 +190,9 @@ class ComponentSidebar extends LitElement {
     const formattedOracleText = match?.extra_data?.oracle_text ?? '';
     const formattedCost = match?.extra_data?.mana_cost ?? '';
     return html`
+      <hr style="border: 1px solid #444; margin: 10px 0;">
       <h3>${match.name} ${formattedCost}</h3>
+      <p style="font-size: 14px; color: #c0ffee;">Match Score: ${match.score}</p>
       <p><span style="color: yellow;">Set:</span> ${match.set_name || 'Unknown'} (${match.set_code || ''})</p>
       <p><span style="color: yellow;">Type:</span> ${data?.type_line || 'N/A'}</p>
       <p><span style="color: yellow;">Price:</span> ${data?.prices?.usd ? `$${data.prices.usd}` : 'N/A'}</p>
@@ -175,7 +201,6 @@ class ComponentSidebar extends LitElement {
       </div>
       <img src="${match.img_uri}" alt="${match.name}">
 <!--      <img src="data:image/jpeg;base64,${this.#getSelectedCard().img}" alt="${match.name}">-->
-      <p style="font-size: 12px">Match Score: ${match.score}</p>
     `;
   }
 }
