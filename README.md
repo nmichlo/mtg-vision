@@ -3,7 +3,7 @@
 <p align="center">
     <h1 align="center">✨🔮 MTG Vision 🧙🪄</h1>
     <p align="center">
-        <i>Real-time MTG card recognition</i>
+        <i>Real-time and Real-world MTG card recognition using only synthetic data</i>
     </p>
 </p>
 
