@@ -39,9 +39,13 @@
 
 # MTG Vision
 
-<img src="docs/mtgvision-app-preview.jpg" />
+<p align="center">
+<img src="docs/mtgvision-app-preview.jpg" width="640" />
+</p>
 
+<p align="center">
 <video src="docs/mtgvision-short-demo.mp4" width="512" controls></video>
+</p>
 
 ## Components
 
@@ -83,7 +87,7 @@ as well as `doorway` for image downloads.
 ### Card Orientation
 
 <p align="center">
-<img src="docs/card-bboxes-requirement.jpg" width="384" />
+<img src="docs/card-bboxes-requirement.jpg" width="512" />
 </p>
 
 
@@ -94,13 +98,13 @@ as well as `doorway` for image downloads.
 4. best is truly oriented POLYGONS not bounding boxes so we can handle perspective too.
 
 <p align="center">
-<img src="docs/card-bboxes.jpg" />
+<img src="docs/card-bboxes.jpg" width="512" />
 </p>
 
 **Orientation approaches that don't work**
 
 <p align="center">
-<img src="docs/card-orient-broken.jpg" />
+<img src="docs/card-orient-broken.jpg" width="704" />
 </p>
 
 **Hack for oriented bounding boxes**
@@ -110,7 +114,7 @@ as well as `doorway` for image downloads.
 4. Take the center of mass of the cutout polygon and the closed polygon and draw a line through them extending to the simplified polygon to find the top and orientation.
 
 <p align="center">
-<img src="docs/card-orient.jpg" />
+<img src="docs/card-orient.jpg" width="640" />
 </p>
 
 ### Data - Embedding Model Inputs & Batch Formation
@@ -146,7 +150,7 @@ as well as `doorway` for image downloads.
   If cards overlap too much, then we retry for another placement.
 
 <p align="center">
-<img src="docs/data-dets.jpg" />
+<img src="docs/data-dets.jpg" width="640" />
 </p>
 
 ### Matching - Qdrant
@@ -159,7 +163,7 @@ as well as `doorway` for image downloads.
 **Example embedding visualisation - Colored by card `border_color`**
 
 <p align="center">
-<img src="docs/qdrant-tsne-border-colors.png" width="512" />
+<img src="docs/qdrant-tsne-border-colors.png" width="384" />
 </p>
 
 ### Demo
@@ -171,7 +175,7 @@ The demo application consists of
   results and matched card information in an SVG overlay over the video.
 
 <p align="center">
-<img src="docs/mtgvision-app-preview.jpg" />
+<img src="docs/mtgvision-app-preview.jpg" width="640" />
 </p>
 
 **Run the demo**
@@ -239,8 +243,12 @@ The demo application consists of
 
 --------------
 
-<p float="left">
+<p float="left" align="center">
 <img src="docs/qr-doorway.png" width="128" />
+    &nbsp;
+    &nbsp;
 <img src="docs/qr-mtg-dataset.png" width="128" />
+    &nbsp;
+    &nbsp;
 <img src="docs/qr-mtg-vision.png" width="128" />
 </p>
