@@ -866,8 +866,8 @@ if __name__ == "__main__":
         ratio_bg=0.1,
         kind="seg",
     )
-    gen.debug_show_loop()
+    # gen.debug_show_loop()
 
-    # create_yolo_obb_dataset(
-    #     gen, output_dir="../data/yolo_mtg_dataset_seg", num_train=10000, ext="jpg"
-    # )
+    create_yolo_obb_dataset(
+        gen, output_dir="../data/yolo_mtg_dataset_seg", num_train=10000, ext="jpg"
+    )

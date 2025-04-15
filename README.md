@@ -149,7 +149,7 @@ as well as `doorway` for image downloads.
 ### Demo
 
 The demo application consists of
-- fastapi websocket server for receiving images, running detection, tracking with `norfair` and finally 
+- fastapi websocket server for receiving images, running detection, tracking with `norfair` and finally
   embedding and searching Qdrant for the closest match.
 - websocket client written in typescript using `lit html`, sends images from a webcam over websockets and displays
   results and matched card information in an SVG overlay over the video.
@@ -172,7 +172,7 @@ The demo application consists of
    # install python deps
    conda create -n mtg-vision python=3.12
    pip install -e ./
-   
+
    # install node 22 with nvm, and install pnpm, and install deps
    nvm install 22
    nvm use 22
@@ -186,7 +186,7 @@ The demo application consists of
    ```bash
    # populate qdrant
    python -m mtgvision.qdrant_populate
-   
+
    # other
    # $ python -m mtgvision.encoder_train
    # $ python -m mtgvision.encoder_export
@@ -217,4 +217,3 @@ The demo application consists of
    ```bash
    cloudflared tunnel --url http://localhost:8000
    ```
-
