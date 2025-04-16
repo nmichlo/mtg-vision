@@ -44,7 +44,7 @@
 </p>
 
 <p align="center">
-<video src="docs/mtgvision-short-demo.mp4" width="512" controls></video>
+<video src="https://github.com/user-attachments/assets/7f7ba966-41ed-43b4-a806-fb18e750f97b" autoplay loop muted playsinline />
 </p>
 
 ## Components
