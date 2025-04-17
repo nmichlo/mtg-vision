@@ -265,6 +265,14 @@ class MtgVisionEncoder(pl.LightningModule):
         config = Config(**config).model_dump()  # add in missing defaults
         self.save_hyperparameters(config)
 
+    @property
+    def has_encoder(self) -> bool:
+        return self.model.encoder is not None
+
+    @property
+    def has_decoder(self) -> bool:
+        return self.hparams.loss_recon is not None and self.model.decoder is not None
+
     def configure_model(self) -> None:
         model_fn = _MODELS[self.hparams.model_name]
         assert self.hparams.x_size_hw == self.hparams.y_size_hw, (

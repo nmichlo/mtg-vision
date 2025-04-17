@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from typing import Literal, Optional
 
 import torch
@@ -265,17 +266,50 @@ class ConvNeXtV2Encoder(_Base):
         x = x.reshape(x.size(0), self.z_size)
         return x
 
-    def to_coreml(self):
+    def get_trace_items(self):
+        i = torch.randn((1, *self.tensor_shape)).to("cpu")
+        model = self.to("cpu").eval()
+        return model, i
+
+    def to_coreml(self, **convert_kwargs):
         from coremltools import convert, TensorType
 
-        i = torch.randn((1, *self.tensor_shape)).to("cpu")
-        m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
+        model, i = self.get_trace_items()
+        m_jit = torch.jit.trace(func=model, example_inputs=i)
         c = convert(
             m_jit,
             inputs=[TensorType(name="x", shape=i.shape)],
             outputs=[TensorType(name="z")],
+            **convert_kwargs,
         )
         return c  # coremltools.models.MLModel
+
+    def to_onnx(self, **export_kwargs):
+        import torch.onnx
+        from torch.onnx import ONNXProgram
+
+        model, i = self.get_trace_items()
+        program: ONNXProgram = torch.onnx.export(
+            model,
+            i,
+            input_names="x",
+            dynamo=True,
+            **{
+                **dict(optimize=True, verify=True, profile=True),  # defaults
+                **export_kwargs,
+            },
+        )
+        # https://onnxruntime.ai/docs/performance/model-optimizations/float16.html
+        # from onnxconverter_common import auto_convert_mixed_precision
+        # feed_dict = {'x': i.numpy()}
+        # model_fp16 = auto_convert_mixed_precision(
+        #     program.model_proto,
+        #     feed_dict,
+        #     rtol=0.01,
+        #     atol=0.001,
+        #     keep_io_types=True,
+        # )
+        return program
 
 
 # ========================================================================= #
@@ -397,18 +431,50 @@ class ConvNeXtV2Decoder(_Base):
             x = (x + 1) / 2
         return x
 
-    def to_coreml(self):
+    def get_trace_items(self):
+        i = torch.randn((1, self.z_size)).to("cpu")
+        model = self.to("cpu").eval()
+        return model, i
+
+    def to_coreml(self, **convert_kwargs):
         from coremltools import convert, TensorType
 
-        i = torch.randn((1, self.z_size)).to("cpu")
-        m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
-        input_shape = (self.z_size,)
+        model, i = self.get_trace_items()
+        m_jit = torch.jit.trace(func=model, example_inputs=i)
         c = convert(
             m_jit,
-            inputs=[TensorType(name="z", shape=(1, *input_shape))],
+            inputs=[TensorType(name="z", shape=i.shape)],
             outputs=[TensorType(name="x_hat")],
+            **convert_kwargs,
         )
         return c  # coremltools.models.MLModel
+
+    def to_onnx(self, **export_kwargs):
+        import torch.onnx
+        from torch.onnx import ONNXProgram
+
+        model, i = self.get_trace_items()
+        program: ONNXProgram = torch.onnx.export(
+            model,
+            i,
+            input_names="z",
+            dynamo=True,
+            **{
+                **dict(optimize=True, verify=True, profile=True),  # defaults
+                **export_kwargs,
+            },
+        )
+        # https://onnxruntime.ai/docs/performance/model-optimizations/float16.html
+        # from onnxconverter_common import auto_convert_mixed_precision
+        # feed_dict = {'x': i.numpy()}
+        # model_fp16 = auto_convert_mixed_precision(
+        #     program.model_proto,
+        #     feed_dict,
+        #     rtol=0.01,
+        #     atol=0.001,
+        #     keep_io_types=True,
+        # )
+        return program
 
 
 # ========================================================================= #
@@ -474,6 +540,32 @@ class ConvNeXtV2Ae(_Base, AeBase):
         if self.decoder is None:
             raise RuntimeError(f"decoder is not enabled on: {self.__class__.__name__}")
         return [self.decoder(z)]
+
+    def save_coreml(self, base_path: Path) -> tuple[Optional[Path], Optional[Path]]:
+        encoder_path = None
+        if self.encoder is not None:
+            encoder_path = base_path.with_suffix(".encoder.mlpackage")
+            self.encoder.to_coreml().save(str(encoder_path))
+            print("CoreML Encoder exported to", encoder_path)
+        decoder_path = None
+        if self.decoder is not None:
+            decoder_path = base_path.with_suffix(".decoder.mlpackage")
+            self.decoder.to_coreml().save(str(decoder_path))
+            print("CoreML Decoder exported to", decoder_path)
+        return encoder_path, decoder_path
+
+    def save_onnx(self, base_path: Path) -> tuple[Optional[Path], Optional[Path]]:
+        encoder_path = None
+        if self.encoder is not None:
+            encoder_path = base_path.with_suffix(".encoder.onnx")
+            self.encoder.to_onnx().save(str(encoder_path))
+            print("CoreML Encoder exported to", encoder_path)
+        decoder_path = None
+        if self.decoder is not None:
+            decoder_path = base_path.with_suffix(".encoder.onnx")
+            self.decoder.to_onnx().save(str(decoder_path))
+            print("CoreML Decoder exported to", decoder_path)
+        return encoder_path, decoder_path
 
 
 # ========================================================================= #

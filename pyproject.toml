@@ -40,6 +40,13 @@ dependencies = [
     "pytorch_lightning",
     "pytorch-metric-learning",
     "ijson",
+    # onnx export
+    "onnxscript",
+    "pyinstrument",
+    "onnxconverter-common",
+    # tfjs
+    "tensorflowjs[wizard]",
+    "prompt_toolkit",  # PyInquirer
 ]
 
 
