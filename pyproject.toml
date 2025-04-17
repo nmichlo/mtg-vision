@@ -50,6 +50,7 @@ dependencies = [
     # tfjs
     "tensorflowjs[wizard]",
     "prompt_toolkit",  # PyInquirer
+    "ai-edge-torch",
 ]
 
 [dependency-groups]
