@@ -335,6 +335,36 @@ def resize(
 
 
 @ensure_float32
+def pad_to_aspect_and_resize(
+    img: np.ndarray,
+    size_hw: tuple[int, int],
+):
+    h, w = size_hw
+    ih, iw = img.shape[:2]
+    # pad to target aspect ratio
+    if ih / iw > h / w:
+        # pad height
+        pad_h = int((ih * w / h - iw) / 2)
+        img = cv2.copyMakeBorder(
+            img, pad_h, pad_h, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0)
+        )
+    else:
+        # pad width
+        pad_w = int((iw * h / w - ih) / 2)
+        img = cv2.copyMakeBorder(
+            img, 0, 0, pad_w, pad_w, cv2.BORDER_CONSTANT, value=(0, 0, 0)
+        )
+    # resize to target size
+    img = cv2.resize(
+        img,
+        (w, h),
+        interpolation=cv2.INTER_AREA,
+    )
+    # can result in values > 1 ?????????
+    return img_clip(img)
+
+
+@ensure_float32
 def remove_border_resized(
     img: np.ndarray, border_width: int, size_hw: tuple[int, int] = None
 ) -> np.ndarray:

@@ -165,13 +165,19 @@ def main():
 
     # Load your model
     model = YOLO(MODEL_PATH_SEG)
-    path = model.export(format="onnx", nms=True)
+
+    # tensorflowjs
+    path = model.export(format="tfjs", nms=True)
+    print(f"Model exported to {path}")
+    assert path == str(MODEL_PATH_SEG.with_suffix("_web_model"))
+
+    # convert to onnx
+    path = model.export(format="onnx", nms=True)  # don't think nms works here...
     print(f"Model exported to {path}")
     assert path == str(MODEL_PATH_SEG.with_suffix(".onnx"))
 
-    # Load your model
-    model = YOLO(MODEL_PATH_SEG)
-    path = model.export(format="coreml", nms=False)
+    # convert to coreml
+    path = model.export(format="coreml", nms=True)  # don't think nms works here...
     print(f"Model exported to {path}")
     assert path == str(MODEL_PATH_SEG.with_suffix(".mlpackage"))
 

@@ -18,7 +18,6 @@ from mtgvision.encoder_train import (
 )
 from mtgvision.util.image import img_float32
 
-
 MODEL_DETAILS = {
     "head_type": "conv+linear",
     "path": "/Users/nathanmichlo/Desktop/active/mtg/data/gen/embeddings/encoder_nano_aivb8jvk/checkpoints/epoch=0-step=47500.ckpt",
@@ -86,26 +85,26 @@ def _export(
     debug: bool = False,
     test: bool = False,
     # exports
-    export_coreml: bool = True,
     export_onnx: bool = True,
     export_tfjs: bool = True,
+    export_coreml: bool = True,
 ):
     # LOAD
     print("loading model from", path)
     model: MtgVisionEncoder = MtgVisionEncoder.load_from_checkpoint(path)
+    # ONNX: `{path}.encoder.onnx` AND `{path}.decoder.onnx`
+    if export_onnx or export_tfjs:
+        [e, d] = model.model.save_onnx(base_path=path)
+        _debug(OnnxEncoder, e, OnnxDecoder, d, debug=debug)
+        _test_infer(OnnxEncoder, e, test=test)
+        # TFJS: `{path}.encoder.tfjs` AND `{path}.decoder.tfjs`
+        if export_tfjs:
+            raise NotImplementedError
     # COREML: `{path}.encoder.mlpackage` AND `{path}.decoder.mlpackage`
     if export_coreml:
         [e, d] = model.model.save_coreml(base_path=path)
         _debug(CoreMlEncoder, e, CoreMlDecoder, d, debug=debug)
         _test_infer(CoreMlEncoder, e, test=test)
-    # ONNX: `{path}.encoder.onnx` AND `{path}.decoder.onnx`
-    if export_onnx:
-        [e, d] = model.model.save_onnx(base_path=path)
-        _debug(OnnxEncoder, e, OnnxDecoder, d, debug=debug)
-        _test_infer(OnnxEncoder, e, test=test)
-    # TFJS: `{path}.encoder.tfjs` AND `{path}.decoder.tfjs`
-    if export_tfjs:
-        raise NotImplementedError
 
 
 class _Encoder:
@@ -227,25 +226,24 @@ class CoreMlDecoder(_Decoder):
 def _cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", default=MODEL_PATH, type=Path)
+    #
     parser.add_argument("--no-export", dest="export", action="store_false")
+    parser.add_argument("--no-export-onnx", dest="export_onnx", action="store_false")
+    parser.add_argument("--export-tfjs", dest="export_tfjs", action="store_true")
+    parser.add_argument("--export-coreml", dest="export_coreml", action="store_true")
+    #
     parser.add_argument("--no-test", dest="test", action="store_false")
-    parser.add_argument("--no-coreml", dest="no_coreml", action="store_true")
-    parser.add_argument("--no-onnx", dest="no_onnx", action="store_true")
-    parser.add_argument("--no-tfjs", dest="no_tfjs", action="store_true")
+    parser.add_argument("--no-debug", dest="debug", action="store_false")
     args = parser.parse_args()
-
-    args.no_tfjs = True
-    args.no_onnx = False
-    args.no_coreml = True
 
     if args.export:
         _export(
             args.path,
-            export_tfjs=not args.no_tfjs,
-            export_onnx=not args.no_onnx,
-            export_coreml=not args.no_coreml,
-            debug=True,
-            test=True,
+            export_onnx=args.export_onnx,
+            export_tfjs=args.export_tfjs,
+            export_coreml=args.export_coreml,
+            debug=args.debug,
+            test=args.test,
         )
 
 
