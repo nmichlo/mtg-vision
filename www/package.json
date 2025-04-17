@@ -2,7 +2,7 @@
   "name": "mtgvision",
   "version": "1.0.0",
   "description": "MTG card detection and recognition frontend for mtgvision.",
-  "source": "public/index.html",
+  "source": "public/index_alt.html",
   "scripts": {
     "start": "parcel",
     "build": "parcel build",
@@ -15,12 +15,18 @@
   "license": "MIT",
   "dependencies": {
     "@nanostores/lit": "^0.2.2",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-core": "^4.22.0",
     "lit": "^3.2.1",
     "lit-element": "^4.1.1",
     "nanostores": "^0.11.4",
     "svg.js": "^2.7.1"
   },
   "devDependencies": {
-    "parcel": "^2.14.4"
+    "@parcel/config-default": "^2.14.4",
+    "buffer": "^5.5.0||^6.0.0",
+    "parcel": "^2.14.4",
+    "parcel-reporter-static-files-copy": "^1.5.3",
+    "process": "^0.11.10"
   }
 }
