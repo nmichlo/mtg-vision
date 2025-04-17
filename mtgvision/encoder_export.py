@@ -5,7 +5,7 @@ Export a trained encoder to coreml or other formats.
 import argparse
 import functools
 from pathlib import Path
-from typing import Type, Union
+from typing import Literal, Sequence, Type, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,46 +33,32 @@ def _get_data():
     )
 
 
-# def _load(path: Path | None):
-#     if path is None:
-#         return None
-#     path = Path(path)
-#     name = path.name
-#     if name.endswith(".encoder.mlpackage"):
-#         return CoreMlEncoder(path)
-#     elif name.endswith(".decoder.mlpackage"):
-#         return CoreMlDecoder(path)
-#     elif name.endswith(".encoder.onnx"):
-#         return OnnxEncoder(path)
-#     elif name.endswith(".decoder.onnx"):
-#         return OnnxDecoder(path)
-#     else:
-#         raise ValueError(f"Unknown file type: {path}")
-
-
 def _debug(
-    encoder_cls: "Type[_Encoder]",
+    encoder_cls: "Type[_Encoder] | None",
     encoder_path: "Union[str, Path, None]",
-    decoder_cls: "Type[_Decoder]",
+    decoder_cls: "Type[_Decoder] | None",
     decoder_path: "Union[str, Path, None]",
     debug: bool = True,
 ):
     if not debug:
         return
-    encoder = encoder_cls(encoder_path)
-    decoder = decoder_cls(decoder_path) if decoder_path else None
+    encoder = encoder_cls(encoder_path) if (encoder_cls and encoder_path) else None
+    decoder = decoder_cls(decoder_path) if (decoder_cls and decoder_path) else None
     for img in _get_data()[:1]:
         plt.imshow(img["x"][0])
         plt.show()
-        z = encoder.predict(img["x"][0])
-        if decoder is not None:
-            x_recon = decoder.predict(z)
-            plt.imshow(x_recon)
-            plt.show()
+        if encoder is not None:
+            z = encoder.predict(img["x"][0])
+            if decoder is not None:
+                x_recon = decoder.predict(z)
+                plt.imshow(x_recon)
+                plt.show()
 
 
-def _test_infer(enc_cls: "Type[_Encoder]", encoder_path: Path, test: bool = True):
-    if not test:
+def _test_infer(
+    enc_cls: "Type[_Encoder] | None", encoder_path: Path, test: bool = True
+):
+    if not test or not enc_cls:
         return
     encoder = enc_cls(encoder_path)
     encoder.ran_forward()
@@ -85,26 +71,24 @@ def _export(
     debug: bool = False,
     test: bool = False,
     # exports
-    export_onnx: bool = True,
-    export_tfjs: bool = True,
-    export_coreml: bool = True,
+    formats: Sequence[Literal["onnx", "tfjs", "tflite", "coreml"] | None] = (),
 ):
     # LOAD
     print("loading model from", path)
     model: MtgVisionEncoder = MtgVisionEncoder.load_from_checkpoint(path)
-    # ONNX: `{path}.encoder.onnx` AND `{path}.decoder.onnx`
-    if export_onnx or export_tfjs:
-        [e, d] = model.model.save_onnx(base_path=path)
-        _debug(OnnxEncoder, e, OnnxDecoder, d, debug=debug)
-        _test_infer(OnnxEncoder, e, test=test)
-        # TFJS: `{path}.encoder.tfjs` AND `{path}.decoder.tfjs`
-        if export_tfjs:
-            raise NotImplementedError
-    # COREML: `{path}.encoder.mlpackage` AND `{path}.decoder.mlpackage`
-    if export_coreml:
-        [e, d] = model.model.save_coreml(base_path=path)
-        _debug(CoreMlEncoder, e, CoreMlDecoder, d, debug=debug)
-        _test_infer(CoreMlEncoder, e, test=test)
+    # Optional loaders for testing
+    _enc_dec = {
+        "onnx": (OnnxEncoder, OnnxDecoder),
+        "coreml": (CoreMlEncoder, CoreMlDecoder),
+    }
+    # EXPORT
+    for fmt in set(formats):
+        if fmt is None:
+            continue
+        enc_path, dec_path = model.model.save(base_path=path, fmt=fmt)
+        enc_cls, dec_cls = _enc_dec.get(fmt, (None, None))
+        _debug(enc_cls, enc_path, dec_cls, dec_path, debug=debug)
+        _test_infer(enc_cls, enc_path, test=test)
 
 
 class _Encoder:
@@ -170,9 +154,10 @@ class OnnxEncoder(_Encoder):
         if model_path is None:
             model_path = MODEL_PATH.with_suffix(".encoder.onnx")
         self.model = rt.InferenceSession(str(model_path))
+        [self.input_node] = self.model.get_inputs()
 
     def _predict(self, x: np.ndarray):
-        return self.model.run(None, {"x": x})[0]
+        return self.model.run(None, {self.input_node.name: x})[0]
 
     @property
     def input_hwc(self) -> tuple[int, int, int]:
@@ -188,9 +173,10 @@ class OnnxDecoder(_Decoder):
         if model_path is None:
             model_path = MODEL_PATH.with_suffix(".decoder.onnx")
         self.model = rt.InferenceSession(str(model_path))
+        [self.input_node] = self.model.get_inputs()
 
     def _predict(self, x: np.ndarray):
-        return self.model.run(None, {"z": x})[0]
+        return self.model.run(None, {self.input_node.name: x})[0]
 
 
 class CoreMlEncoder(_Encoder):
@@ -226,25 +212,23 @@ class CoreMlDecoder(_Decoder):
 def _cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", default=MODEL_PATH, type=Path)
-    #
-    parser.add_argument("--no-export", dest="export", action="store_false")
-    parser.add_argument("--no-export-onnx", dest="export_onnx", action="store_false")
-    parser.add_argument("--export-tfjs", dest="export_tfjs", action="store_true")
-    parser.add_argument("--export-coreml", dest="export_coreml", action="store_true")
-    #
+    parser.add_argument(
+        "--export", action="append", choices=["onnx", "coreml", "tfjs", "tflite"]
+    )
     parser.add_argument("--no-test", dest="test", action="store_false")
     parser.add_argument("--no-debug", dest="debug", action="store_false")
     args = parser.parse_args()
 
-    if args.export:
-        _export(
-            args.path,
-            export_onnx=args.export_onnx,
-            export_tfjs=args.export_tfjs,
-            export_coreml=args.export_coreml,
-            debug=args.debug,
-            test=args.test,
-        )
+    if not args.export:
+        args.export = ["coreml"]
+
+    print(f"Exporting {args.path} to all of: {args.export}")
+    _export(
+        args.path,
+        debug=args.debug,
+        test=args.test,
+        formats=args.export,
+    )
 
 
 # Load the pytorch lightning checkpoint

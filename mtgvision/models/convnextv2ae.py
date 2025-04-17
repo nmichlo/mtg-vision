@@ -1,6 +1,7 @@
+import subprocess
 import time
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 import torch
 from torch import nn
@@ -151,8 +152,94 @@ class _Base(nn.Module):
 
 
 # ========================================================================= #
+# Exporters                                                                 #
+# ========================================================================= #
+
+
+class Export:
+    @staticmethod
+    def to_coreml(
+        obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
+        in_name: str,
+        out_name: str,
+        **convert_kwargs,
+    ):
+        from coremltools import convert, TensorType
+
+        model, i = obj.get_trace_items()
+        m_jit = torch.jit.trace(func=model, example_inputs=i)
+        c = convert(
+            m_jit,
+            inputs=[TensorType(name=in_name, shape=i.shape)],
+            outputs=[TensorType(name=out_name)],
+            **convert_kwargs,
+        )
+        return c  # coremltools.models.MLModel
+
+    @staticmethod
+    def to_onnx(
+        obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
+        **export_kwargs,
+    ):
+        import torch.onnx
+        from torch.onnx import ONNXProgram
+
+        model, i = obj.get_trace_items()
+        program: ONNXProgram = torch.onnx.dynamo_export(model, i)
+        return program
+
+    @staticmethod
+    def export_tflite(
+        obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
+        path: str | Path,
+    ):
+        import ai_edge_torch
+
+        model, i = obj.get_trace_items()
+        edge_model = ai_edge_torch.convert(model, (i,))
+        edge_model.export(str(path))
+
+    @staticmethod
+    def export_tfjs(
+        obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
+        path: str | Path,
+    ):
+        # check
+        path = Path(path)
+        if path.exists():
+            if path.is_dir():
+                if any(path.iterdir()):
+                    raise FileExistsError(
+                        f"Path {path} is not empty. Please remove it or choose a different path."
+                    )
+            else:
+                raise FileExistsError(
+                    f"Path {path} already exists. Please remove it or choose a different path."
+                )
+        # convert to tflite
+        tflite_path = path.with_suffix(".tflite")
+        ConvNeXtV2Encoder.export_tflite(obj, tflite_path)
+        # convert to tfjs: TODO: I don't think this supports tflite inputs
+        path.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                "tensorflowjs_converter",
+                # --input_format [keras,tf_saved_model,keras_keras,keras_saved_model,tfjs_layers_model,tf_frozen_model,tf_hub]
+                "--input_format",
+                "tf_saved_model",
+                "--output_format",
+                "tfjs_graph_model",
+                str(tflite_path),
+                str(path),
+            ],
+            check=True,
+        )
+
+
+# ========================================================================= #
 # Encoder                                                                   #
 # ========================================================================= #
+
 
 HeadHint = Literal["conv+linear", "conv+mlp", "conv+act+mlp", "pool+linear", "pool+mlp"]
 
@@ -272,44 +359,7 @@ class ConvNeXtV2Encoder(_Base):
         return model, i
 
     def to_coreml(self, **convert_kwargs):
-        from coremltools import convert, TensorType
-
-        model, i = self.get_trace_items()
-        m_jit = torch.jit.trace(func=model, example_inputs=i)
-        c = convert(
-            m_jit,
-            inputs=[TensorType(name="x", shape=i.shape)],
-            outputs=[TensorType(name="z")],
-            **convert_kwargs,
-        )
-        return c  # coremltools.models.MLModel
-
-    def to_onnx(self, **export_kwargs):
-        import torch.onnx
-        from torch.onnx import ONNXProgram
-
-        model, i = self.get_trace_items()
-        program: ONNXProgram = torch.onnx.export(
-            model,
-            i,
-            input_names="x",
-            dynamo=True,
-            **{
-                **dict(optimize=True, verify=True, profile=True),  # defaults
-                **export_kwargs,
-            },
-        )
-        # https://onnxruntime.ai/docs/performance/model-optimizations/float16.html
-        # from onnxconverter_common import auto_convert_mixed_precision
-        # feed_dict = {'x': i.numpy()}
-        # model_fp16 = auto_convert_mixed_precision(
-        #     program.model_proto,
-        #     feed_dict,
-        #     rtol=0.01,
-        #     atol=0.001,
-        #     keep_io_types=True,
-        # )
-        return program
+        return Export.to_coreml(self, "x", "z")
 
 
 # ========================================================================= #
@@ -437,44 +487,7 @@ class ConvNeXtV2Decoder(_Base):
         return model, i
 
     def to_coreml(self, **convert_kwargs):
-        from coremltools import convert, TensorType
-
-        model, i = self.get_trace_items()
-        m_jit = torch.jit.trace(func=model, example_inputs=i)
-        c = convert(
-            m_jit,
-            inputs=[TensorType(name="z", shape=i.shape)],
-            outputs=[TensorType(name="x_hat")],
-            **convert_kwargs,
-        )
-        return c  # coremltools.models.MLModel
-
-    def to_onnx(self, **export_kwargs):
-        import torch.onnx
-        from torch.onnx import ONNXProgram
-
-        model, i = self.get_trace_items()
-        program: ONNXProgram = torch.onnx.export(
-            model,
-            i,
-            input_names="z",
-            dynamo=True,
-            **{
-                **dict(optimize=True, verify=True, profile=True),  # defaults
-                **export_kwargs,
-            },
-        )
-        # https://onnxruntime.ai/docs/performance/model-optimizations/float16.html
-        # from onnxconverter_common import auto_convert_mixed_precision
-        # feed_dict = {'x': i.numpy()}
-        # model_fp16 = auto_convert_mixed_precision(
-        #     program.model_proto,
-        #     feed_dict,
-        #     rtol=0.01,
-        #     atol=0.001,
-        #     keep_io_types=True,
-        # )
-        return program
+        return Export.to_coreml(self, "z", "x_hat")
 
 
 # ========================================================================= #
@@ -541,30 +554,32 @@ class ConvNeXtV2Ae(_Base, AeBase):
             raise RuntimeError(f"decoder is not enabled on: {self.__class__.__name__}")
         return [self.decoder(z)]
 
-    def save_coreml(self, base_path: Path) -> tuple[Optional[Path], Optional[Path]]:
+    def save(
+        self,
+        base_path: Union[str, Path],
+        fmt: Literal["coreml", "onnx", "tflite", "tfjs"],
+    ) -> tuple[Optional[Path], Optional[Path]]:
+        # get paths
+        _exporters = {
+            "coreml": (lambda m, p: m.to_coreml().save(p), "mlpackage"),
+            "onnx": (lambda m, p: Export.to_onnx(m).save(p), "onnx"),
+            "tflite": (lambda m, p: Export.export_tflite(m, p), "tflite"),
+            "tfjs": (lambda m, p: Export.export_tfjs(m, p), "web_model"),
+        }
+        export_fn, suffix = _exporters[fmt]
+        # export encoder
         encoder_path = None
         if self.encoder is not None:
-            encoder_path = base_path.with_suffix(".encoder.mlpackage")
-            self.encoder.to_coreml().save(str(encoder_path))
-            print("CoreML Encoder exported to", encoder_path)
+            encoder_path = base_path.with_suffix(f".encoder.{suffix}")
+            export_fn(self.encoder, str(encoder_path))
+            print(f"Encoder exported to {encoder_path}")
+        # export decoder
         decoder_path = None
         if self.decoder is not None:
-            decoder_path = base_path.with_suffix(".decoder.mlpackage")
-            self.decoder.to_coreml().save(str(decoder_path))
-            print("CoreML Decoder exported to", decoder_path)
-        return encoder_path, decoder_path
-
-    def save_onnx(self, base_path: Path) -> tuple[Optional[Path], Optional[Path]]:
-        encoder_path = None
-        if self.encoder is not None:
-            encoder_path = base_path.with_suffix(".encoder.onnx")
-            self.encoder.to_onnx().save(str(encoder_path))
-            print("CoreML Encoder exported to", encoder_path)
-        decoder_path = None
-        if self.decoder is not None:
-            decoder_path = base_path.with_suffix(".encoder.onnx")
-            self.decoder.to_onnx().save(str(decoder_path))
-            print("CoreML Decoder exported to", decoder_path)
+            decoder_path = base_path.with_suffix(f".decoder.{suffix}")
+            export_fn(self.decoder, str(decoder_path))
+            print(f"Decoder exported to {decoder_path}")
+        # done!
         return encoder_path, decoder_path
 
 
