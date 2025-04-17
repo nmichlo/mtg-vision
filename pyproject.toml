@@ -43,6 +43,13 @@ dependencies = [
     "fastapi[standard]",
     "qdrant-client",
     "norfair",
+    # onnx export
+    "onnxscript",
+    "pyinstrument",
+    "onnxconverter-common",
+    # tfjs
+    "tensorflowjs[wizard]",
+    "prompt_toolkit",  # PyInquirer
 ]
 
 [dependency-groups]
