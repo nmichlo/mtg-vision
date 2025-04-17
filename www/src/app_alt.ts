@@ -2,34 +2,12 @@ import { LitElement, html, css, PropertyValueMap } from 'lit';
 import { property, state, query, customElement } from 'lit/decorators.js';
 import * as tf from '@tensorflow/tfjs';
 
-import Tracker from "./norfair"
-
-// --- Example Usage (Conceptual) ---
-/*
-const tracker = new Tracker({ distanceThreshold: 50 });
-
-// Example frame detections (replace with actual data)
-const frame1Detections: Point[] = [[100, 100], [300, 300]];
-const frame2Detections: Point[] = [[105, 105], [350, 350]]; // obj1 moved, obj2 disappeared, new obj3 appears
-
-const results1 = tracker.update(frame1Detections);
-console.log("Frame 1 Results:", results1); // Likely [-1, -1] or [0, 1] after init delay
-
-const results2 = tracker.update(frame2Detections);
-console.log("Frame 2 Results:", results2); // Should show mapping for obj1, maybe -1 for the new one
-
-// Access tracked objects (e.g., after initialization)
-tracker.trackedObjects.forEach(obj => {
-    if (obj.id !== -1) {
-        console.log(`Object ID: ${obj.id}, Estimate: ${obj.estimate()}`);
-    }
-});
-*/
+// Import Norfair types and classes
+import { Tracker, TrackedObject, TrackerOptions, Point } from "./norfair"; // Added Point
 
 // ===========================================================
 // App Container Component
 // ===========================================================
-
 
 export function main() {
   const appContainer = document.createElement('app-container');
@@ -71,7 +49,8 @@ const CONFIDENCE_THRESHOLD = 0.5; // Filter detections below this score
 // --- Color Palette ---
 const COLORS = [
     [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0], [0, 255, 255],
-    [255, 0, 255], [128, 0, 0], [0, 128, 0], [0, 0, 128], [128, 128, 0]
+    [255, 0, 255], [128, 0, 0], [0, 128, 0], [0, 0, 128], [128, 128, 0],
+    [128, 0, 128], [0, 128, 128], [255, 165, 0], [255, 192, 203], [75, 0, 130]
 ];
 // ---------------------
 
@@ -142,7 +121,7 @@ class VideoContainer extends LitElement {
   private offsetY: number = 0;
 
   // --- Tracking state ---
-
+  private tracker: Tracker | null = null; // Norfair tracker instance
 
   // --- Lit Lifecycle ---
 
@@ -151,6 +130,14 @@ class VideoContainer extends LitElement {
     tf.ready().then(() => {
       this.loadTfjsModel();
       this.startVideoStream();
+      // Initialize the Norfair tracker
+      this.tracker = new Tracker({
+          distanceThreshold: 100, // Adjust based on object speed and frame rate
+          hitInertiaMin: 0,      // Lowered defaults slightly, adjust as needed
+          hitInertiaMax: 15,  //
+          initDelay: 2,  // Number of frames to wait before starting tracking
+      });
+      console.log("Norfair tracker initialized.");
     });
   }
 
@@ -160,6 +147,7 @@ class VideoContainer extends LitElement {
     this.tfjsModel?.dispose();
     this.tfjsModel = null;
     this.resizeObserver?.disconnect();
+    this.tracker = null; // Clear tracker state
   }
 
   protected firstUpdated(_changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>): void {
@@ -177,13 +165,17 @@ class VideoContainer extends LitElement {
     this.videoElement.addEventListener('loadedmetadata', this.handleVideoMetadataLoaded);
     this.videoElement.addEventListener('error', (e) => this.handleFatalError('Video element error.', e));
 
+    // Use ResizeObserver on the *video element* as the reference for sizing
     this.resizeObserver = new ResizeObserver(() => this.updateCanvasSize());
     this.resizeObserver.observe(this.videoElement);
+
+    // Initial size update
     this.updateCanvasSize();
   }
 
   // --- Event Handlers ---
   private handleVideoMetadataLoaded = () => {
+    // Ensure video dimensions are available before playing and sizing
     this.videoElement.play().catch(e => this.handleFatalError('Video play failed:', e));
     this.updateCanvasSize();
   }
@@ -197,28 +189,35 @@ class VideoContainer extends LitElement {
 
   // --- Size & Scaling ---
   private updateCanvasSize() {
-    if (!this.videoElement || !this.canvasElement) return;
+    if (!this.videoElement || !this.canvasElement || !this.videoElement.videoWidth) {
+      return; // Need video dimensions
+    }
+
     const displayWidth = this.videoElement.clientWidth;
     const displayHeight = this.videoElement.clientHeight;
 
-    // Only resize if needed
+    // Set canvas drawing buffer size to match display size
     if (this.canvasElement.width !== displayWidth || this.canvasElement.height !== displayHeight) {
-      this.canvasElement.width = displayWidth;
-      this.canvasElement.height = displayHeight;
-      this.videoDisplayWidth = displayWidth;
-      this.videoDisplayHeight = displayHeight;
-      console.log(`Canvas resized to: ${displayWidth}x${displayHeight}`);
+        this.canvasElement.width = displayWidth;
+        this.canvasElement.height = displayHeight;
+        this.videoDisplayWidth = displayWidth;
+        this.videoDisplayHeight = displayHeight;
+        console.log(`Canvas resized to: ${displayWidth}x${displayHeight}`);
     }
 
-    // Recalculate scaling factors whenever canvas might have resized
-    const videoWidth = this.videoElement.videoWidth || MODEL_INPUT_WIDTH; // Fallback if video not ready
-    const videoHeight = this.videoElement.videoHeight || MODEL_INPUT_HEIGHT;
+    // Calculate scaling factors based on video's intrinsic size and display size ('contain' logic)
+    const videoWidth = this.videoElement.videoWidth;
+    const videoHeight = this.videoElement.videoHeight;
     const scaleX = this.videoDisplayWidth / videoWidth;
     const scaleY = this.videoDisplayHeight / videoHeight;
     this.scale = Math.min(scaleX, scaleY); // Use minimum scale for 'contain'
+
+    // Calculate offsets to center the scaled video drawing on the canvas
     this.offsetX = (this.videoDisplayWidth - videoWidth * this.scale) / 2;
     this.offsetY = (this.videoDisplayHeight - videoHeight * this.scale) / 2;
+    // console.log(`Video: ${videoWidth}x${videoHeight}, Scale: ${this.scale.toFixed(3)}, Offset: ${this.offsetX.toFixed(1)}, ${this.offsetY.toFixed(1)}`);
   }
+
 
   // --- TFJS Methods ---
   private async loadTfjsModel() {
@@ -228,7 +227,7 @@ class VideoContainer extends LitElement {
       this.isModelLoading = false;
       this.inferenceStatus = 'Model loaded. Waiting for video...';
       console.log('TFJS model loaded successfully.');
-      this.startInferenceLoop();
+      this.startInferenceLoop(); // Start inference only after model is loaded
     } catch (error: any) {
       this.isModelLoading = false;
       this.modelError = `Load failed: ${error.message || error}`;
@@ -243,15 +242,19 @@ class VideoContainer extends LitElement {
   private async startVideoStream() {
     this.inferenceStatus = 'Requesting camera...'; this.requestUpdate();
     if (this.currentStream) {
-      this.stopVideoStream();
+      this.stopVideoStream(); // Stop existing stream first
     }
     try {
+      // Request a resolution closer to the model input if possible
       const constraints = { video: { width: { ideal: 640 }, height: { ideal: 480 } } };
       this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
       if (this.videoElement) {
         this.videoElement.srcObject = this.currentStream;
-        this.inferenceStatus = this.isModelLoading ? 'Model loading...' : 'Video stream started.';
-      } else { this.inferenceStatus = 'Video element not ready.'; }
+        // Don't start inference here, wait for model load and metadata
+        this.inferenceStatus = this.isModelLoading ? 'Model loading...' : 'Video stream started. Waiting for model/metadata...';
+      } else {
+        this.inferenceStatus = 'Video element not ready.';
+      }
     } catch (error: any) {
       this.inferenceStatus = `Camera failed: ${error.message}`;
       console.error('getUserMedia failed:', error);
@@ -259,29 +262,40 @@ class VideoContainer extends LitElement {
       if (this.videoElement) {
         this.videoElement.srcObject = null;
       }
-    } finally { this.requestUpdate(); }
+    } finally {
+      this.requestUpdate();
+    }
   }
 
   private stopVideoStream() {
-    this.cancelInferenceLoop();
-    if (this.currentStream) { this.currentStream.getTracks().forEach(track => track.stop()); }
+    this.cancelInferenceLoop(); // Stop inference first
+    if (this.currentStream) {
+      this.currentStream.getTracks().forEach(track => track.stop());
+    }
     this.currentStream = null;
     if (this.videoElement) {
       this.videoElement.pause();
       this.videoElement.srcObject = null;
     }
+    // Clear canvas when stream stops
+    this.ctx?.clearRect(0, 0, this.canvasElement?.width ?? 0, this.canvasElement?.height ?? 0);
     this.inferenceStatus = "Video stream stopped.";
     this.requestUpdate();
   }
 
   // --- Inference Loop ---
   private startInferenceLoop() {
-    if (this.inferenceLoopId !== null) {
-      return; // Prevent multiple loops
+    // make sure not already running
+    // It is OK if we start the loop and the model is not ready yet, the loop
+    // will just skip frames in that case until it is ready.
+    if (this.inferenceLoopId !== null || this.isInferencing) {
+      console.log("Inference loop start condition not met.");
+      return;
     }
     this.inferenceStatus = "Running inference...";
+    this.isInferencing = false; // Reset flag
+    console.log("Starting inference loop...");
     this.requestUpdate();
-    // Use a separate flag to control the loop, inferenceLoopId just stores the handle
     this.inferenceLoopId = requestAnimationFrame(() => this.runInference());
   }
 
@@ -289,36 +303,36 @@ class VideoContainer extends LitElement {
     if (this.inferenceLoopId !== null) {
       cancelAnimationFrame(this.inferenceLoopId);
       this.inferenceLoopId = null;
+      this.isInferencing = false; // Ensure flag is reset
       if (!this.modelError && !this.isModelLoading) {
         this.inferenceStatus = "Inference stopped.";
         // Clear canvas when stopping to remove lingering boxes/polygons
         this.ctx?.clearRect(0, 0, this.canvasElement?.width ?? 0, this.canvasElement?.height ?? 0);
         this.requestUpdate();
       }
+      console.log("Inference loop cancelled.");
     }
   }
 
   private async runInference() {
      // --- Condition Checks ---
     if (this.isInferencing) {
-        // If already processing, just schedule the next frame check
+        console.log("Already inferencing, skipping frame.");
         this.inferenceLoopId = requestAnimationFrame(() => this.runInference());
         return;
     }
     if (!this.tfjsModel || !this.currentStream || !this.videoElement || !this.ctx || this.videoElement.paused || this.videoElement.ended || this.videoElement.readyState < this.videoElement.HAVE_CURRENT_DATA) {
-        // If conditions not met, schedule next check
+        console.log("Inference conditions not met, scheduling next check.");
         this.inferenceLoopId = requestAnimationFrame(() => this.runInference());
         return;
     }
 
     // --- Start Processing ---
     this.isInferencing = true;
-
-    // --- Clear Canvas (Fix Flickering) ---
-    // Clear *before* any async operations or drawing for this frame
-    // this.ctx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
+    // console.log("Running inference frame.");
 
     // Update canvas size and scaling factors *before* this frame's drawing
+    // This ensures drawing coordinates are based on the current layout
     this.updateCanvasSize();
 
     const tensorsToDispose: tf.Tensor[] = [];
@@ -328,67 +342,124 @@ class VideoContainer extends LitElement {
         // 1. Preprocess Frame (tidy manages intermediate tensors)
         const inputTensor = tf.tidy(() => {
             const frame = tf.browser.fromPixels(this.videoElement);
+            // Ensure resizing happens correctly
             const resized = tf.image.resizeBilinear(frame, [MODEL_INPUT_HEIGHT, MODEL_INPUT_WIDTH]);
             const normalized = resized.div(255.0);
             const batched = normalized.expandDims(0);
             return batched.cast('float32');
         });
-        tensorsToDispose.push(inputTensor); // Track final input tensor
+        tensorsToDispose.push(inputTensor); // Track final input tensor for disposal
 
         // 2. Run Inference
         output = await this.tfjsModel!.executeAsync(inputTensor) as tf.Tensor[];
         if (output) {
-          tensorsToDispose.push(...output);
-        } // Track all output tensors
+          tensorsToDispose.push(...output); // Track all output tensors for disposal
+        }
 
-        // 3. Post-process & Draw
-        if (output && output.length === 3) {
-            const detections = output[0]; // Shape [1, num_detections, 38]
-            // Note: output[1] and output[2] (masks and protos) are ignored as requested
+        // 3. Post-process, Track & Draw
+        if (output && output.length === 3) { // Check for YOLOv11 output structure
+            const detectionsTensor = output[0]; // Shape [1, num_detections, 38] (boxes, conf, class, masks...)
 
-            // Get detection data once
-            const [detectionsBatch, _, __] = await detections.array() as number[][][];
-            let detectionCount = 0;
+            // Get detection data once (await the promise)
+            const detectionsBatch = (await detectionsTensor.array() as number[][][])[0]; // Get the first (only) batch
 
-            // --- Drawing Loop ---
-          this.ctx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
-            for (const detection of detectionsBatch) {
+            // --- Prepare detections for Norfair ---
+            const norfairDetections: Point[] = []; // Array to hold centroids [x, y]
+            const originalDetectionData: { [index: number]: number[] } = {}; // Map Norfair index to original full detection data
+
+            for (let i = 0; i < detectionsBatch.length; i++) {
+                const detection = detectionsBatch[i];
+                // Indices based on typical YOLOv8/YOLOv11 output:
+                // 0-3: bbox [x1, y1, x2, y2] (in model input resolution)
+                // 4: confidence score
+                // 5: class id
+                // 6+: mask info (ignored here)
                 const confidence = detection[4];
-                if (confidence >= CONFIDENCE_THRESHOLD) {
-                    detectionCount++;
-                    const classId = Math.round(detection[5]);
-                    const color = COLORS[classId % COLORS.length];
 
-                    // Draw Bounding Box
-                    this.drawBoundingBox(detection, color);
+                if (confidence >= CONFIDENCE_THRESHOLD) {
+                    const x1 = detection[0], y1 = detection[1], x2 = detection[2], y2 = detection[3];
+                    // Calculate centroid (center point of the bounding box)
+                    const centerX = (x1 + x2) / 2;
+                    const centerY = (y1 + y2) / 2;
+                    const point: Point = [centerX, centerY]; // Norfair expects [x, y]
+
+                    // Store the centroid for Norfair and map its index back to the original data
+                    const norfairIndex = norfairDetections.length;
+                    norfairDetections.push(point);
+                    originalDetectionData[norfairIndex] = detection;
                 }
             }
-             this.inferenceStatus = `Detections: ${detectionCount}`;
+            // --------------------------------------
+
+            // --- Update Norfair Tracker ---
+            let trackingResults: number[] = [];
+            if (this.tracker && norfairDetections.length > 0) {
+                console.log("Updating tracker with detections:", norfairDetections);
+                trackingResults = this.tracker.update(norfairDetections); // Update returns assigned IDs
+                console.log("Tracker results:", trackingResults);
+            } else if (this.tracker) {
+                // Update tracker even with no detections to decrement hit counters
+                trackingResults = this.tracker.update([]);
+            }
+            // ------------------------------
+
+            // --- Drawing Loop ---
+            // Clear canvas *before* drawing new frame elements
+            this.ctx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
+            let trackedDetectionCount = 0;
+
+            // Draw boxes for currently detected & tracked objects
+            for (let i = 0; i < norfairDetections.length; i++) {
+                const assignedId = trackingResults[i]; // Get the ID assigned by Norfair
+                const originalDetData = originalDetectionData[i]; // Get the full original detection data
+
+                if (originalDetData) { // Should always be true if logic is correct
+                    trackedDetectionCount++;
+                    // Use ID for color, fallback for unassigned (-1)
+                    const colorIndex = assignedId >= 0 ? assignedId % COLORS.length : COLORS.length - 1; // Use last color for initializing
+                    const color = COLORS[colorIndex];
+
+                    // Draw the bounding box using original data and include the assigned ID
+                    this.drawBoundingBoxWithId(originalDetData, color, assignedId);
+                }
+            }
+
+            // Optionally, draw estimates for objects tracked but not detected in this frame
+            // this.drawUnmatchedEstimates(); // Implement this if needed see previous response
+
+            // Update status message
+            this.inferenceStatus = `Tracked Detections: ${trackedDetectionCount}`;
+
         } else {
-             console.warn("Model output was not the expected array of 3 tensors:", output); this.inferenceStatus = "Unexpected model output.";
+             console.warn("Model output was not the expected array of 3 tensors:", output);
+             this.inferenceStatus = "Unexpected model output.";
+             // Clear canvas if output is bad
+             this.ctx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
         }
 
     } catch (error: any) {
         console.error("Error during inference:", error);
         this.inferenceStatus = `Inference Error: ${error.message || error}`;
+        // Optionally clear canvas on error
+        this.ctx?.clearRect(0, 0, this.canvasElement?.width ?? 0, this.canvasElement?.height ?? 0);
     } finally {
         // --- Dispose ALL tracked tensors ---
         tf.dispose(tensorsToDispose);
 
-        this.isInferencing = false; // Allow next inference
-        this.requestUpdate(); // Update status display
+        this.isInferencing = false; // Allow next inference run
+        this.requestUpdate(); // Update status display if needed
 
         // --- Schedule Next Frame ---
-        // Ensure loop continues even if errors occurred in processing
-        if (this.inferenceLoopId !== null) { // Check if loop was cancelled by disconnect
+        // Ensure loop continues even if errors occurred in processing this frame
+        if (this.inferenceLoopId !== null) { // Check if loop was cancelled (e.g., by disconnect)
              this.inferenceLoopId = requestAnimationFrame(() => this.runInference());
         }
     }
   }
 
-  // --- Helper to Draw Bounding Box ---
-  private drawBoundingBox(detectionData: number[], color: number[]) {
-    if (!this.ctx) {
+  // --- Helper to Draw Bounding Box WITH ID ---
+  private drawBoundingBoxWithId(detectionData: number[], color: number[], trackId: number) {
+    if (!this.ctx || !this.videoElement.videoWidth) { // Ensure video dimensions are available
       return;
     }
 
@@ -396,52 +467,78 @@ class VideoContainer extends LitElement {
     const videoHeight = this.videoElement.videoHeight;
     const confidence = detectionData[4];
     const classId = Math.round(detectionData[5]);
+    // Bbox coordinates are relative to the MODEL_INPUT size
     const x1 = detectionData[0], y1 = detectionData[1], x2 = detectionData[2], y2 = detectionData[3];
 
-    // Scale box coordinates from model input size to video size
+    // --- Coordinate Scaling ---
+    // 1. Scale box coordinates from model input size (e.g., 640x640) to original video size
     const videoX1 = (x1 / MODEL_INPUT_WIDTH) * videoWidth;
     const videoY1 = (y1 / MODEL_INPUT_HEIGHT) * videoHeight;
     const videoX2 = (x2 / MODEL_INPUT_WIDTH) * videoWidth;
     const videoY2 = (y2 / MODEL_INPUT_HEIGHT) * videoHeight;
-    // Scale box coordinates from video size to canvas size (considering 'contain' fit)
+
+    // 2. Scale box coordinates from video size to canvas size (considering 'contain' fit and offsets)
     const canvasX1 = videoX1 * this.scale + this.offsetX;
     const canvasY1 = videoY1 * this.scale + this.offsetY;
     const canvasWidth = (videoX2 - videoX1) * this.scale;
     const canvasHeight = (videoY2 - videoY1) * this.scale;
+    // --- End Scaling ---
 
     // Draw Box
     this.ctx.strokeStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
     this.ctx.lineWidth = 2;
     this.ctx.strokeRect(canvasX1, canvasY1, canvasWidth, canvasHeight);
 
-    // Draw Label
-    this.ctx.font = '12px sans-serif'; // Ensure font is set for accurate measurement
-    this.ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.8)`; // Semi-transparent background
-    const label = `Class ${classId}: ${confidence.toFixed(2)}`;
+    // Draw Label with ID
+    this.ctx.font = '12px sans-serif'; // Ensure font is set each time
+    this.ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.8)`; // Background color
+
+    // Create label text
+    const idLabel = trackId === -1 ? 'Init' : `ID: ${trackId}`; // Show 'Init' for initializing objects
+    const label = `${idLabel} (${confidence.toFixed(2)})`; // Removed Class ID for brevity, add back if needed
+
+    // Calculate text size and position
     const textMetrics = this.ctx.measureText(label);
     const textWidth = textMetrics.width;
     const textHeight = 12; // Approximate height based on font size
-    // Position background slightly above the box or inside if near top
-    const textY = canvasY1 > textHeight + 4 ? canvasY1 - 2 : canvasY1 + textHeight + 2; // Adjusted y-pos logic
-    this.ctx.fillRect(canvasX1 - 1, textY - textHeight - 1 , textWidth + 2, textHeight + 2); // Background rectangle
+    const padding = 2;
+
+    // Position background slightly above the box or inside if near top edge
+    let textY = canvasY1 - padding - 1; // Default position above box
+    let backgroundY = textY - textHeight - padding;
+
+    if (backgroundY < 0) { // If label goes off the top, position it inside the box
+        textY = canvasY1 + textHeight + padding;
+        backgroundY = canvasY1 + padding;
+    }
+
+    // Draw background rectangle
+    this.ctx.fillRect(canvasX1 - 1, backgroundY , textWidth + (padding * 2), textHeight + (padding * 2));
+
+    // Draw text
     this.ctx.fillStyle = `white`; // Text color
-    this.ctx.fillText(label, canvasX1, textY - 1); // Adjusted y-pos logic for text baseline
+    this.ctx.fillText(label, canvasX1 + padding -1 , textY); // Draw text inside background padding
 
   }
 
   // --- Render ---
   render() {
+    // Determine the status message based on the current state
     let statusMessage = this.inferenceStatus;
-    // More detailed status logic
     if (this.modelError) {
       statusMessage = `Error: ${this.modelError}`;
     } else if (this.isModelLoading) {
       statusMessage = "Loading model...";
     } else if (!this.currentStream) {
       statusMessage = "Waiting for camera access...";
-    } else if (!this.tfjsModel) {
+    } else if (!this.tfjsModel) { // Model loaded but stream might not be ready
       statusMessage = "Model loaded, waiting for stream...";
+    } else if (this.videoElement && this.videoElement.readyState < this.videoElement.HAVE_METADATA) {
+        statusMessage = "Waiting for video metadata...";
+    } else if (this.inferenceLoopId === null) { // Stream/model ready, but loop not running (e.g., initial state)
+        statusMessage = "Ready to start inference.";
     }
+    // If inference is running, this.inferenceStatus (e.g., "Tracked Detections: X") will be shown
 
     return html`
       <video id="video" muted playsinline></video>
