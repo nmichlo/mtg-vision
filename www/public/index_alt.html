@@ -23,7 +23,12 @@
   </style>
 </head>
 <body>
-  <app-container></app-container>
-  <script type="module" src="../src/app_alt.ts"></script>
+  <script type="module">
+    import '@tensorflow/tfjs-backend-webgpu';
+    import '@tensorflow/tfjs-backend-wasm';
+    import * as tf from '@tensorflow/tfjs';
+    import {main} from '../src/app_alt.ts';
+    tf.setBackend('webgpu').then(() => {main()})
+  </script>
 </body>
 </html>

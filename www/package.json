@@ -16,6 +16,8 @@
   "dependencies": {
     "@nanostores/lit": "^0.2.2",
     "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-backend-webgpu": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "lit": "^3.2.1",
     "lit-element": "^4.1.1",
