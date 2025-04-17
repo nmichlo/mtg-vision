@@ -220,7 +220,7 @@ def _cli():
     args = parser.parse_args()
 
     if not args.export:
-        args.export = ["coreml"]
+        args.export = ["tfjs"]
 
     print(f"Exporting {args.path} to all of: {args.export}")
     _export(

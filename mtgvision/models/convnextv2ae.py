@@ -1,4 +1,5 @@
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Literal, Optional, Union
@@ -189,51 +190,90 @@ class Export:
         return program
 
     @staticmethod
-    def export_tflite(
+    def to_tflite(
         obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
-        path: str | Path,
     ):
         import ai_edge_torch
+        from ai_edge_torch.model import TfLiteModel
 
         model, i = obj.get_trace_items()
-        edge_model = ai_edge_torch.convert(model, (i,))
-        edge_model.export(str(path))
+        converted: TfLiteModel = ai_edge_torch.convert(model, (i,))
+        return converted
 
     @staticmethod
-    def export_tfjs(
+    def to_keras(
         obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
-        path: str | Path,
     ):
-        # check
-        path = Path(path)
-        if path.exists():
-            if path.is_dir():
-                if any(path.iterdir()):
-                    raise FileExistsError(
-                        f"Path {path} is not empty. Please remove it or choose a different path."
-                    )
-            else:
-                raise FileExistsError(
-                    f"Path {path} already exists. Please remove it or choose a different path."
-                )
-        # convert to tflite
-        tflite_path = path.with_suffix(".tflite")
-        ConvNeXtV2Encoder.export_tflite(obj, tflite_path)
-        # convert to tfjs: TODO: I don't think this supports tflite inputs
-        path.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            [
-                "tensorflowjs_converter",
-                # --input_format [keras,tf_saved_model,keras_keras,keras_saved_model,tfjs_layers_model,tf_frozen_model,tf_hub]
-                "--input_format",
-                "tf_saved_model",
-                "--output_format",
-                "tfjs_graph_model",
-                str(tflite_path),
-                str(path),
-            ],
-            check=True,
+        import torch
+        import torch.nn.functional as F
+        import tensorflow as tf
+        import nobuco
+        from nobuco import ChannelOrderingStrategy
+
+        @nobuco.converter(
+            F.mish,
+            channel_ordering_strategy=ChannelOrderingStrategy.MINIMUM_TRANSPOSITIONS,
         )
+        def mish_converter(input: torch.Tensor, inplace: bool = False):
+            return lambda input, inplace=False: tf.keras.activations.mish(input)
+
+        print("Exporting to Keras")
+        model, i = obj.get_trace_items()
+        keras = nobuco.pytorch_to_keras(
+            model,
+            args=[i],
+            kwargs=None,
+        )
+        return keras
+
+    @staticmethod
+    def export_tfjs(obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder", path: str | Path):
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)  # Ensure output dir exists
+
+        # 1. Convert to Keras
+        keras_model = Export.to_keras(obj)
+        if keras_model is None:
+            raise RuntimeError("Keras conversion failed")
+
+        # 2. Save Keras model temporarily
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_keras_path = Path(temp_dir) / "keras_model"
+            print(f"Saving temporary Keras model to: {temp_keras_path}")
+            keras_model.save(str(temp_keras_path))
+
+            # 3. Convert saved Keras model to TFJS
+            print(f"Converting Keras model to TFJS at: {path}")
+            # Use subprocess to call the converter tool
+            try:
+                subprocess.run(
+                    [
+                        "tensorflowjs_converter",
+                        "--input_format",
+                        "tf_saved_model",  # Input is the saved Keras model
+                        "--output_format",
+                        "tfjs_graph_model",  # Or tfjs_layers_model
+                        str(temp_keras_path),  # Path to saved Keras model
+                        str(path),  # Output directory for TFJS files
+                    ],
+                    check=True,
+                    capture_output=True,  # Capture output for better debugging
+                    text=True,
+                )
+                print("TFJS conversion successful.")
+            except subprocess.CalledProcessError as e:
+                print("--- TFJS Conversion Failed ---")
+                print("Command:", e.cmd)
+                print("Return Code:", e.returncode)
+                print("Stdout:", e.stdout)
+                print("Stderr:", e.stderr)
+                raise e
+            except FileNotFoundError:
+                print("ERROR: 'tensorflowjs_converter' command not found.")
+                print(
+                    "Ensure TensorFlow.js is installed ('pip install tensorflowjs') and the command is in your PATH."
+                )
+                raise
 
 
 # ========================================================================= #
@@ -563,8 +603,10 @@ class ConvNeXtV2Ae(_Base, AeBase):
         _exporters = {
             "coreml": (lambda m, p: m.to_coreml().save(p), "mlpackage"),
             "onnx": (lambda m, p: Export.to_onnx(m).save(p), "onnx"),
-            "tflite": (lambda m, p: Export.export_tflite(m, p), "tflite"),
+            "tflite": (lambda m, p: Export.to_tflite(m).export(p), "tflite"),
             "tfjs": (lambda m, p: Export.export_tfjs(m, p), "web_model"),
+            # TODO: https://github.com/PINTO0309/onnx2tf
+            # TODO: https://github.com/AlexanderLutsenko/nobuco
         }
         export_fn, suffix = _exporters[fmt]
         # export encoder

@@ -48,6 +48,10 @@ dependencies = [
     "tensorflowjs[wizard]",
     "prompt_toolkit",  # PyInquirer
     "ai-edge-torch",
+    # nobuco
+    "nobuco",
+    "keras<3.0.0",  # https://github.com/google-ai-edge/mediapipe/issues/5229
+    "numpy<2.0.0",  # https://github.com/google-ai-edge/mediapipe/issues/5229
 ]
 
 
