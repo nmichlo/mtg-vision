@@ -1,6 +1,6 @@
 description: Ultralytics YOLO11s-seg model trained on /home/nmichlo/workspace/mtg/mtg-vision/data/yolo_mtg_dataset_seg/temp_mtg_obb.yaml
 author: Ultralytics
-date: '2025-04-17T14:06:31.144336'
+date: "2025-04-17T14:06:31.144336"
 version: 8.3.110
 license: AGPL-3.0 License (https://ultralytics.com/license)
 docs: https://docs.ultralytics.com
@@ -8,8 +8,8 @@ stride: 32
 task: segment
 batch: 1
 imgsz:
-- 640
-- 640
+  - 640
+  - 640
 names:
   0: card
   1: card_top
