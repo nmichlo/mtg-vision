@@ -2,7 +2,7 @@
   "name": "mtgvision",
   "version": "1.0.0",
   "description": "MTG card detection and recognition frontend for mtgvision.",
-  "source": "public/index_alt.html",
+  "source": "public/index2.html",
   "scripts": {
     "start": "parcel",
     "build": "parcel build",
