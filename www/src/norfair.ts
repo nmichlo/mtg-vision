@@ -348,7 +348,7 @@ export interface TrackerOptions {
 }
 
 export class Tracker {
-    private trackedObjects: TrackedObject[] = [];
+    trackedObjects: TrackedObject[] = [];
     private distThreshold: number;
     private hitInertiaMin: number;
     private hitInertiaMax: number;
