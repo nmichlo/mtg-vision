@@ -32,6 +32,9 @@ importers:
       nanostores:
         specifier: ^0.11.4
         version: 0.11.4
+      opencv.js:
+        specifier: ^1.2.1
+        version: 1.2.1
       svg.js:
         specifier: ^2.7.1
         version: 2.7.1
@@ -1067,6 +1070,9 @@ packages:
 
   nullthrows@1.1.1:
     resolution: {integrity: sha512-2vPPEi+Z7WqML2jZYddDIfy5Dqb0r2fze2zTxNNknZaFpVHU3mFB3R+DWeJWGVx0ecvttSGlJTI+WG+8Z4cDWw==}
+
+  opencv.js@1.2.1:
+    resolution: {integrity: sha512-+ji5Pk3eyz+RRSeZr2kLZNJpjsKoGyPJOjFWng7+Cuq9ylHakBqJMxDGlBW1+qdju3k8DadWOiHJ6JaF28UpKA==}
 
   ordered-binary@1.5.3:
     resolution: {integrity: sha512-oGFr3T+pYdTGJ+YFEILMpS3es+GiIbs9h/XQrclBXUtd44ey7XwfsMzM31f64I1SQOawDoDr/D823kNCADI8TA==}
@@ -2508,6 +2514,8 @@ snapshots:
   node-releases@2.0.19: {}
 
   nullthrows@1.1.1: {}
+
+  opencv.js@1.2.1: {}
 
   ordered-binary@1.5.3: {}
 
