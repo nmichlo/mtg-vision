@@ -31,6 +31,16 @@
     "parcel": "^2.14.4",
     "parcel-reporter-static-files-copy": "^1.5.3",
     "prettier": "^3.5.3",
-    "process": "^0.11.10"
+    "pretty-quick": "^4.1.1",
+    "process": "^0.11.10",
+    "simple-git-hooks": "^2.12.1"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "simple-git-hooks"
+    ],
+    "onlyBuiltDependencies": [
+      "simple-git-hooks"
+    ]
   }
 }
