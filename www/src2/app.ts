@@ -12,6 +12,7 @@ import { Tracker, TrackedObject, TrackerOptions, Point } from "./norfair"; // Ad
 // ===========================================================
 // Configuration Interfaces
 // ===========================================================
+
 interface YoloConfig {
   modelUrl: string;
   inputWidth: number;
@@ -41,6 +42,7 @@ interface TrackerConfig extends TrackerOptions {} // Use Norfair's options direc
 // ===========================================================
 // Type Definitions (Shared Interfaces)
 // ===========================================================
+
 interface BBox {
   x1: number;
   y1: number;
@@ -88,6 +90,7 @@ interface ObjectEmbeddingInfo {
 // ===========================================================
 // Constants -> Configuration Objects
 // ===========================================================
+
 const YOLO_CONFIG: YoloConfig = {
   modelUrl: "/assets/models/yolov11s_seg__dk964hap__web_model/model.json",
   inputWidth: 640,
@@ -1315,6 +1318,3 @@ export function main() {
   const videoContainer = document.createElement("video-container");
   document.body.appendChild(videoContainer);
 }
-
-// Optional: Call main() automatically
-// main();
