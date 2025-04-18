@@ -22,6 +22,7 @@
     "lit": "^3.2.1",
     "lit-element": "^4.1.1",
     "nanostores": "^0.11.4",
+    "opencv.js": "^1.2.1",
     "svg.js": "^2.7.1"
   },
   "devDependencies": {
