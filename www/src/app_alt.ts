@@ -3,7 +3,7 @@ import { property, state, query, customElement } from 'lit/decorators.js';
 import * as tf from '@tensorflow/tfjs';
 
 // Import Norfair types and classes
-import { Tracker, TrackedObject, TrackerOptions, Point } from "./norfair";
+import {Tracker, TrackedObject, TrackerOptions, Point, Detection} from "./norfair";
 
 // Type for storing embedding status and result for each tracked object
 type ObjectEmbeddingInfo = {
@@ -48,6 +48,12 @@ class AppContainer extends LitElement {
   }
 }
 
+interface DetectionResult {
+  bboxModel: number[]; // Full detection data
+  point: Point;
+  maskTensor?: tf.Tensor2D; // Optional mask tensor
+}
+
 // ===========================================================
 // Video Container Component
 // ===========================================================
@@ -57,6 +63,9 @@ const MODEL_URL = '/assets/models/yolov11s_seg__dk964hap__web_model/model.json';
 const MODEL_INPUT_WIDTH = 640;
 const MODEL_INPUT_HEIGHT = 640;
 const CONFIDENCE_THRESHOLD = 0.5;
+const MASK_THRESHOLD = 0.5; // Threshold for converting sigmoid output to binary mask
+const PROTO_MASK_SIZE = 160; // Assumed dimension (e.g., 160x160) of prototype masks - VERIFY THIS
+const MASK_COEFF_COUNT = 32; // Assumed number of mask coefficients - VERIFY THIS
 // --- EMBED Configuration ---
 const EMBED_INPUT_WIDTH = 128;
 const EMBED_INPUT_HEIGHT = 192;
@@ -147,12 +156,26 @@ class VideoContainer extends LitElement {
   private embeddingLoopTimeoutId: number | null = null; // For Embedding loop
   private isEmbedding: boolean = false; // For Embedding loop
 
+  // --- Canvas for mask rendering ---
+  private maskCanvas!: HTMLCanvasElement;
+  private maskCtx!: CanvasRenderingContext2D;
+
   // --- Lit Lifecycle ---
 
   connectedCallback() {
     super.connectedCallback();
-    tf.ready().then(async () => { // Make async to await model loading
-      this.loadTfjsModels(); // Load both models
+    // Create offscreen canvas for mask rendering
+    this.maskCanvas = document.createElement('canvas');
+    const context = this.maskCanvas.getContext('2d', { willReadFrequently: true }); // willReadFrequently might be needed for frequent toPixels/putImageData
+     if (!context) {
+        console.error("Failed to get 2D context for mask canvas");
+        // Handle error appropriately, maybe disable mask rendering
+    } else {
+         this.maskCtx = context;
+    }
+
+    tf.ready().then(async () => {
+      this.loadTfjsModels();
       this.startVideoStream();
       // Initialize the Norfair tracker
       this.tracker = new Tracker({
@@ -228,10 +251,16 @@ class VideoContainer extends LitElement {
     if (this.canvasElement.width !== displayWidth || this.canvasElement.height !== displayHeight) {
         this.canvasElement.width = displayWidth;
         this.canvasElement.height = displayHeight;
+        // Resize mask canvas too
+        if (this.maskCanvas) {
+            this.maskCanvas.width = displayWidth;
+            this.maskCanvas.height = displayHeight;
+        }
         this.videoDisplayWidth = displayWidth;
         this.videoDisplayHeight = displayHeight;
     }
 
+    // ... (calculate scale and offset - no changes) ...
     const videoWidth = this.videoElement.videoWidth;
     const videoHeight = this.videoElement.videoHeight;
     const scaleX = this.videoDisplayWidth / videoWidth;
@@ -351,14 +380,8 @@ class VideoContainer extends LitElement {
   }
 
   private async runInference() {
-    if (this.isInferencing) {
-        this.inferenceLoopId = requestAnimationFrame(() => this.runInference());
-        return;
-    }
-    if (!this.tfjsModel || !this.currentStream || !this.videoElement || !this.ctx || this.videoElement.paused || this.videoElement.ended || this.videoElement.readyState < this.videoElement.HAVE_CURRENT_DATA || !this.tracker) {
-        this.inferenceLoopId = requestAnimationFrame(() => this.runInference());
-        return;
-    }
+    if (this.isInferencing) { /* ... skip ... */ return; }
+    if (!this.tfjsModel || !this.currentStream || !this.videoElement || !this.ctx || this.videoElement.paused || this.videoElement.ended || this.videoElement.readyState < this.videoElement.HAVE_CURRENT_DATA || !this.tracker) { /* ... wait ... */ return; }
 
     this.isInferencing = true;
     this.updateCanvasSize();
@@ -371,81 +394,193 @@ class VideoContainer extends LitElement {
         const frameTensor = tf.browser.fromPixels(this.videoElement);
         tensorsToDispose.push(frameTensor);
 
-        const inputTensor = tf.tidy(() => {
+        const inputTensor = tf.tidy(() => { /* ... preprocess frame ... */
             const resized = tf.image.resizeBilinear(frameTensor, [MODEL_INPUT_HEIGHT, MODEL_INPUT_WIDTH]);
             const normalized = resized.div(255.0);
             const batched = normalized.expandDims(0);
             return batched.cast('float32');
         });
 
+        // CORRECT Output Shapes:
+        // output[0].shape == [1, 300, 38]   (batch, num_dets, bbox[4]+conf[1]+class[1]+coeffs[32])
+        // output[1].shape == [1500]        (Not used in this logic)
+        // output[2].shape == [1, 160, 160, 32] (batch, proto_height, proto_width, num_coeffs)
         output = await this.tfjsModel!.executeAsync(inputTensor) as tf.Tensor[];
+
         if (output) {
           tensorsToDispose.push(...output);
         }
 
-        if (output && output.length === 3) {
-            const detectionsTensor = output[0];
-            const detectionsBatch = (await detectionsTensor.array() as number[][][])[0];
+        // --- Process Detections and Masks ---
+        // *** Check output indices and shapes based on your specific model ***
+        if (output && output.length >= 3) { // Need detections (output[0]) and protos (output[2])
+            const detectionsTensor = output[0]; // Shape [1, num_dets, 38]
+            const protoTensor = output[2];      // Shape [1, 160, 160, 32] <-- CORRECTED SHAPE
+
+            // --- CORRECTED Shape Validation ---
+            // Validate the dimensions of the prototype mask tensor
+             if (protoTensor.shape.length !== 4 ||
+                 protoTensor.shape[0] !== 1 ||        // Batch size
+                 protoTensor.shape[1] !== PROTO_MASK_SIZE || // Height
+                 protoTensor.shape[2] !== PROTO_MASK_SIZE || // Width
+                 protoTensor.shape[3] !== MASK_COEFF_COUNT) { // Number of coefficients
+                  console.error("Unexpected prototype mask tensor shape:", protoTensor.shape, "Expected: [1,", PROTO_MASK_SIZE, ",", PROTO_MASK_SIZE, ",", MASK_COEFF_COUNT, "]");
+                  throw new Error("Incorrect prototype mask shape.");
+             }
+             // --- END CORRECTED Shape Validation ---
+
+
+            const detectionsBatch = (await detectionsTensor.data()) as Float32Array; // Use .data() for direct access
+            const numDets = detectionsTensor.shape[1];
+            const detDataLength = detectionsTensor.shape[2]; // Length of one detection vector (38)
 
             const norfairDetections: Point[] = [];
-            const currentFrameDetectionData = new Map<number, { bboxModel: number[], point: Point }>();
+            const currentFrameDetectionResults = new Map<number, DetectionResult>(); // Map norfair index -> result
 
-            for (let i = 0; i < detectionsBatch.length; i++) {
-                const detection = detectionsBatch[i];
-                const confidence = detection[4];
+            for (let i = 0; i < numDets; i++) {
+                const offset = i * detDataLength;
+                const confidence = detectionsBatch[offset + 4];
+
                 if (confidence >= CONFIDENCE_THRESHOLD) {
-                    const x1 = detection[0], y1 = detection[1], x2 = detection[2], y2 = detection[3];
+                    const x1 = detectionsBatch[offset + 0];
+                    const y1 = detectionsBatch[offset + 1];
+                    const x2 = detectionsBatch[offset + 2];
+                    const y2 = detectionsBatch[offset + 3];
+                    const classId = Math.round(detectionsBatch[offset + 5]);
+                    // Extract mask coefficients (last MASK_COEFF_COUNT elements)
+                    // Slice from index 6 to get the 32 coefficients
+                    const maskCoeffs = tf.slice(detectionsTensor, [0, i, 6], [1, 1, MASK_COEFF_COUNT]); // Shape [1, 1, 32]
+
                     const centerX = (x1 + x2) / 2;
                     const centerY = (y1 + y2) / 2;
                     const point: Point = [centerX, centerY];
                     const norfairIndex = norfairDetections.length;
                     norfairDetections.push(point);
-                    currentFrameDetectionData.set(norfairIndex, { bboxModel: detection, point: point });
-                }
-            }
 
+                    // --- Calculate Mask ---
+                    const binaryMask = tf.tidy(() => {
+                        // --- CORRECTED Mask Calculation Logic ---
+                        // protoTensor shape: [1, H, W, C] = [1, 160, 160, 32]
+                        // maskCoeffs shape: [1, 1, 32]
+
+                        // 1. Reshape protos: [1, H, W, C] -> [H*W, C] = [25600, 32]
+                        const protosReshaped = protoTensor.squeeze(0).reshape([PROTO_MASK_SIZE * PROTO_MASK_SIZE, MASK_COEFF_COUNT]);
+
+                        // 2. Reshape coefficients: [1, 1, 32] -> [32, 1]
+                        const coeffsReshaped = maskCoeffs.reshape([MASK_COEFF_COUNT, 1]);
+
+                        // 3. Matrix Multiply: [H*W, C] @ [C, 1] -> [H*W, 1] = [25600, 1]
+                        // This performs the weighted sum of prototypes for each pixel location.
+                        const maskProto = tf.matMul(protosReshaped, coeffsReshaped);
+
+                        // 4. Reshape back to spatial: [H*W, 1] -> [H, W] = [160, 160]
+                        const maskReshaped = maskProto.reshape([PROTO_MASK_SIZE, PROTO_MASK_SIZE]);
+                        // --- END CORRECTED Mask Calculation Logic ---
+
+                        // Activation (Sigmoid)
+                        const maskActivated = tf.sigmoid(maskReshaped);
+
+                        // --- Upscale and Crop Mask (No change needed in this part) ---
+                        const videoBbox = this.scaleModelBboxToVideo(detectionsBatch.slice(offset, offset + 4));
+                        if (!videoBbox) return null;
+
+                        const videoWidth = this.videoElement.videoWidth;
+                        const videoHeight = this.videoElement.videoHeight;
+
+                        const boxX1 = Math.max(0, Math.floor(videoBbox.x1));
+                        const boxY1 = Math.max(0, Math.floor(videoBbox.y1));
+                        const boxX2 = Math.min(videoWidth, Math.ceil(videoBbox.x2));
+                        const boxY2 = Math.min(videoHeight, Math.ceil(videoBbox.y2));
+                        const boxW = boxX2 - boxX1;
+                        const boxH = boxY2 - boxY1;
+
+                        if (boxW <= 0 || boxH <= 0) return null;
+
+                        const normalizedBbox = [[
+                            boxY1 / videoHeight, boxX1 / videoWidth,
+                            boxY2 / videoHeight, boxX2 / videoWidth
+                        ]];
+
+                        const maskExpanded = maskActivated.expandDims(0).expandDims(-1); // [1, H, W, 1]
+
+                        const maskCroppedResized = tf.image.cropAndResize(
+                            maskExpanded, normalizedBbox, [0], [boxH, boxW], 'bilinear'
+                        );
+
+                        const finalMask = maskCroppedResized.squeeze([0, 3]).greater(MASK_THRESHOLD).cast('float32'); // Binary mask [boxH, boxW]
+
+                        return finalMask as tf.Tensor2D;
+                    }); // End tf.tidy for mask calculation
+
+                    // Store result
+                    currentFrameDetectionResults.set(norfairIndex, {
+                        bboxModel: Array.from(detectionsBatch.slice(offset, offset + detDataLength)),
+                        point: point,
+                        maskTensor: binaryMask || undefined
+                    });
+
+                     // Dispose maskCoeffs immediately as it's sliced from a larger tensor
+                     maskCoeffs.dispose();
+
+                } // End confidence check
+            } // End detection loop
+
+            // --- Update Tracker ---
             const trackingResults = this.tracker.update(norfairDetections);
             this.updateObjectStatus(this.tracker.trackedObjects, frameTime);
 
+            // --- Drawing Loop (No changes needed here, relies on correct binaryMask) ---
             this.ctx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
             let trackedDetectionCount = 0;
+            this.maskCtx.clearRect(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+            const maskPromises: Promise<void>[] = [];
 
             for (let i = 0; i < norfairDetections.length; i++) {
                 const assignedId = trackingResults[i];
-                const detData = currentFrameDetectionData.get(i);
+                const detResult = currentFrameDetectionResults.get(i);
 
-                if (detData) {
+                if (detResult) {
                     trackedDetectionCount++;
                     const colorIndex = assignedId >= 0 ? assignedId % COLORS.length : COLORS.length - 1;
                     const color = COLORS[colorIndex];
-                    this.drawBoundingBoxWithId(detData.bboxModel, color, assignedId);
+
+                    this.drawBoundingBoxWithId(detResult.bboxModel, color, assignedId);
+
+                    if (detResult.maskTensor) {
+                         maskPromises.push(this.drawSegmentationMask(detResult.maskTensor, color, detResult.bboxModel));
+                    }
 
                     if (assignedId !== -1 && this.objectEmbeddingStatus.has(assignedId)) {
-                        const videoBbox = this.scaleModelBboxToVideo(detData.bboxModel);
+                        const videoBbox = this.scaleModelBboxToVideo(detResult.bboxModel);
                         if (videoBbox) {
                              this.objectEmbeddingStatus.get(assignedId)!.lastKnownBboxVideo = videoBbox;
                         }
                     }
+                } else {
+                     currentFrameDetectionResults.get(i)?.maskTensor?.dispose();
                 }
             }
+            await Promise.all(maskPromises);
+            this.ctx.save();
+            this.ctx.globalAlpha = 0.5;
+            this.ctx.drawImage(this.maskCanvas, 0, 0);
+            this.ctx.restore();
+
             this.inferenceStatus = `Tracked Detections: ${trackedDetectionCount}`;
 
-        } else {
-             console.warn("YOLO output unexpected:", output); this.inferenceStatus = "Unexpected model output.";
+        } else { // Handle case where output doesn't have enough elements
+             console.warn("YOLO output missing expected tensors:", output?.length);
+             this.inferenceStatus = "Model output missing tensors.";
              this.ctx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
              this.tracker.update([]);
              this.updateObjectStatus(this.tracker.trackedObjects, frameTime);
         }
 
     } catch (error: any) {
-        console.error("Error during YOLO/Tracking inference:", error);
+        console.error("Error during YOLO/Tracking/Masking inference:", error);
         this.inferenceStatus = `Inference Error: ${error.message || error}`;
         this.ctx?.clearRect(0, 0, this.canvasElement?.width ?? 0, this.canvasElement?.height ?? 0);
-        if (this.tracker) {
-             this.tracker.update([]);
-             this.updateObjectStatus(this.tracker.trackedObjects, frameTime);
-        }
-
+        if (this.tracker) { /* ... update tracker on error ... */ }
     } finally {
         tf.dispose(tensorsToDispose);
         this.isInferencing = false;
@@ -733,6 +868,61 @@ class VideoContainer extends LitElement {
     this.ctx.fillText(label, canvasX1 + padding -1 , textY);
   }
 
+  // Draws a single segmentation mask onto the offscreen mask canvas
+  private async drawSegmentationMask(maskTensor: tf.Tensor2D, color: number[], bboxModel: number[]): Promise<void> {
+    if (!this.maskCtx || maskTensor.isDisposed) {
+        maskTensor?.dispose(); // Dispose if context missing or already disposed
+        return;
+    }
+
+    try {
+        const videoBbox = this.scaleModelBboxToVideo(bboxModel);
+        if (!videoBbox) {
+             maskTensor.dispose();
+             return;
+         }
+
+        const [height, width] = maskTensor.shape;
+
+        // Create colored mask data
+        const colorTensor = tf.tensor1d(color.map(c => c / 255.0)); // Normalize color to [0,1]
+        const maskColored = tf.tidy(() => {
+            // Expand mask [H, W] -> [H, W, 1] and color [3] -> [1, 1, 3] for broadcasting
+            return maskTensor.expandDims(-1).mul(colorTensor.reshape([1, 1, 3]));
+        });
+
+        // Convert tensor to ImageData for drawing
+        // Add alpha channel (fully opaque for masked areas)
+        const alpha = maskTensor.expandDims(-1); // Use the mask itself as alpha [H, W, 1]
+        const maskRgba = tf.tidy(() => tf.concat([maskColored, alpha], -1)); // [H, W, 4]
+        const maskPixelData = await tf.browser.toPixels(maskRgba);
+        const imageData = new ImageData(maskPixelData, width, height);
+
+        // Calculate position on the main canvas (using scaling and offset)
+        const canvasX = videoBbox.x1 * this.scale + this.offsetX;
+        const canvasY = videoBbox.y1 * this.scale + this.offsetY;
+
+        // Draw the ImageData onto the offscreen mask canvas at the correct scaled position
+        // We draw relative to the mask canvas origin (0,0) first, then draw the whole mask canvas later.
+        // Need position relative to *video frame* on the mask canvas for correct placement
+        // when the maskCanvas is drawn onto the main canvas.
+
+        // Get top-left corner in *canvas* coordinates
+        const canvasBoxX1 = videoBbox.x1 * this.scale + this.offsetX;
+        const canvasBoxY1 = videoBbox.y1 * this.scale + this.offsetY;
+
+        // Draw the mask onto the mask canvas
+        this.maskCtx.putImageData(imageData, Math.round(canvasBoxX1), Math.round(canvasBoxY1));
+
+        // Dispose tensors used in this function
+        tf.dispose([maskTensor, colorTensor, maskColored, maskRgba, alpha]);
+
+    } catch (error) {
+        console.error("Error drawing segmentation mask:", error);
+        if (!maskTensor.isDisposed) maskTensor.dispose(); // Ensure disposal on error
+    }
+  }
+
   // --- Render ---
   render() {
     let statusMessage = this.inferenceStatus;
@@ -757,6 +947,3 @@ class VideoContainer extends LitElement {
     `;
   }
 }
-
-// Call main to bootstrap the app if this script is run directly
-// main();
