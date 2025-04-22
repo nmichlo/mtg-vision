@@ -1,7 +1,7 @@
 import itertools
 import multiprocessing
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence, TypeVar
+from typing import Iterable, Iterator, Literal, Sequence, TypeVar
 from tqdm import tqdm
 
 
@@ -10,8 +10,7 @@ from mtgdata.scryfall import ScryfallCardFace
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.qdrant import QdrantPoint, VectorStoreQdrant
-from mtgvision.util.image import imread_float
-
+from mtgvision.util.image import imread_float, resize
 
 T = TypeVar("T")
 
@@ -32,6 +31,7 @@ class CardProcessor(multiprocessing.Process):
         model_path: Path,
         job_queue: multiprocessing.Queue,
         result_queue: multiprocessing.Queue,
+        embed_mode: Literal["crop", "orig"] = "crop",
     ):
         """Initialize with picklable arguments."""
         super().__init__(daemon=True)
@@ -43,6 +43,7 @@ class CardProcessor(multiprocessing.Process):
         self._encoder = None
         self._vstore = None
         self._proxy = None
+        self._embed_mode = embed_mode
 
     def _initialize(self):
         """Lazily initialize non-picklable resources in the worker process."""
@@ -84,9 +85,19 @@ class CardProcessor(multiprocessing.Process):
     def _get_card_point(self, card: ScryfallCardFace) -> QdrantPoint:
         """Generate a Point object for a single card."""
         path = card.download(proxy=self._proxy)
-        x = imread_float(path)
-        x = SyntheticBgFgMtgImages.make_cropped(x, size_hw=self._x_size_hw)
+        im = imread_float(path)
+        # make input image
+        # * TODO: NB fairly large difference between results
+        #         could be that the model hasn't trained enough?
+        if self._embed_mode == "crop":
+            x = SyntheticBgFgMtgImages.make_cropped(im, size_hw=self._x_size_hw)
+        elif self._embed_mode == "orig":
+            x = resize(im, self._x_size_hw)
+        else:
+            raise KeyError(f"Unknown embed mode: {self._embed_mode}")
+        # embed the input
         z = self._encoder.predict(x).tolist()
+        # create the point
         return QdrantPoint(id=str(card.id), vector=z, payload=None)
 
 

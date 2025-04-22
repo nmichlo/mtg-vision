@@ -35,6 +35,31 @@ class VectorStoreQdrant:
     def drop_collection(self):
         self.client.delete_collection(self._COLLECTION)
 
+    def scroll(
+        self,
+        *,
+        batch_size: int = 1000,
+        with_vectors: bool = False,
+        with_payload: bool = True,
+        offset: str | None = None,
+    ):
+        while True:
+            [results, offset] = self.client.scroll(
+                collection_name=self._COLLECTION,
+                limit=batch_size,
+                offset=offset,
+                with_vectors=with_vectors,
+                with_payload=with_payload,
+            )
+            if not results or offset is None:
+                break
+            for point in results:
+                yield QdrantPoint(
+                    id=point.id,
+                    vector=point.vector,
+                    payload=point.payload,
+                )
+
     def retrieve(
         self,
         ids: Iterable[str],
