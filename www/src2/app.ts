@@ -1,13 +1,246 @@
-// ===========================================================
-// Single File Refactored Application - V3.1 (Restored Helper)
-// ===========================================================
-
-import { LitElement, html, css, PropertyValueMap } from "lit";
-import { property, state, query, customElement } from "lit/decorators.js";
+import { css, html, LitElement } from "lit";
+import { customElement, query, state } from "lit/decorators.js";
 import * as tf from "@tensorflow/tfjs";
+import { Point, TrackedObject, Tracker, TrackerOptions } from "./norfair";
+import { HNSW } from "mememo";
 
-// --- Norfair Imports ---
-import { Tracker, TrackedObject, TrackerOptions, Point } from "./norfair"; // Adjust path if needed
+interface Step {
+  type: string;
+  in_dim: number;
+  out_dim: number;
+  in_dtype: "float32" | "uint8";
+  out_dtype: "float32" | "uint8";
+}
+
+interface LinearTransform extends Step {
+  type: "LinearTransform";
+  params: {
+    A: number[][];
+    b: number[];
+  };
+}
+
+interface ScalarQuantizer extends Step {
+  type: "ScalarQuantizer";
+  params: {
+    vmin: number[];
+    vdiff: number[];
+  };
+  mode: "QT_8bit";
+}
+
+interface Meta {
+  model?: string;
+  chain: LinearTransform[];
+  quantize: ScalarQuantizer;
+  ids: string[];
+}
+
+// usearch naming:
+// * connectivity = hnsw_connectivity,  # Number of Graph connections per layer of HNSW. Original paper calls it "M". Can't be changed after construction.
+// * expansion_add = hnsw_expansion_add,  # Search depth when inserting new vectors. Original paper calls it "efConstruction". Can be changed afterwards.
+// * expansion_search = hnsw_expansion_search,  # Search depth when querying nearest neighbors. Original paper calls it "ef". Can be changed afterwards.
+
+const cosineDistance = (a: number[], b: number[]) => {
+  let A = 0;
+  let B = 0;
+  let AB = 0;
+  for (let i = 0; i < a.length; i++) {
+    A += a[i] * a[i];
+    B += b[i] * b[i];
+    AB += a[i] * b[i];
+  }
+  if (A === 0 || B === 0) {
+    return 1;
+  }
+  return 1 - AB / (Math.sqrt(A) * Math.sqrt(B));
+};
+
+const cosineDistancePreNorm = (a: number[], b: number[]) => {
+  let AB = 0;
+  for (let i = 0; i < a.length; i++) {
+    AB += a[i] * b[i];
+  }
+  return 1 - AB;
+};
+
+const linearForward = (vec: number[], params: LinearTransform): number[] => {
+  // ORIGINAL PYTHON:
+  // | output = np.zeros(reduce_dim, dtype=v.dtype)
+  // | for i in range(reduce_dim):
+  // |     total = b_vec[i]
+  // |     for j in range(D):
+  // |         total += A_mat[i, j] * v[j]
+  // |     output[i] = total
+  // | v = output
+  // params
+  const inDim = params.in_dim;
+  const outDim = params.out_dim;
+  const b = params.params.b;
+  const A = params.params.A;
+  // compute
+  const output = new Array(outDim);
+  for (let i = 0; i < outDim; i++) {
+    let total = b[i];
+    for (let j = 0; j < inDim; j++) {
+      total += A[i][j] * vec[j];
+    }
+    output[i] = total;
+  }
+  return output;
+};
+
+const encode = (vec: number[], params: ScalarQuantizer): Uint8Array => {
+  // ORIGINAL PYTHON:
+  // | # https://github.com/facebookresearch/faiss/blob/d4fa401656fa413728f3c93bae4e34fb81803d54/faiss/impl/ScalarQuantizer.cpp#L381
+  // | out = np.zeros((len(v),), dtype=np.uint8)
+  // | for i in range(len(v)):
+  // |     vd = vdiff[i]
+  // |     vm = vmin[i]
+  // |     xi = 0
+  // |     if vd != 0:
+  // |         xi = (v[i] - vm) / vd
+  // |         if xi < 0:
+  // |             xi = 0
+  // |         if xi > 1.0:
+  // |             xi = 1.0
+  // |     out[i] = int(xi * 255)
+  // | v = out
+  // OR
+  // | def _manual_encode(x):
+  // |     x = (x - vmin) / vdiff
+  // |     x = np.clip(x * 255, 0, 255).astype(np.uint8)
+  // |     return x
+  // params
+  const inDim = params.in_dim;
+  const outDim = params.out_dim;
+  const vmin = params.params.vmin;
+  const vdiff = params.params.vdiff;
+  // compute
+  const out = new Uint8Array(outDim);
+  for (let i = 0; i < inDim; i++) {
+    const vd = vdiff[i];
+    const vm = vmin[i];
+    let xi = 0;
+    if (vd !== 0) {
+      xi = (vec[i] - vm) / vd;
+      if (xi < 0) {
+        xi = 0;
+      }
+      if (xi > 1.0) {
+        xi = 1.0;
+      }
+    }
+    out[i] = Math.round(xi * 255);
+  }
+  return out;
+};
+
+const decode = (vec: Uint8Array, params: ScalarQuantizer): number[] => {
+  // ORIGINAL PYTHON:
+  // | def _manual_decode(x):
+  // |     x = (x + 0.5) / 255
+  // |     x = vmin + x * vdiff
+  // |     return x
+  // params
+  const inDim = params.in_dim;
+  const outDim = params.out_dim;
+  const vmin = params.params.vmin;
+  const vdiff = params.params.vdiff;
+  // compute
+  const out = new Array(outDim);
+  for (let i = 0; i < inDim; i++) {
+    out[i] = (vmin[i] + (vec[i] + 0.5) / 255) * vdiff[i];
+  }
+  return out;
+};
+
+let index: HNSW;
+let indexMeta: Meta;
+
+async function loadIndex() {
+  console.log("Loading index...");
+
+  if (index || indexMeta) {
+    console.warn("Index already loaded.");
+    return;
+  }
+
+  const metaFile = "/index/index_meta.json";
+  const vecFile = "/index/index_vecs.bin";
+
+  // load metaFile
+  console.log("load meta...");
+  const metaResponse = await fetch(metaFile);
+  const meta: Meta = await metaResponse.json();
+
+  // load index
+  console.log("load vecs...");
+  const vecsResponse = await fetch(vecFile);
+  const vecsBuffer = await vecsResponse.arrayBuffer();
+  const vecs = new Uint8Array(vecsBuffer);
+
+  const getVec = (i: number[]) => {
+    const byteStart = i[0] * vecQuantBytes;
+    const byteEnd = byteStart + vecQuantBytes;
+    const vec = vecs.slice(byteStart, byteEnd);
+    return vec;
+  };
+
+  // check
+  const numVecs = meta.ids.length;
+  const vecQuantSize = meta.quantize.out_dim;
+  const bytesPerNumQuant = { float32: 4, uint8: 1 }[meta.quantize.out_dtype];
+  const vecQuantBytes = vecQuantSize * bytesPerNumQuant;
+  const totalBytes = numVecs * vecQuantBytes;
+
+  if (vecs.length !== totalBytes) {
+    throw new Error(
+      `Index vecs size mismatch: ${vecs.length} != ${totalBytes}`,
+    );
+  }
+  if (meta.quantize.out_dtype !== "uint8") {
+    throw new Error(
+      `Index quantize out_dtype not yet supported: ${meta.quantize.out_dtype}, expected uint8`,
+    );
+  }
+
+  const quantizedCosineDistance = (a: number[], b: number[]) => {
+    // allow passing in normal vecs into index instead of just quantized values.
+    const _a = a.length == 1 ? decode(getVec(a), meta.quantize) : a;
+    const _b = b.length == 1 ? decode(getVec(b), meta.quantize) : b;
+    return cosineDistance(_a, _b);
+  };
+
+  const quantizedCosineDistancePreNormalized = (a: number[], b: number[]) => {
+    // allow passing in normal vecs into index instead of just quantized values.
+    const _a = a.length == 1 ? decode(getVec(a), meta.quantize) : a;
+    const _b = b.length == 1 ? decode(getVec(b), meta.quantize) : b;
+    return cosineDistancePreNorm(_a, _b);
+  };
+
+  // create index
+  const idx = new HNSW({
+    distanceFunction: quantizedCosineDistance,
+    m: 16,
+    efConstruction: 100,
+    mMax0: 32,
+    useIndexedDB: true,
+  });
+
+  // set index
+  index = idx;
+  indexMeta = meta;
+
+  // add vectors to index
+  console.log("add vecs...");
+
+  for (let i = 0; i < 2000; i++) {
+    await idx.insert(meta.ids[i], [i]);
+  }
+
+  console.log("Loaded index!");
+}
 
 // ===========================================================
 // Configuration Interfaces
@@ -1309,6 +1542,7 @@ class VideoContainer extends LitElement {
 // ===========================================================
 // Entry Point / Main Function (Minimal Change)
 // ===========================================================
+
 export function main() {
   /* ... (No changes needed from V3) ... */
   if (!customElements.get("video-container")) {
@@ -1317,4 +1551,13 @@ export function main() {
   document.querySelector("video-container")?.remove();
   const videoContainer = document.createElement("video-container");
   document.body.appendChild(videoContainer);
+
+  // load the index, call async loadIndex
+  loadIndex()
+    .then((index) => {
+      console.log("Index loaded:", index);
+    })
+    .catch((error) => {
+      console.error("Error loading index:", error);
+    });
 }
