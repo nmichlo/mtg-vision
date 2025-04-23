@@ -108,10 +108,8 @@ def main(
         "in_dim": D,
         "in_norm": pre_norm_vectors,
         "in_num": N,
-        "in_ids": uuids,
         # reduce dims
         "reduce_mode": reduce_mode,
-        "reduce_transform": None,
         "reduce_dim": reduce_dim if reduce_dim else D,
         # hnsw index
         "hnsw_metric": hnsw_metric.name,
@@ -119,6 +117,9 @@ def main(
         "hnsw_connectivity": hnsw_connectivity,
         "hnsw_expansion_add": hnsw_expansion_add,
         "hnsw_expansion_search": hnsw_expansion_search,
+        # DATA
+        "in_ids": uuids,
+        "reduce_transform": None,
     }
 
     # ============== CREATE AND OPTIMIZE DATA ================== #
