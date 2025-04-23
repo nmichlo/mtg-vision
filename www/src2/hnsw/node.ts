@@ -1,10 +1,16 @@
-export class Node {
-  id: number;
-  level: number;
-  vector: Float32Array | number[];
-  neighbors: number[][];
+export const NULL_KEY = null;
 
-  constructor(id: number, vector: Float32Array | number[], level: number, M: number) {
+export type Key = string;
+
+export type Vec = Float32Array | number[];
+
+export class Node {
+  id: Key;
+  level: number;
+  vector: Vec;
+  neighbors: Key[][];
+
+  constructor(id: Key, vector: Vec, level: number, M: number) {
     this.id = id;
     this.vector = vector;
     this.level = level;
