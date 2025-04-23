@@ -113,7 +113,6 @@ def main(
     seed: int = 42,
     # load vectors
     max_vectors: Optional[int] = None,
-    pre_norm_vectors: bool = True,
     # reduction
     reduce_dim: Optional[int] = 128,  # locked after training
     reduce_mode: Literal["pca", "opq", "random"] = "pca",  # locked after training
@@ -133,44 +132,19 @@ def main(
     vectors, uuids = _fetch(max_vectors=max_vectors)
     N, D = vectors.shape
 
-    if pre_norm_vectors:
-        print("Normalizing vectors...")
-        vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+    print("normalizing vectors...")
+    faiss.normalize_L2(vectors)  # inplace
 
     # ============== CREATE METADATA ================== #
 
     metadata = {
-        "pipeline": [],
+        "model": None,  # string
+        "chain": [],
+        "quantize": None,
         "ids": uuids,
     }
 
-    _pipeline_step_norm = {
-        "type": "norm",
-        "in_dim": D,
-        "out_dim": D,
-    }
-    _pipeline_step_reduce = {
-        "type": "linear_matrix",
-        "in_dim": D,
-        "out_dim": reduce_dim if reduce_dim else D,
-        "params": None,
-        "mode": reduce_mode,
-    }
-    _pipeline_step_quant = {
-        "type": "scalar_quantizer",
-        "in_dim": reduce_dim if reduce_dim else D,
-        "out_dim": reduce_dim if reduce_dim else D,
-        "params": None,
-        "mode": reduce_quant,
-    }
-
     # ============== CREATE PIPELINE ================== #
-
-    # norm op
-    norm = None
-    if pre_norm_vectors:
-        norm = faiss.normalize_L2
-        metadata["pipeline"].append(_pipeline_step_norm)
 
     # reduce op
     reduce = None
@@ -193,11 +167,16 @@ def main(
         #   instead of modifying the application pipeline.
         A_mat = faiss.vector_float_to_array(reduce.A).reshape(reduce_dim, D)
         b_vec = faiss.vector_float_to_array(reduce.b)
-        _pipeline_step_reduce["params"] = {
-            "A": A_mat.tolist(),
-            "b": b_vec.tolist(),
-        }
-        metadata["pipeline"].append(_pipeline_step_reduce)
+        metadata["chain"].append(
+            {
+                "type": "LinearTransform",
+                "in_dim": D,
+                "out_dim": reduce_dim if reduce_dim else D,
+                "in_dtype": "float32",
+                "out_dtype": "float32",
+                "params": {"A": A_mat.tolist(), "b": b_vec.tolist()},
+            }
+        )
 
     # quantize op
     quantizer = None
@@ -215,24 +194,26 @@ def main(
         # - the trained quantizer operates over a min-max range of 0-1?
         #   this is configurable with RS_* settings??
         [vmin, vdiff] = faiss.vector_float_to_array(quantizer.trained).reshape(2, -1)
-        _pipeline_step_quant["params"] = {
-            "vmin": vmin.tolist(),
-            "vdiff": vdiff.tolist(),
+        metadata["quantize"] = {
+            "type": "ScalarQuantizer",
+            "in_dim": reduce_dim if reduce_dim else D,
+            "out_dim": reduce_dim if reduce_dim else D,
+            "in_dtype": "float32",
+            "out_dtype": "uint8",
+            "params": {"vmin": vmin.tolist(), "vdiff": vdiff.tolist()},
+            "mode": "QT_8bit",
         }
-        metadata["pipeline"].append(_pipeline_step_quant)
 
     # ============== PROCESS VECTORS ================== #
 
     def process_vector(
         v: np.ndarray,
         mode: Literal["lib", "manual", "manual_loop"] = validate_apply_mode,
+        skip_quant: bool = False,
     ) -> np.ndarray:
-        for step in metadata["pipeline"]:
-            # NORM
-            if step["type"] == "norm":
-                v = v / np.linalg.norm(v)
-            # REDUCE
-            elif step["type"] == "linear_matrix":
+        # REDUCE
+        for step in metadata["chain"]:
+            if step["type"] == "LinearTransform":
                 if mode == "lib":
                     v = reduce.apply(v[None, :])[0]
                 elif mode == "manual":
@@ -247,13 +228,25 @@ def main(
                     v = output
                 else:
                     raise ValueError(f"Unknown mode: {mode}")
-            # QUANT
-            elif step["type"] == "scalar_quantizer":
+            else:
+                raise ValueError(f"Unknown step type: {reduce['type']}")
+        # QUANT
+        if not skip_quant:
+            if metadata["quantize"]["type"] == "ScalarQuantizer":
+                step = metadata["quantize"]
                 vmin = step["params"]["vmin"]
                 vdiff = step["params"]["vdiff"]
                 if mode == "lib":
                     v = quantizer.compute_codes(v[None, :])[0]
                 elif mode == "manual":
+                    # def _manual_encode(x):
+                    #     x = (x - vmin) / vdiff
+                    #     x = np.clip(x * 255, 0, 255).astype(np.uint8)
+                    #     return x
+                    # def _manual_decode(x):
+                    #     x = (x + 0.5) / 255
+                    #     x = vmin + x * vdiff
+                    #     return x
                     # encode
                     v = np.clip(((v - vmin) / vdiff) * 255, 0, 255).astype(np.uint8)
                     # decode
@@ -275,9 +268,8 @@ def main(
                     v = out
                 else:
                     raise ValueError(f"Unknown mode: {mode}")
-            # UNKNOWN
             else:
-                raise ValueError(f"Unknown step type: {step['type']}")
+                raise ValueError(f"Unknown step type: {metadata['quantize']['type']}")
         # done!
         return v
 
@@ -298,13 +290,29 @@ def main(
     # ============== SAVE ================== #
 
     print("Saving metadata...")
-    # save index and compress
+
+    # save metadata
     with open("gen/index_meta.json", "w") as fp:
         json.dump(metadata, fp, indent=2, sort_keys=False)
-    # resave as gzip
+    # save vectors as binary values
+    with open("gen/index_vecs.bin", "wb") as fp:
+        for v in tqdm(vectors, "saving"):
+            bytes_ = process_vector(v, mode="lib")
+            bytes_ = bytes_.tobytes()
+            assert len(bytes_) == reduce_dim if reduce_dim else D
+            fp.write(bytes_)
+        fp.flush()
+    # print size of fp
+    with open("gen/index_vecs.bin", "rb") as fp:
+        len_ = len(fp.read())
+        assert len_ == N * (reduce_dim if reduce_dim else D)
+        print(len_, N, reduce_dim if reduce_dim else D)
+
+    # resave
     resave_gz("gen/index_meta.json")
-    # split files into chunks
+    resave_gz("gen/index_vecs.bin")
     resave_parts("gen/index_meta.json")
+    resave_parts("gen/index_vecs.bin")
 
     # ============== TEST INDEX ================== #
     # -- THIS IS NOT EXPORTED
@@ -336,7 +344,9 @@ def main(
 
         index.add(
             keys=[uuid_to_int(uid) for uid in uuids],
-            vectors=np.asarray([process_vector(v, mode="lib") for v in vectors]),
+            vectors=np.asarray(
+                [process_vector(v, mode="lib", skip_quant=True) for v in vectors]
+            ),
             progress=progress,
         )
 
@@ -350,7 +360,9 @@ def main(
     with tqdm(total=len(vectors)) as pbar:
         count, correct = 0, 0
         for uid, vector in zip(uuids, vectors):
-            results = index.search(process_vector(perturb_vector(vector)), 1)
+            results = index.search(
+                process_vector(perturb_vector(vector), skip_quant=True), 1
+            )
             count += 1
             correct += uuid_to_int(uid) in results.keys
             pbar.update()
