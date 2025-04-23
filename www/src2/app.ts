@@ -2,7 +2,7 @@ import { css, html, LitElement } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import * as tf from "@tensorflow/tfjs";
 import { Point, TrackedObject, Tracker, TrackerOptions } from "./norfair";
-import { HNSW } from "mememo";
+import { HNSW } from "./hnsw/main";
 
 interface Step {
   type: string;
@@ -205,28 +205,23 @@ async function loadIndex() {
     );
   }
 
-  const quantizedCosineDistance = (a: number[], b: number[]) => {
+  const quantizedCosineSimilarity = (a: number[], b: number[]) => {
     // allow passing in normal vecs into index instead of just quantized values.
     const _a = a.length == 1 ? decode(getVec(a), meta.quantize) : a;
     const _b = b.length == 1 ? decode(getVec(b), meta.quantize) : b;
-    return cosineDistance(_a, _b);
+    return 1 - cosineDistance(_a, _b);
   };
 
-  const quantizedCosineDistancePreNormalized = (a: number[], b: number[]) => {
+  const quantizedCosineSimilarityPreNormalized = (a: number[], b: number[]) => {
     // allow passing in normal vecs into index instead of just quantized values.
     const _a = a.length == 1 ? decode(getVec(a), meta.quantize) : a;
     const _b = b.length == 1 ? decode(getVec(b), meta.quantize) : b;
-    return cosineDistancePreNorm(_a, _b);
+    return 1 - cosineDistancePreNorm(_a, _b);
   };
 
   // create index
-  const idx = new HNSW({
-    distanceFunction: quantizedCosineDistance,
-    m: 16,
-    efConstruction: 100,
-    mMax0: 32,
-    useIndexedDB: true,
-  });
+  const idx = new HNSW(16, 100, vecQuantSize);
+  idx.similarityFunction = quantizedCosineSimilarity;
 
   // set index
   index = idx;
@@ -236,7 +231,7 @@ async function loadIndex() {
   console.log("add vecs...");
 
   for (let i = 0; i < 2000; i++) {
-    await idx.insert(meta.ids[i], [i]);
+    await idx.addPoint(meta.ids[i], [i]);
   }
 
   console.log("Loaded index!");
