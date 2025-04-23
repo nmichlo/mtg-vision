@@ -156,3 +156,10 @@ labels.cache
 */images/*/*.png
 */images/*/*.jpg
 */labels/*/*.txt
+
+# data
+*.gz
+*.bin
+*.part
+*meta.json
+*parts.json
