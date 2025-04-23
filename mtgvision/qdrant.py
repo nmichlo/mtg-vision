@@ -35,7 +35,12 @@ class VectorStoreQdrant:
     def drop_collection(self):
         self.client.delete_collection(self._COLLECTION)
 
-    def scroll(
+    def count(self) -> int:
+        return self.client.count(
+            collection_name=self._COLLECTION,
+        ).count
+
+    def scroll_batches(
         self,
         *,
         batch_size: int = 1000,
@@ -53,12 +58,30 @@ class VectorStoreQdrant:
             )
             if not results or offset is None:
                 break
-            for point in results:
-                yield QdrantPoint(
+            yield [
+                QdrantPoint(
                     id=point.id,
                     vector=point.vector,
                     payload=point.payload,
                 )
+                for point in results
+            ]
+
+    def scroll(
+        self,
+        *,
+        batch_size: int = 1000,
+        with_vectors: bool = False,
+        with_payload: bool = True,
+        offset: str | None = None,
+    ):
+        for batch in self.scroll_batches(
+            batch_size=batch_size,
+            with_vectors=with_vectors,
+            with_payload=with_payload,
+            offset=offset,
+        ):
+            yield from batch
 
     def retrieve(
         self,
