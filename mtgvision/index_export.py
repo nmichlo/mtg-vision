@@ -77,12 +77,12 @@ def main(
     # hnsw
     hnsw_metric: MetricKind = MetricKind.Cosine,  # locked after training
     hnsw_dtype: ScalarKind = ScalarKind.I8,  # locked after training
-    hnsw_connectivity: int = 32,  # locked after training
+    hnsw_connectivity: int = 16,  # locked after training
     hnsw_expansion_add: int = 200,  # can change later
     hnsw_expansion_search: int = 200,  # can change later
     # validation only
-    validate_perturb_scale: float = 0.1,
-    validate_apply_mode: Literal["lib", "manual"] = "lib",
+    validate_perturb_scale: float = 0.01,
+    validate_apply_mode: Literal["lib", "manual", "manual_loop"] = "lib",
     cache: bool = True,
 ):
     random.seed(seed)
