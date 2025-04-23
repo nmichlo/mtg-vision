@@ -3,7 +3,9 @@ import itertools
 import json
 import os
 import random
+import shutil
 import uuid
+from pathlib import Path
 from typing import Literal, Optional
 
 import faiss
@@ -208,15 +210,59 @@ def main(
     # ============== SAVE ================== #
 
     print("Saving index...")
+
+    def resave_gz(path: str):
+        with open(path, "rb") as f_in:
+            with gzip.open(path + ".gz", "wb") as f_out:
+                f_out.writelines(f_in)
+
+    def resave_parts(path: str, max_part_size_bytes: int = 3 * 1024 * 1024):
+        """
+        Split a file into parts.
+
+        <input> --> <input>/part#
+
+        A meta file is also saved listing all the parts, and the total size.
+        """
+        root = Path(f"{path}.parts")
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir(parents=True, exist_ok=True)
+        parts = []
+        with open(path, "rb") as f_in:
+            while True:
+                part = f_in.read(max_part_size_bytes)
+                if not part:
+                    break
+                part_name = f"{root}/{len(parts)}.part"
+                with open(part_name, "wb") as f_out:
+                    f_out.write(part)
+                parts.append(Path(part_name).name)
+        # save meta
+        with open(f"{root}/meta.json", "w") as f_out:
+            json.dump(
+                {
+                    "total_size": os.path.getsize(path),
+                    "parts": parts,
+                },
+                f_out,
+                indent=2,
+                sort_keys=False,
+            )
+
     # save index and compress
-    index.save("index.bin")
-    with open("index.bin", "rb") as f_in:
-        with gzip.open("index.bin.gz", "wb") as f_out:
-            f_out.writelines(f_in)
-    os.unlink("index.bin")
-    # write metadata ids
-    with gzip.open("index_meta.json.gz", "w") as fp:
-        fp.write(json.dumps(metadata).encode("utf-8"))
+    Path("gen").mkdir(parents=True, exist_ok=True)
+    index.save("gen/index.bin")
+    with open("gen/index_meta.json", "w") as fp:
+        json.dump(metadata, fp, indent=2, sort_keys=False)
+
+    # resave as gzip
+    resave_gz("gen/index.bin")
+    resave_gz("gen/index_meta.json")
+
+    # split files into chunks
+    resave_parts("gen/index.bin")
+    resave_parts("gen/index_meta.json")
 
     # ============== TEST INDEX ================== #
 
