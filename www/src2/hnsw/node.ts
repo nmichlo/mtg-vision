@@ -14,6 +14,8 @@ export class Node {
     this.id = id;
     this.vector = vector;
     this.level = level;
-    this.neighbors = Array.from({ length: level + 1 }, () => new Array(M).fill(-1));
+    this.neighbors = Array.from({ length: level + 1 }, () =>
+      new Array(M).fill(NULL_KEY),
+    );
   }
 }
