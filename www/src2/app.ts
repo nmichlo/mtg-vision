@@ -41,7 +41,7 @@ interface Meta {
 // * expansion_add = hnsw_expansion_add,  # Search depth when inserting new vectors. Original paper calls it "efConstruction". Can be changed afterwards.
 // * expansion_search = hnsw_expansion_search,  # Search depth when querying nearest neighbors. Original paper calls it "ef". Can be changed afterwards.
 
-const cosineDistance = (a: number[], b: number[]) => {
+const cosineSimilarity = (a: number[], b: number[]) => {
   let A = 0;
   let B = 0;
   let AB = 0;
@@ -53,18 +53,18 @@ const cosineDistance = (a: number[], b: number[]) => {
   if (A === 0 || B === 0) {
     return 1;
   }
-  return 1 - AB / (Math.sqrt(A) * Math.sqrt(B));
+  return AB / (Math.sqrt(A) * Math.sqrt(B));
 };
 
-const cosineDistancePreNorm = (a: number[], b: number[]) => {
+const cosineSimilarityPreNorm = (a: number[], b: number[]) => {
   let AB = 0;
   for (let i = 0; i < a.length; i++) {
     AB += a[i] * b[i];
   }
-  return 1 - AB;
+  return AB;
 };
 
-const linearForward = (vec: number[], params: LinearTransform): number[] => {
+const makeLinearForward = (params: LinearTransform) => {
   // ORIGINAL PYTHON:
   // | output = np.zeros(reduce_dim, dtype=v.dtype)
   // | for i in range(reduce_dim):
@@ -78,19 +78,22 @@ const linearForward = (vec: number[], params: LinearTransform): number[] => {
   const outDim = params.out_dim;
   const b = params.params.b;
   const A = params.params.A;
-  // compute
-  const output = new Array(outDim);
-  for (let i = 0; i < outDim; i++) {
-    let total = b[i];
-    for (let j = 0; j < inDim; j++) {
-      total += A[i][j] * vec[j];
+
+  return (vec: number[]): number[] => {
+    // compute
+    const output = new Array(outDim);
+    for (let i = 0; i < outDim; i++) {
+      let total = b[i];
+      for (let j = 0; j < inDim; j++) {
+        total += A[i][j] * vec[j];
+      }
+      output[i] = total;
     }
-    output[i] = total;
-  }
-  return output;
+    return output;
+  };
 };
 
-const encode = (vec: number[], params: ScalarQuantizer): Uint8Array => {
+const makeEncode = (params: ScalarQuantizer) => {
   // ORIGINAL PYTHON:
   // | # https://github.com/facebookresearch/faiss/blob/d4fa401656fa413728f3c93bae4e34fb81803d54/faiss/impl/ScalarQuantizer.cpp#L381
   // | out = np.zeros((len(v),), dtype=np.uint8)
@@ -111,60 +114,124 @@ const encode = (vec: number[], params: ScalarQuantizer): Uint8Array => {
   // |     x = (x - vmin) / vdiff
   // |     x = np.clip(x * 255, 0, 255).astype(np.uint8)
   // |     return x
+
   // params
   const inDim = params.in_dim;
   const outDim = params.out_dim;
   const vmin = params.params.vmin;
   const vdiff = params.params.vdiff;
-  // compute
-  const out = new Uint8Array(outDim);
-  for (let i = 0; i < inDim; i++) {
-    const vd = vdiff[i];
-    const vm = vmin[i];
-    let xi = 0;
-    if (vd !== 0) {
-      xi = (vec[i] - vm) / vd;
-      if (xi < 0) {
-        xi = 0;
-      }
-      if (xi > 1.0) {
-        xi = 1.0;
-      }
-    }
-    out[i] = Math.round(xi * 255);
+
+  if (inDim !== outDim) {
+    throw new Error("in_dim != out_dim");
   }
-  return out;
+
+  return (vec: number[]): Uint8Array => {
+    // compute
+    const out = new Uint8Array(outDim);
+    for (let i = 0; i < inDim; i++) {
+      const vd = vdiff[i];
+      const vm = vmin[i];
+      let xi = 0;
+      if (vd !== 0) {
+        xi = (vec[i] - vm) / vd;
+        if (xi < 0) {
+          xi = 0;
+        }
+        if (xi > 1.0) {
+          xi = 1.0;
+        }
+      }
+      out[i] = Math.round(xi * 255);
+    }
+    return out;
+  };
 };
 
-const decode = (vec: Uint8Array, params: ScalarQuantizer): number[] => {
+const makeDecode = (params: ScalarQuantizer) => {
   // ORIGINAL PYTHON:
   // | def _manual_decode(x):
   // |     x = (x + 0.5) / 255
   // |     x = vmin + x * vdiff
   // |     return x
+
   // params
   const inDim = params.in_dim;
   const outDim = params.out_dim;
   const vmin = params.params.vmin;
   const vdiff = params.params.vdiff;
-  // compute
-  const out = new Array(outDim);
-  for (let i = 0; i < inDim; i++) {
-    out[i] = (vmin[i] + (vec[i] + 0.5) / 255) * vdiff[i];
+
+  if (inDim !== outDim) {
+    throw new Error("in_dim != out_dim");
   }
-  return out;
+
+  return (vec: Uint8Array): number[] => {
+    const out = new Array(outDim);
+    for (let i = 0; i < inDim; i++) {
+      out[i] = (vmin[i] + (vec[i] + 0.5) / 255) * vdiff[i];
+    }
+    return out;
+  };
+};
+
+const makeDecodeSimilarityPreNorm = (params: ScalarQuantizer) => {
+  const inDim = params.in_dim;
+  const outDim = params.out_dim;
+  const vmin = params.params.vmin;
+  const vdiff = params.params.vdiff;
+
+  if (inDim !== outDim) {
+    throw new Error("in_dim != out_dim");
+  }
+
+  return (a: Uint8Array, b: Uint8Array) => {
+    let AB = 0;
+    for (let i = 0; i < inDim; i++) {
+      const A = (vmin[i] + (a[i] + 0.5) / 255) * vdiff[i];
+      const B = (vmin[i] + (b[i] + 0.5) / 255) * vdiff[i];
+      AB += A * B;
+    }
+    return AB;
+  };
+};
+
+const makeDecodeSimilarity = (params: ScalarQuantizer) => {
+  const inDim = params.in_dim;
+  const outDim = params.out_dim;
+  const vmin = params.params.vmin;
+  const vdiff = params.params.vdiff;
+
+  if (inDim !== outDim) {
+    throw new Error("in_dim != out_dim");
+  }
+
+  return (a: Uint8Array, b: Uint8Array) => {
+    let AB = 0;
+    let AA = 0;
+    let BB = 0;
+    for (let i = 0; i < inDim; i++) {
+      const A = (vmin[i] + (a[i] + 0.5) / 255) * vdiff[i];
+      const B = (vmin[i] + (b[i] + 0.5) / 255) * vdiff[i];
+      AB += A * B;
+      AA += A * A;
+      BB += B * B;
+    }
+    return AB / (Math.sqrt(AA) * Math.sqrt(BB));
+  };
 };
 
 let index: HNSW;
 let indexMeta: Meta;
+let indexProcessVec: (vec: number[]) => number[];
+let indexLoadState = "N/A";
 
 async function loadIndex() {
-  console.log("Loading index...");
-
   if (index || indexMeta) {
     console.warn("Index already loaded.");
     return;
   }
+
+  console.log("Loading index...");
+  indexLoadState = "Fetching Data...";
 
   const metaFile = "/index/index_meta.json";
   const vecFile = "/index/index_vecs.bin";
@@ -180,8 +247,8 @@ async function loadIndex() {
   const vecsBuffer = await vecsResponse.arrayBuffer();
   const vecs = new Uint8Array(vecsBuffer);
 
-  const getVec = (i: number[]) => {
-    const byteStart = i[0] * vecQuantBytes;
+  const getVec = (i: number) => {
+    const byteStart = i * vecQuantBytes;
     const byteEnd = byteStart + vecQuantBytes;
     const vec = vecs.slice(byteStart, byteEnd);
     return vec;
@@ -204,37 +271,58 @@ async function loadIndex() {
       `Index quantize out_dtype not yet supported: ${meta.quantize.out_dtype}, expected uint8`,
     );
   }
+  if (meta.chain.length !== 1) {
+    throw new Error(
+      `Index chain length not yet supported: ${meta.chain.length}, expected 1`,
+    );
+  }
+
+  const decode = makeDecode(meta.quantize);
+  const decodeSimilarity = makeDecodeSimilarity(meta.quantize);
+  const decodeSimilarityPreNorm = makeDecodeSimilarityPreNorm(meta.quantize);
 
   const quantizedCosineSimilarity = (a: number[], b: number[]) => {
-    // allow passing in normal vecs into index instead of just quantized values.
-    const _a = a.length == 1 ? decode(getVec(a), meta.quantize) : a;
-    const _b = b.length == 1 ? decode(getVec(b), meta.quantize) : b;
-    return 1 - cosineDistance(_a, _b);
+    const aIsRef = a.length == 1;
+    const bIsRef = b.length == 1;
+    if (aIsRef && bIsRef) {
+      return decodeSimilarity(getVec(a[0]), getVec(b[0]));
+    }
+    const _a = aIsRef ? decode(getVec(a[0])) : a;
+    const _b = bIsRef ? decode(getVec(b[0])) : b;
+    return cosineSimilarity(_a, _b);
   };
 
   const quantizedCosineSimilarityPreNormalized = (a: number[], b: number[]) => {
-    // allow passing in normal vecs into index instead of just quantized values.
-    const _a = a.length == 1 ? decode(getVec(a), meta.quantize) : a;
-    const _b = b.length == 1 ? decode(getVec(b), meta.quantize) : b;
-    return 1 - cosineDistancePreNorm(_a, _b);
+    const aIsRef = a.length == 1;
+    const bIsRef = b.length == 1;
+    if (aIsRef && bIsRef) {
+      return decodeSimilarityPreNorm(getVec(a[0]), getVec(b[0]));
+    }
+    const _a = aIsRef ? decode(getVec(a[0])) : a;
+    const _b = bIsRef ? decode(getVec(b[0])) : b;
+    return cosineSimilarityPreNorm(_a, _b);
   };
 
   // create index
-  const idx = new HNSW(16, 100, vecQuantSize);
-  idx.similarityFunction = quantizedCosineSimilarity;
-
-  // set index
-  index = idx;
-  indexMeta = meta;
+  indexLoadState = "Creating Index...";
+  const idx = new HNSW(16, 100, vecQuantSize, quantizedCosineSimilarity);
 
   // add vectors to index
+  // THIS IS VERY SLOW... probably need a loading indicator...
   console.log("add vecs...");
 
-  for (let i = 0; i < 2000; i++) {
+  const time = performance.now();
+  for (let i = 0; i < meta.ids.length; i++) {
     await idx.addPoint(meta.ids[i], [i]);
   }
+  const time2 = performance.now();
 
-  console.log("Loaded index!");
+  console.log("Loaded index in", time2 - time, "ms");
+  meta.ids = null;
+  indexMeta = meta;
+  index = idx;
+  indexProcessVec = makeLinearForward(meta.chain[0]);
+  indexLoadState = "Success";
 }
 
 // ===========================================================
@@ -313,6 +401,8 @@ interface ObjectEmbeddingInfo {
   creationTime: number;
   embedding: tf.Tensor | null; // Stores the embedding tensor (ownership with this object)
   lastKnownBboxVideo: BBox | null;
+  matchId: string | null;
+  lastMatchTime: number | null;
 }
 
 // ===========================================================
@@ -911,6 +1001,8 @@ class TrackedObjectState {
           creationTime: timestamp,
           embedding: null,
           lastKnownBboxVideo: null,
+          matchId: null,
+          lastMatchTime: null,
         });
       }
     });
@@ -963,6 +1055,10 @@ class TrackedObjectState {
     return null;
   }
 
+  get(id: number): ObjectEmbeddingInfo | null {
+    return this.state.get(id) || null;
+  }
+
   getEmbedding(id: number): tf.Tensor | null {
     return this.state.get(id)?.embedding || null;
   }
@@ -979,6 +1075,16 @@ class TrackedObjectState {
     } else {
       console.warn(`Update embed for non-existent ID ${id}`);
       embedding?.dispose();
+    }
+  }
+
+  updateMatchingId(uid: string) {
+    const info = this.state.get(parseInt(uid));
+    if (info) {
+      info.matchId = uid;
+      info.lastMatchTime = Date.now();
+    } else {
+      console.warn(`Update match ID for non-existent ID ${uid}`);
     }
   }
 
@@ -1483,7 +1589,15 @@ class VideoContainer extends LitElement {
         );
         if (newEmbedding) {
           this.trackedObjectState.updateEmbedding(id, newEmbedding);
-          this.fetchDataFromVectorDB(newEmbedding, id);
+          // TODO: need some way to know if the embedding is new
+          this.fetchDataFromVectorDB(newEmbedding, id).then((uid) => {
+            if (uid) {
+              this.trackedObjectState.updateMatchingId(uid);
+              console.log(`Embedding for ID ${id} stored with UID: ${uid}`);
+            } else {
+              console.warn(`No UID found for ID ${id}`);
+            }
+          });
         }
       }
     } catch (error) {
@@ -1500,13 +1614,15 @@ class VideoContainer extends LitElement {
   }
 
   // --- Other Helpers ---
-  private async fetchDataFromVectorDB(
-    embedding: tf.Tensor,
-    objectId: number,
-  ): Promise<void> {
-    /* ... (No changes needed from V3) ... */ await new Promise((resolve) =>
-      setTimeout(resolve, 50),
-    );
+  private async fetchDataFromVectorDB(embedding: tf.Tensor, objectId: number) {
+    if (!indexProcessVec || !index) {
+      return;
+    }
+    const embArray = Array.from(await embedding.data());
+    const compressedEmbedding = indexProcessVec(embArray);
+    const results = index.searchKNN(compressedEmbedding, 1);
+    const result = results[0];
+    return result.id;
   }
   private handleFatalError(message: string, error?: any) {
     /* ... (No changes needed from V3) ... */ console.error(
@@ -1551,8 +1667,10 @@ export function main() {
   loadIndex()
     .then((index) => {
       console.log("Index loaded:", index);
+      indexLoadState = "Success";
     })
     .catch((error) => {
       console.error("Error loading index:", error);
+      indexLoadState = "Error";
     });
 }
