@@ -403,6 +403,12 @@ interface ObjectEmbeddingInfo {
   lastKnownBboxVideo: BBox | null;
   matchId: string | null;
   lastMatchTime: number | null;
+  cardData: {
+    name: string;
+    set_name: string;
+    set_code: string;
+    img_uri: string;
+  } | null;
 }
 
 // ===========================================================
@@ -1003,6 +1009,7 @@ class TrackedObjectState {
           lastKnownBboxVideo: null,
           matchId: null,
           lastMatchTime: null,
+          cardData: null,
         });
       }
     });
@@ -1091,6 +1098,13 @@ class TrackedObjectState {
   disposeAllEmbeddings(): void {
     this.state.forEach((info) => info.embedding?.dispose());
     this.state.clear();
+  }
+
+  updateCardData(id: number, cardData: ObjectEmbeddingInfo['cardData'] | null): void {
+    const info = this.state.get(id);
+    if (info) {
+      info.cardData = cardData;
+    }
   }
 }
 
@@ -1514,21 +1528,26 @@ class VideoContainer extends LitElement {
     trackingResults: number[],
     generatedMasks: Map<number, tf.Tensor2D> | null,
   ): DrawInfo[] {
-    /* ... (No changes needed from V3, uses restored scaleModelBboxToVideo indirectly) ... */
     const objectsToDraw: DrawInfo[] = [];
     yoloOutput.detections.forEach((rawDet, index) => {
       const trackId = trackingResults[index];
       const videoBbox = this.scaleModelBboxToVideo(rawDet.bboxModel);
       if (videoBbox) {
-        const canvasBbox =
-          this.canvasRenderer.convertVideoBoxToCanvas(videoBbox);
-        const label = `${trackId === -1 ? "Init" : `ID: ${trackId}`} (${rawDet.confidence.toFixed(2)})`;
-        const color =
-          DRAWING_CONFIG.colors[
-            trackId >= 0
-              ? trackId % DRAWING_CONFIG.colors.length
-              : DRAWING_CONFIG.colors.length - 1
-          ];
+        const canvasBbox = this.canvasRenderer.convertVideoBoxToCanvas(videoBbox);
+        const objectInfo = this./* The above code appears to be a comment block in TypeScript. It
+        mentions a variable or function called `trackedObjectState`, but
+        without the actual code or context, it is not possible to determine
+        what it is doing. Comments are used to provide explanations or
+        documentation about the code for developers to understand its
+        purpose. */
+        trackedObjectState.get(trackId);
+        const cardName = objectInfo?.cardData?.name || '';
+        const label = `${trackId === -1 ? "Init" : `ID: ${trackId}`}${cardName ? ` - ${cardName}` : ''} (${rawDet.confidence.toFixed(2)})`;
+        const color = DRAWING_CONFIG.colors[
+          trackId >= 0
+            ? trackId % DRAWING_CONFIG.colors.length
+            : DRAWING_CONFIG.colors.length - 1
+        ];
         const maskTensor = generatedMasks?.get(index);
         objectsToDraw.push({
           id: trackId,
@@ -1614,6 +1633,21 @@ class VideoContainer extends LitElement {
   }
 
   // --- Other Helpers ---
+  private async fetchCardDataFromScryfall(cardId: string): Promise<ObjectEmbeddingInfo['cardData'] | null> {
+    try {
+      const response = await fetch(`https://api.scryfall.com/cards/${cardId}`);
+      if (!response.ok) {
+        console.warn(`Failed to fetch card data for ${cardId}: ${response.statusText}`);
+        return null;
+      }
+      const cardData = await response.json();
+      return cardData;
+    } catch (error) {
+      console.error(`Error fetching card data for ${cardId}:`, error);
+      return null;
+    }
+  }
+
   private async fetchDataFromVectorDB(embedding: tf.Tensor, objectId: number) {
     if (!indexProcessVec || !index) {
       return;
@@ -1622,8 +1656,22 @@ class VideoContainer extends LitElement {
     const compressedEmbedding = indexProcessVec(embArray);
     const results = index.searchKNN(compressedEmbedding, 1);
     const result = results[0];
+
+    // Fetch card data from Scryfall
+    if (result.id) {
+      const cardData = await this.fetchCardDataFromScryfall(result.id);
+      console.log(result.id, cardData);
+      if (cardData) {
+        const info = this.trackedObjectState.get(objectId);
+        if (info) {
+          this.trackedObjectState.updateCardData(objectId, cardData);
+        }
+      }
+    }
+
     return result.id;
   }
+
   private handleFatalError(message: string, error?: any) {
     /* ... (No changes needed from V3) ... */ console.error(
       "FATAL ERROR:",
