@@ -407,7 +407,7 @@ interface ObjectEmbeddingInfo {
     name: string;
     set_name: string;
     set_code: string;
-    img_uri: string;
+    image_uris: {small: string};
   } | null;
 }
 
@@ -1115,9 +1115,8 @@ class TrackedObjectState {
 @customElement("video-container")
 class VideoContainer extends LitElement {
   static styles = css`
-    /* ... (Styles remain the same) ... */
     :host {
-      display: block;
+      display: flex;
       width: 100%;
       height: 100%;
       overflow: hidden;
@@ -1152,16 +1151,64 @@ class VideoContainer extends LitElement {
       text-align: center;
       z-index: 10;
     }
+    .sidebar {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 150px; /* Reduced width */
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      overflow-y: auto;
+      z-index: 10;
+    }
+    .card-preview {
+      margin-bottom: 10px;
+      background-color: #333;
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    .card-preview img {
+      width: 100%;
+      display: block;
+    }
+    .card-preview .info {
+      padding: 5px;
+      color: white;
+      font-size: 0.8em;
+      display: flex;
+      justify-content: space-between;
+    }
+    .card-pip {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 40%;
+      height: 40%;
+      background-color: rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    .card-pip img {
+      max-width: 90%;
+      max-height: 90%;
+      object-fit: contain;
+    }
   `;
 
   // --- Element Refs ---
   @query("#video") private videoElement!: HTMLVideoElement;
   @query("#overlay-canvas") private canvasElement!: HTMLCanvasElement;
+  @query(".sidebar") private sidebarElement!: HTMLDivElement;
 
   // --- State ---
   @state() private inferenceStatus: string = "Initializing...";
   @state() private modelsReady: boolean = false;
   @state() private streamReady: boolean = false;
+  @state() private cardPreviews: { id: number; image: string; timestamp: number }[] = [];
 
   // --- Service Instances ---
   private videoSourceManager!: VideoSourceManager;
@@ -1349,7 +1396,6 @@ class VideoContainer extends LitElement {
       return;
     }
     if (!this._checkInferencePrerequisites()) {
-      // Use check function
       this.inferenceLoopId = requestAnimationFrame(() => this.runInference());
       return;
     }
@@ -1367,12 +1413,15 @@ class VideoContainer extends LitElement {
     let generatedMasks: Map<number, tf.Tensor2D> | null = null;
 
     try {
-      // Execute pipeline steps using helpers
       yoloOutput = await this._getFrameAndYoloOutput(videoElement);
       if (!yoloOutput || !yoloOutput.protoTensor)
         throw new Error("YOLO processing failed.");
 
       const trackingResults = this._updateTrackerAndGetResults(yoloOutput);
+
+      // Get currently tracked IDs for cleanup
+      const trackedIds = new Set(trackingResults.filter(id => id !== -1));
+      this.cleanupUntrackedPreviews(trackedIds);
 
       const maskGenConfig = {
         protoSize: YOLO_CONFIG.protoMaskSize,
@@ -1391,7 +1440,7 @@ class VideoContainer extends LitElement {
       this.trackedObjectState.updateTrackedObjects(
         this.objectTracker.getTrackedObjects(),
         frameStart,
-      ); // Update state manager's view of objects
+      );
 
       const objectsToDraw = this._prepareDrawData(
         yoloOutput,
@@ -1534,13 +1583,7 @@ class VideoContainer extends LitElement {
       const videoBbox = this.scaleModelBboxToVideo(rawDet.bboxModel);
       if (videoBbox) {
         const canvasBbox = this.canvasRenderer.convertVideoBoxToCanvas(videoBbox);
-        const objectInfo = this./* The above code appears to be a comment block in TypeScript. It
-        mentions a variable or function called `trackedObjectState`, but
-        without the actual code or context, it is not possible to determine
-        what it is doing. Comments are used to provide explanations or
-        documentation about the code for developers to understand its
-        purpose. */
-        trackedObjectState.get(trackId);
+        const objectInfo = this.trackedObjectState.get(trackId);
         const cardName = objectInfo?.cardData?.name || '';
         const label = `${trackId === -1 ? "Init" : `ID: ${trackId}`}${cardName ? ` - ${cardName}` : ''} (${rawDet.confidence.toFixed(2)})`;
         const color = DRAWING_CONFIG.colors[
@@ -1578,7 +1621,6 @@ class VideoContainer extends LitElement {
 
   // --- Embedding Loop (Uses TrackedObjectState) ---
   private async runEmbeddingLoop() {
-    /* ... (No changes needed from V3, uses state manager correctly) ... */
     if (this.isEmbedding) {
       return;
     }
@@ -1602,13 +1644,17 @@ class VideoContainer extends LitElement {
       if (embeddingCandidate) {
         const { id, bboxVideo } = embeddingCandidate;
         const videoElement = this.videoSourceManager.getVideoElement()!;
+
+        // Capture and display the card image
+        const cardImage = await this.captureCardImage(videoElement, bboxVideo);
+        this.updateCardPreviews(id, cardImage);
+
         const newEmbedding = await this.embeddingProcessor.createEmbedding(
           videoElement,
           bboxVideo,
         );
         if (newEmbedding) {
           this.trackedObjectState.updateEmbedding(id, newEmbedding);
-          // TODO: need some way to know if the embedding is new
           this.fetchDataFromVectorDB(newEmbedding, id).then((uid) => {
             if (uid) {
               this.trackedObjectState.updateMatchingId(uid);
@@ -1635,7 +1681,12 @@ class VideoContainer extends LitElement {
   // --- Other Helpers ---
   private async fetchCardDataFromScryfall(cardId: string): Promise<ObjectEmbeddingInfo['cardData'] | null> {
     try {
-      const response = await fetch(`https://api.scryfall.com/cards/${cardId}`);
+      const response = await fetch(`https://api.scryfall.com/cards/${cardId}`, {
+        headers: {
+          'Cache-Control': 'max-age=86400', // Cache for 24 hours
+          'Accept': 'application/json',
+        },
+      });
       if (!response.ok) {
         console.warn(`Failed to fetch card data for ${cardId}: ${response.statusText}`);
         return null;
@@ -1686,15 +1737,75 @@ class VideoContainer extends LitElement {
     this.canvasRenderer?.clearAll();
   }
 
+  private async captureCardImage(videoElement: HTMLVideoElement, bbox: BBox): Promise<string> {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+
+    // Set canvas size to match the bbox
+    canvas.width = bbox.x2 - bbox.x1;
+    canvas.height = bbox.y2 - bbox.y1;
+
+    // Draw the video frame to the canvas, cropping to the bbox
+    ctx.drawImage(
+      videoElement,
+      bbox.x1, bbox.y1, canvas.width, canvas.height, // source
+      0, 0, canvas.width, canvas.height // destination
+    );
+
+    return canvas.toDataURL('image/jpeg', 0.8);
+  }
+
+  private updateCardPreviews(id: number, image: string) {
+    // Remove any existing preview for this ID
+    this.cardPreviews = this.cardPreviews.filter(p => p.id !== id);
+
+    // Add new preview
+    this.cardPreviews = [
+      ...this.cardPreviews,
+      { id, image, timestamp: Date.now() }
+    ];
+
+    // Keep only the 5 most recent previews
+    if (this.cardPreviews.length > 5) {
+      this.cardPreviews = this.cardPreviews
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 5);
+    }
+  }
+
+  private cleanupUntrackedPreviews(trackedIds: Set<number>) {
+    this.cardPreviews = this.cardPreviews.filter(preview => trackedIds.has(preview.id));
+  }
+
   // --- Render ---
   render() {
-    /* ... (No changes needed from V3) ... */ return html`<video
-        id="video"
-        muted
-        playsinline
-      ></video
-      ><canvas id="overlay-canvas"></canvas>
-      <div class="status">${this.inferenceStatus}</div>`;
+    return html`
+      <video id="video" muted playsinline></video>
+      <canvas id="overlay-canvas"></canvas>
+      <div class="status">${this.inferenceStatus}</div>
+      <div class="sidebar">
+        ${this.cardPreviews.map(preview => {
+          const objectInfo = this.trackedObjectState.get(preview.id);
+          return html`
+            <div class="card-preview">
+              <img src="${preview.image}" alt="Card preview ${preview.id}">
+              <div class="info">
+                <span>ID: ${preview.id}</span>
+                ${objectInfo?.cardData ? html`
+                  <span>${objectInfo.cardData.name}</span>
+                ` : ''}
+              </div>
+              ${objectInfo?.cardData?.image_uris?.small ? html`
+                <div class="card-pip">
+                  <img src="${objectInfo.cardData.image_uris.small}" alt="${objectInfo.cardData.name}">
+                </div>
+              ` : ''}
+            </div>
+          `;
+        })}
+      </div>
+    `;
   }
 } // End VideoContainer class
 
