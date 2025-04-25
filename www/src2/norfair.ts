@@ -1,3 +1,18 @@
+/**
+ * Norfair Object Tracking Library
+ *
+ * JavaScript port of the Norfair object tracking library.
+ * This file provides:
+ * - Point-based object tracking algorithms
+ * - Track management (creation, updates, deletion)
+ * - Kalman filtering for smoother tracking
+ * - Distance-based track association
+ *
+ * Norfair is used to track detected objects across video frames,
+ * maintaining consistent identities even when objects move or
+ * are temporarily occluded.
+ */
+
 // --- Single File Port of tracker-pp ---
 
 // --- Basic Matrix/Vector Utilities ---
