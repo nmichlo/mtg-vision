@@ -10,11 +10,155 @@ from typing import Literal, Optional
 
 import faiss
 import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from cachier import cachier
-from usearch.index import Index, ScalarKind
 from tqdm import tqdm
+from usearch.index import Index, ScalarKind
 
 from mtgvision.qdrant import VectorStoreQdrant
+
+
+class ReducerNet(nn.Module):
+    def __init__(self, in_dim, out_dim, hidden_dim=None):
+        super().__init__()
+        if hidden_dim is None:
+            hidden_dim = max(out_dim, in_dim // 2)
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+            # nn.GELU(),
+            # nn.Linear(hidden_dim, out_dim),
+        )
+
+    def forward(self, x):
+        x = self.net(x)
+        x = nn.functional.normalize(x, p=2, dim=1)
+        return x
+
+
+def train_reducer_net(
+    vectors: np.ndarray,
+    out_dim: int,
+    epochs: int = 100,
+    batch_size: int = 1024 * 4,
+):
+    D = vectors.shape[1]
+    device = torch.device("mps")
+    print(f"Using device: {device}")
+
+    # get model
+    model = ReducerNet(D, out_dim).to(device)
+    optimizer = optim.RAdam(model.parameters(), lr=1e-2)
+    loss_fn = nn.MSELoss()
+    N, D = vectors.shape
+
+    # ------------
+    # BENCHMARK AGAINST
+    pca = faiss.PCAMatrix(d_in=D, d_out=out_dim, random_rotation=True)
+    pca.train(vectors)
+    rrm = faiss.RandomRotationMatrix(D, out_dim)
+    rrm.train(vectors)
+    # ------------
+
+    # ---- append data to vectors ----
+
+    random_groups = [
+        np.random.randn(N // 10, D).astype(np.float32),
+        np.random.randn(N // 10, D).astype(np.float32),
+    ]
+    random_groups[1] /= np.linalg.norm(random_groups[1], axis=1, keepdims=True)
+    vectors = np.concatenate((vectors, *random_groups), axis=0)
+
+    # ------------
+    # BENCHMARK AGAINST
+    pca2 = faiss.PCAMatrix(d_in=D, d_out=out_dim, random_rotation=True)
+    pca2.train(vectors)
+    rrm2 = faiss.RandomRotationMatrix(D, out_dim)
+    rrm2.train(vectors)
+    pca_A = faiss.vector_float_to_array(pca2.A).reshape(out_dim, D)
+    pca_b = faiss.vector_float_to_array(pca2.b)
+    # ------------
+
+    norm = True
+
+    # init weights from pca
+    # with torch.no_grad():
+    #     model.net[0].weight.copy_(torch.from_numpy(pca_A).to(device))
+    #     model.net[0].bias.copy_(torch.from_numpy(pca_b).to(device))
+
+    model.train()
+    for epoch in range(epochs):
+        pbar = tqdm(range(0, N, batch_size), desc=f"Epoch {epoch + 1}/{epochs}")
+        # random order
+        idxs = np.arange(N)
+        np.random.shuffle(idxs)
+
+        for batch_idx in pbar:
+            optimizer.zero_grad()
+            # make batch
+            vecs = vectors[idxs[batch_idx : batch_idx + batch_size]]
+            vecs = torch.from_numpy(vecs).to(device)
+
+            # get original distances
+            with torch.no_grad():
+                orig_sim = vecs @ vecs.T
+            # get new distances from compressed vectors
+            embedded_vecs = model(vecs)  # output is normed
+            embedded_sim = embedded_vecs @ embedded_vecs.T
+            # compute loss
+            loss = loss_fn(embedded_sim, orig_sim)
+
+            # -------
+            # benchmark
+            if (epoch in (0, epochs - 1) or epoch % 10 == 0) and batch_idx == 0:
+                print()
+                # pca
+                pca_vecs = pca.apply_py(vecs.cpu().numpy())
+                pca_vecs = torch.from_numpy(pca_vecs).to(device)
+                if norm:
+                    pca_vecs = nn.functional.normalize(pca_vecs, p=2, dim=1)
+                pca_sim = pca_vecs @ pca_vecs.T
+                loss_pca_sim = loss_fn(pca_sim, orig_sim)
+                print(f"PCA loss: {loss_pca_sim.item()}")
+                # pca
+                pca_vecs = pca2.apply_py(vecs.cpu().numpy())
+                pca_vecs = torch.from_numpy(pca_vecs).to(device)
+                if norm:
+                    pca_vecs = nn.functional.normalize(pca_vecs, p=2, dim=1)
+                pca_sim = pca_vecs @ pca_vecs.T
+                loss_pca_sim = loss_fn(pca_sim, orig_sim)
+                print(f"PCA loss: {loss_pca_sim.item()}")
+                # mock linear transform pca
+                linear = nn.Linear(D, out_dim, bias=True).to(device)
+                with torch.no_grad():
+                    linear.weight.copy_(torch.from_numpy(pca_A).to(device))
+                    linear.bias.copy_(torch.from_numpy(pca_b).to(device))
+                linear_vecs = linear(vecs)
+                if norm:
+                    linear_vecs = nn.functional.normalize(linear_vecs, p=2, dim=1)
+                linear_sim = linear_vecs @ linear_vecs.T
+                loss_linear_sim = loss_fn(linear_sim, orig_sim)
+                print(f"Linear transform PCA loss: {loss_linear_sim.item()}")
+                # random rotation matrix
+                rrm_vecs = rrm.apply_py(vecs.cpu().numpy())
+                rrm_vecs = torch.from_numpy(rrm_vecs).to(device)
+                if norm:
+                    rrm_vecs = nn.functional.normalize(rrm_vecs, p=2, dim=1)
+                rrm_sim = rrm_vecs @ rrm_vecs.T
+                loss_rrm_sim = loss_fn(rrm_sim, orig_sim)
+                print(f"Random rotation matrix loss: {loss_rrm_sim.item()}")
+                # actual model
+                # should be the same as `loss_linear_sim` and `loss_pca_sim` on the very first epoch
+                print(f"Model loss: {loss.item()}")
+            # -------
+
+            # optimize
+            loss.backward()
+            optimizer.step()
+            pbar.set_postfix({"loss": loss.item()})
+
+    return model.eval()
 
 
 def fetch_vectors_from_qdrant(
@@ -114,8 +258,8 @@ def main(
     # load vectors
     max_vectors: Optional[int] = None,
     # reduction
-    reduce_dim: Optional[int] = 128,  # locked after training
-    reduce_mode: Literal["pca", "opq", "random"] = "pca",  # locked after training
+    reduce_dim: Optional[int] = 256,  # locked after training
+    reduce_mode: Literal["pca", "opq", "random", "nn"] = "nn",  # locked after training
     reduce_quant: Optional[str] = "i8",  # locked after training
     # validation only
     validate_perturb_scale: float = 0.001,
@@ -150,7 +294,29 @@ def main(
     reduce = None
     if reduce_dim and reduce_mode:
         # linear transforms
-        if reduce_mode == "pca":
+        if reduce_mode == "nn":
+            print("Training reduction network...")
+            reducer_model = train_reducer_net(vectors, out_dim=reduce_dim)
+            reduce = reducer_model.cpu()
+            # save state dict
+            state_dict = reduce.state_dict()
+            for k, v in state_dict.items():
+                state_dict[k] = v.numpy().tolist()
+            # save metadata
+            metadata["chain"].append(
+                {
+                    "type": "NeuralNetReducer",
+                    "in_dim": D,
+                    "out_dim": reduce_dim,
+                    "in_dtype": "float32",
+                    "out_dtype": "float32",
+                    "params": {
+                        "state_dict": state_dict,
+                        "hidden_dim": reduce.net[0].out_features,
+                    },
+                }
+            )
+        elif reduce_mode == "pca":
             reduce = faiss.PCAMatrix(d_in=D, d_out=reduce_dim, random_rotation=True)
         elif reduce_mode == "opq":
             reduce = faiss.OPQMatrix(D, 16, reduce_dim)  # M????
@@ -228,8 +394,15 @@ def main(
                     v = output
                 else:
                     raise ValueError(f"Unknown mode: {mode}")
+            elif step["type"] == "NeuralNetReducer":
+                if mode == "lib":
+                    with torch.no_grad():
+                        v_tensor = torch.from_numpy(v[None, :].astype(np.float32))
+                        v = reduce(v_tensor).numpy()[0]
+                else:
+                    raise ValueError(f"Mode {mode} not supported for NeuralNetReducer")
             else:
-                raise ValueError(f"Unknown step type: {reduce['type']}")
+                raise ValueError(f"Unknown step type: {step['type']}")
         # QUANT
         if not skip_quant:
             if metadata["quantize"]["type"] == "ScalarQuantizer":
