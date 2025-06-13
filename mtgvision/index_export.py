@@ -21,20 +21,77 @@ from mtgvision.qdrant import VectorStoreQdrant
 
 
 class ReducerNet(nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_dim=None):
+    def __init__(
+        self,
+        in_dim,
+        out_dim,
+        hidden_dim=None,
+        quant_bits: int = 8,
+        mode: Literal["sigmoid", "linear"] = "linear",
+    ):
         super().__init__()
+
+        self.q_mode = mode
+        self.q_min = 0
+        self.q_max = 2**quant_bits - 1
+        self.q_mid = 2 ** (quant_bits - 1) - 1
+
         if hidden_dim is None:
             hidden_dim = max(out_dim, in_dim // 2)
+
         self.net = nn.Sequential(
-            nn.Linear(in_dim, out_dim),
-            # nn.GELU(),
-            # nn.Linear(hidden_dim, out_dim),
+            nn.Linear(in_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, out_dim),
         )
+        # Learnable scale and offset for each dimension
+        self.scale = nn.Parameter(torch.ones(out_dim))
+        self.offset = nn.Parameter(torch.zeros(out_dim))
+        with torch.no_grad():
+            if self.q_mode == "sigmoid":
+                self.scale.fill_(1)
+                self.offset.fill_(0)
+            else:
+                self.scale.fill_(self.q_mid)
+                self.offset.fill_(self.q_mid)
 
     def forward(self, x):
         x = self.net(x)
+        # forward
+        if self.q_mode == "sigmoid":
+            # Shift the output to good starting values
+            x = x * 16
+            # apply sigmoid to range 0-255
+            x = torch.sigmoid(x) * (self.q_max - self.q_min)
+        else:
+            # Shift the output to good starting values
+            x = x * self.q_mid * 8 + self.q_mid  # (works well)
+            # clap to 0-255 range and allow gradients to flow through
+            sub_greater = (x - self.q_max).detach() * (x > self.q_max).detach()
+            sub_less = (x - self.q_min).detach() * (x < self.q_min).detach()
+            x = x - sub_greater - sub_less
+        # to int that allows grad flow
+        x = x - (x % 1).detach()
+        return x
+
+    def get_normalized(self, x):
+        """Convert quantized values back to normalized vectors"""
+        # undo sigmoid
+        if self.q_mode == "sigmoid":
+            x = x / (self.q_max - self.q_min)
+            x = torch.log(x / (1 - x + 1e-8) + 1e-8)  # logit function
+        # Unquantize
+        x = (x - self.offset) / self.scale
+        # Normalize
         x = nn.functional.normalize(x, p=2, dim=1)
         return x
+
+    def get_quantization_params(self):
+        """Get the learned scale and offset parameters for each dimension"""
+        return {
+            "scale": self.scale.detach().cpu().numpy(),
+            "offset": self.offset.detach().cpu().numpy(),
+        }
 
 
 def train_reducer_net(
@@ -82,11 +139,6 @@ def train_reducer_net(
 
     norm = True
 
-    # init weights from pca
-    # with torch.no_grad():
-    #     model.net[0].weight.copy_(torch.from_numpy(pca_A).to(device))
-    #     model.net[0].bias.copy_(torch.from_numpy(pca_b).to(device))
-
     model.train()
     for epoch in range(epochs):
         pbar = tqdm(range(0, N, batch_size), desc=f"Epoch {epoch + 1}/{epochs}")
@@ -104,10 +156,26 @@ def train_reducer_net(
             with torch.no_grad():
                 orig_sim = vecs @ vecs.T
             # get new distances from compressed vectors
-            embedded_vecs = model(vecs)  # output is normed
+            quantized_vecs = model(vecs)  # output is soft-quantized 0-255
+            # out of range loss
+            if model.q_mode == "linear":
+                oor_loss = torch.mean(
+                    torch.abs(
+                        (quantized_vecs <= model.q_min) * (quantized_vecs - model.q_mid)
+                    )
+                ) + torch.mean(
+                    torch.abs(
+                        (quantized_vecs >= model.q_max) * (quantized_vecs - model.q_mid)
+                    )
+                )
+            else:
+                oor_loss = torch.full((), fill_value=0.0, device=device)
+            # quant loss
+            embedded_vecs = model.get_normalized(quantized_vecs)
             embedded_sim = embedded_vecs @ embedded_vecs.T
             # compute loss
-            loss = loss_fn(embedded_sim, orig_sim)
+            loss_sim = loss_fn(embedded_sim, orig_sim)
+            loss = loss_sim + oor_loss
 
             # -------
             # benchmark
@@ -128,7 +196,7 @@ def train_reducer_net(
                     pca_vecs = nn.functional.normalize(pca_vecs, p=2, dim=1)
                 pca_sim = pca_vecs @ pca_vecs.T
                 loss_pca_sim = loss_fn(pca_sim, orig_sim)
-                print(f"PCA loss: {loss_pca_sim.item()}")
+                print(f"PCA loss (ran): {loss_pca_sim.item()}")
                 # mock linear transform pca
                 linear = nn.Linear(D, out_dim, bias=True).to(device)
                 with torch.no_grad():
@@ -149,14 +217,31 @@ def train_reducer_net(
                 loss_rrm_sim = loss_fn(rrm_sim, orig_sim)
                 print(f"Random rotation matrix loss: {loss_rrm_sim.item()}")
                 # actual model
-                # should be the same as `loss_linear_sim` and `loss_pca_sim` on the very first epoch
                 print(f"Model loss: {loss.item()}")
+                # Print quantization stats
+                with torch.no_grad():
+                    quantized = model(vecs)
+                    print(
+                        f"Quantized range: [{quantized.min().item():.1f}, {quantized.max().item():.1f}]"
+                    )
+                    print(
+                        f"Scale range: [{model.scale.min().item():.3f}, {model.scale.max().item():.3f}]"
+                    )
+                    print(
+                        f"Offset range: [{model.offset.min().item():.3f}, {model.offset.max().item():.3f}]"
+                    )
             # -------
 
             # optimize
             loss.backward()
             optimizer.step()
-            pbar.set_postfix({"loss": loss.item()})
+            pbar.set_postfix(
+                {
+                    "loss": loss.item(),
+                    "sim": loss_sim.item(),
+                    "oor": oor_loss.item(),
+                }
+            )
 
     return model.eval()
 
@@ -258,7 +343,7 @@ def main(
     # load vectors
     max_vectors: Optional[int] = None,
     # reduction
-    reduce_dim: Optional[int] = 256,  # locked after training
+    reduce_dim: Optional[int] = 128,  # locked after training
     reduce_mode: Literal["pca", "opq", "random", "nn"] = "nn",  # locked after training
     reduce_quant: Optional[str] = "i8",  # locked after training
     # validation only
