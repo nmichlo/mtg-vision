@@ -5,7 +5,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal
 
 import torch
 from torch import nn
@@ -15,7 +15,7 @@ from mtgvision.models.ae_base import AeBase
 from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
 
 if TYPE_CHECKING:
-    from keras import Model as KerasModel
+    from litert_torch.model import LiteRTModel
     from torch.onnx import ONNXProgram
 
 # ========================================================================= #
@@ -174,12 +174,6 @@ class _Base(nn.Module):
 # ========================================================================= #
 
 
-class _TfLiteExportable(Protocol):
-    """Structural type for the object returned by `ai_edge_torch.convert`."""
-
-    def export(self, path: str) -> object: ...
-
-
 class Export:
     @staticmethod
     def to_coreml(
@@ -215,97 +209,94 @@ class Export:
     @staticmethod
     def to_tflite(
         obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
-    ) -> _TfLiteExportable:
-        import ai_edge_torch
-        from ai_edge_torch.model import TfLiteModel
+    ) -> LiteRTModel:
+        import litert_torch
 
         model, i = obj.get_trace_items()
-        converted: TfLiteModel = ai_edge_torch.convert(model, (i,))
+        converted: LiteRTModel = litert_torch.convert(model, (i,))
         return converted
 
     @staticmethod
-    def to_keras(
-        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
-    ) -> KerasModel:
-        import nobuco
-        import tensorflow as tf
-        import torch.nn.functional as F
-        from nobuco import ChannelOrderingStrategy
+    def _run_isolated(package: str, command: str, *args: str) -> None:
+        """Run a converter in its own uv-managed env.
 
-        @nobuco.converter(
-            F.mish,
-            channel_ordering_strategy=ChannelOrderingStrategy.MINIMUM_TRANSPOSITIONS,
-        )
-        def mish_converter(
-            input: torch.Tensor, inplace: bool = False
-        ) -> Callable[[torch.Tensor, bool], object]:
-            return lambda input, inplace=False: tf.keras.activations.mish(input)
-
-        print("Exporting to Keras")
-        model, i = obj.get_trace_items()
-        keras_model = nobuco.pytorch_to_keras(
-            model,
-            args=[i],
-            kwargs={},
-        )
-        assert not isinstance(keras_model, tuple)
-        return keras_model
+        The tensorflow toolchain cannot live in this project: `keras<3` pins
+        tensorflow to 2.15, which only ships wheels for cp39-cp311, while this
+        package needs 3.12+ for PEP 695 syntax. uvx fetches each converter into
+        an isolated env instead, so nothing here depends on tensorflow.
+        """
+        try:
+            subprocess.run(
+                ["uvx", "--from", package, command, *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"--- {command} failed ---")
+            print("Command:", e.cmd)
+            print("Return Code:", e.returncode)
+            print("Stdout:", e.stdout)
+            print("Stderr:", e.stderr)
+            raise
+        except FileNotFoundError:
+            print("ERROR: 'uvx' command not found.")
+            print(
+                "Install uv (https://docs.astral.sh/uv/) so the converter can be fetched on demand."
+            )
+            raise
 
     @staticmethod
     def export_tfjs(
         obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder, path: str | Path
     ) -> None:
+        """Export a tfjs graph model, the format `www/` loads via `tf.loadGraphModel`.
+
+        Routed torch -> onnx -> saved_model -> tfjs. The previous torch -> keras
+        route used nobuco, which needs tensorflow in-process; onnx2tf does the
+        same job out-of-process.
+        """
         path = Path(path)
-        path.mkdir(parents=True, exist_ok=True)  # Ensure output dir exists
+        path.mkdir(parents=True, exist_ok=True)
 
-        # 1. Convert to Keras
-        keras_model = Export.to_keras(obj)
-        if keras_model is None:
-            raise RuntimeError("Keras conversion failed")
-
-        # 2. Save Keras model temporarily
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_keras_path = Path(temp_dir) / "keras_model"
-            print(f"Saving temporary Keras model to: {temp_keras_path}")
-            keras_model.save(str(temp_keras_path))
+            onnx_path = Path(temp_dir) / "model.onnx"
+            saved_model_path = Path(temp_dir) / "saved_model"
 
-            # 3. Convert saved Keras model to TFJS
-            print(f"Converting Keras model to TFJS at: {path}")
-            # Use subprocess to call the converter tool
-            try:
-                subprocess.run(
-                    [
-                        # fetched into an isolated env: tensorflowjs needs
-                        # keras>=3, while nobuco/ai-edge-torch need keras<3
-                        "uvx",
-                        "--from",
-                        "tensorflowjs",
-                        "tensorflowjs_converter",
-                        "--input_format",
-                        "tf_saved_model",  # Input is the saved Keras model
-                        "--output_format",
-                        "tfjs_graph_model",  # Or tfjs_layers_model
-                        str(temp_keras_path),  # Path to saved Keras model
-                        str(path),  # Output directory for TFJS files
-                    ],
-                    check=True,
-                    capture_output=True,  # Capture output for better debugging
-                    text=True,
-                )
-                print("TFJS conversion successful.")
-            except subprocess.CalledProcessError as e:
-                print("--- TFJS Conversion Failed ---")
-                print("Command:", e.cmd)
-                print("Return Code:", e.returncode)
-                print("Stdout:", e.stdout)
-                print("Stderr:", e.stderr)
-                raise e
-            except FileNotFoundError:
-                print("ERROR: 'uvx' command not found.")
-                print(
-                    "Install uv (https://docs.astral.sh/uv/) so the converter can be fetched on demand."
-                )
-                raise
+            # 1. torch -> onnx, in-process
+            print(f"Saving temporary ONNX model to: {onnx_path}")
+            Export.to_onnx(obj).save(str(onnx_path))
+
+            # 2. onnx -> tf saved_model
+            # NOTE: blocked on onnx2tf 2.6.8, whose SavedModel exporter raises
+            # "`input.shape.rank` must be at least 5" on depthwise convs, which
+            # ConvNeXt uses throughout. Its tflite output is unaffected, and
+            # `to_tflite` covers that target directly. Older onnx2tf releases
+            # pin ai-edge-litert==2.1.0, which has linux-only wheels.
+            print(f"Converting ONNX model to SavedModel at: {saved_model_path}")
+            Export._run_isolated(
+                "onnx2tf",
+                "onnx2tf",
+                "-i",
+                str(onnx_path),
+                "-o",
+                str(saved_model_path),
+                "-osd",  # signaturedefs, required by tensorflowjs_converter
+            )
+
+            # 3. tf saved_model -> tfjs
+            print(f"Converting SavedModel to TFJS at: {path}")
+            Export._run_isolated(
+                "tensorflowjs",
+                "tensorflowjs_converter",
+                "--input_format",
+                "tf_saved_model",
+                "--output_format",
+                "tfjs_graph_model",
+                str(saved_model_path),
+                str(path),
+            )
+            print("TFJS conversion successful.")
 
 
 # ========================================================================= #

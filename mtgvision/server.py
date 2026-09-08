@@ -16,8 +16,7 @@ import numpy.typing as npt
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from mtgdata.scryfall import ScryfallCardFace
-from norfair import Detection, Tracker
-from norfair.distances import mean_euclidean
+from norfair_rs import Detection, Tracker, mean_euclidean
 from qdrant_client.http.models import ScoredPoint
 from typing_extensions import TypeIs
 

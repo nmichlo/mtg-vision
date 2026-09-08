@@ -42,16 +42,15 @@ dependencies = [
     "shapely",
     "fastapi[standard]",
     "qdrant-client",
-    "norfair",
+    # norfair-rs: rust port of norfair. upstream norfair pins numpy<2, which
+    # conflicts with the jax that litert-torch needs.
+    "norfair-rs",
     # onnx export
     "onnxscript",
     "pyinstrument",
     "onnxconverter-common",
-    "ai-edge-torch",
-    # nobuco
-    "nobuco",
-    "keras<3.0.0",  # https://github.com/google-ai-edge/mediapipe/issues/5229
-    "numpy<2.0.0",  # https://github.com/google-ai-edge/mediapipe/issues/5229
+    # ai-edge-torch is a deprecation shim as of 0.9; litert-torch is the package
+    "litert-torch",
     # embeddings
     "qdrant-client",
     "usearch",
