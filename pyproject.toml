@@ -47,9 +47,6 @@ dependencies = [
     "onnxscript",
     "pyinstrument",
     "onnxconverter-common",
-    # tfjs
-    "tensorflowjs[wizard]",
-    "prompt_toolkit",  # PyInquirer
     "ai-edge-torch",
     # nobuco
     "nobuco",
@@ -58,6 +55,8 @@ dependencies = [
     # embeddings
     "qdrant-client",
     "usearch",
+    "faiss-cpu",
+    "onnxruntime",
 ]
 
 [dependency-groups]

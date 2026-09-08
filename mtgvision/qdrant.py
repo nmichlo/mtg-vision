@@ -62,21 +62,22 @@ class VectorStoreQdrant:
         with_vectors: bool = False,
         with_payload: bool = True,
         offset: str | None = None,
-    ):
+    ) -> Iterator[list[QdrantPoint]]:
+        cursor: int | str | None = offset
         while True:
-            [results, offset] = self.client.scroll(
+            [results, cursor] = self.client.scroll(
                 collection_name=self._COLLECTION,
                 limit=batch_size,
-                offset=offset,
+                offset=cursor,
                 with_vectors=with_vectors,
                 with_payload=with_payload,
             )
-            if not results or offset is None:
+            if not results or cursor is None:
                 break
             yield [
                 QdrantPoint(
-                    id=point.id,
-                    vector=point.vector,
+                    id=str(point.id),
+                    vector=_as_flat_vector(point.vector),
                     payload=point.payload,
                 )
                 for point in results
@@ -89,7 +90,7 @@ class VectorStoreQdrant:
         with_vectors: bool = False,
         with_payload: bool = True,
         offset: str | None = None,
-    ):
+    ) -> Iterator[QdrantPoint]:
         for batch in self.scroll_batches(
             batch_size=batch_size,
             with_vectors=with_vectors,

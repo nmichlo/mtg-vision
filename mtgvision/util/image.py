@@ -359,7 +359,7 @@ def resize(
 def pad_to_aspect_and_resize(
     img: np.ndarray,
     size_hw: tuple[int, int],
-):
+) -> npt.NDArray[np.float32]:
     h, w = size_hw
     ih, iw = img.shape[:2]
     # pad to target aspect ratio

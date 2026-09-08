@@ -5,7 +5,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional, Union
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import torch
 from torch import nn
@@ -15,7 +15,8 @@ from mtgvision.models.ae_base import AeBase
 from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
 
 if TYPE_CHECKING:
-    from coremltools.models import MLModel
+    from keras import Model as KerasModel
+    from torch.onnx import ONNXProgram
 
 # ========================================================================= #
 # Helper                                                                    #
@@ -173,15 +174,21 @@ class _Base(nn.Module):
 # ========================================================================= #
 
 
+class _TfLiteExportable(Protocol):
+    """Structural type for the object returned by `ai_edge_torch.convert`."""
+
+    def export(self, path: str) -> object: ...
+
+
 class Export:
     @staticmethod
     def to_coreml(
-        obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
+        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
         in_name: str,
         out_name: str,
-        **convert_kwargs,
-    ):
-        from coremltools import convert, TensorType
+        **convert_kwargs: object,
+    ) -> object:
+        from coremltools import TensorType, convert
 
         model, i = obj.get_trace_items()
         m_jit = torch.jit.trace(func=model, example_inputs=i)
@@ -195,20 +202,20 @@ class Export:
 
     @staticmethod
     def to_onnx(
-        obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
-        **export_kwargs,
-    ):
-        import torch.onnx
-        from torch.onnx import ONNXProgram
-
+        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
+        **export_kwargs: object,
+    ) -> ONNXProgram:
         model, i = obj.get_trace_items()
-        program: ONNXProgram = torch.onnx.dynamo_export(model, i)
+        # `dynamo=True` always returns an ONNXProgram (never None); the `| None`
+        # in torch's signature only applies to the legacy `dynamo=False` path.
+        program = torch.onnx.export(model, (i,), dynamo=True)
+        assert program is not None
         return program
 
     @staticmethod
     def to_tflite(
-        obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
-    ):
+        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
+    ) -> _TfLiteExportable:
         import ai_edge_torch
         from ai_edge_torch.model import TfLiteModel
 
@@ -218,32 +225,36 @@ class Export:
 
     @staticmethod
     def to_keras(
-        obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder",
-    ):
-        import torch
-        import torch.nn.functional as F
-        import tensorflow as tf
+        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
+    ) -> KerasModel:
         import nobuco
+        import tensorflow as tf
+        import torch.nn.functional as F
         from nobuco import ChannelOrderingStrategy
 
         @nobuco.converter(
             F.mish,
             channel_ordering_strategy=ChannelOrderingStrategy.MINIMUM_TRANSPOSITIONS,
         )
-        def mish_converter(input: torch.Tensor, inplace: bool = False):
+        def mish_converter(
+            input: torch.Tensor, inplace: bool = False
+        ) -> Callable[[torch.Tensor, bool], object]:
             return lambda input, inplace=False: tf.keras.activations.mish(input)
 
         print("Exporting to Keras")
         model, i = obj.get_trace_items()
-        keras = nobuco.pytorch_to_keras(
+        keras_model = nobuco.pytorch_to_keras(
             model,
             args=[i],
-            kwargs=None,
+            kwargs={},
         )
-        return keras
+        assert not isinstance(keras_model, tuple)
+        return keras_model
 
     @staticmethod
-    def export_tfjs(obj: "ConvNeXtV2Encoder | ConvNeXtV2Decoder", path: str | Path):
+    def export_tfjs(
+        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder, path: str | Path
+    ) -> None:
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)  # Ensure output dir exists
 
@@ -264,6 +275,11 @@ class Export:
             try:
                 subprocess.run(
                     [
+                        # fetched into an isolated env: tensorflowjs needs
+                        # keras>=3, while nobuco/ai-edge-torch need keras<3
+                        "uvx",
+                        "--from",
+                        "tensorflowjs",
                         "tensorflowjs_converter",
                         "--input_format",
                         "tf_saved_model",  # Input is the saved Keras model
@@ -285,9 +301,9 @@ class Export:
                 print("Stderr:", e.stderr)
                 raise e
             except FileNotFoundError:
-                print("ERROR: 'tensorflowjs_converter' command not found.")
+                print("ERROR: 'uvx' command not found.")
                 print(
-                    "Ensure TensorFlow.js is installed ('pip install tensorflowjs') and the command is in your PATH."
+                    "Install uv (https://docs.astral.sh/uv/) so the converter can be fetched on demand."
                 )
                 raise
 
@@ -409,12 +425,12 @@ class ConvNeXtV2Encoder(_Base):
         x = x.reshape(x.size(0), self.z_size)
         return x
 
-    def get_trace_items(self):
+    def get_trace_items(self) -> tuple[ConvNeXtV2Encoder, torch.Tensor]:
         i = torch.randn((1, *self.tensor_shape)).to("cpu")
         model = self.to("cpu").eval()
         return model, i
 
-    def to_coreml(self, **convert_kwargs):
+    def to_coreml(self, **convert_kwargs: object) -> object:
         return Export.to_coreml(self, "x", "z")
 
 
@@ -537,12 +553,12 @@ class ConvNeXtV2Decoder(_Base):
             x = (x + 1) / 2
         return x
 
-    def get_trace_items(self):
+    def get_trace_items(self) -> tuple[ConvNeXtV2Decoder, torch.Tensor]:
         i = torch.randn((1, self.z_size)).to("cpu")
         model = self.to("cpu").eval()
         return model, i
 
-    def to_coreml(self, **convert_kwargs):
+    def to_coreml(self, **convert_kwargs: object) -> object:
         return Export.to_coreml(self, "z", "x_hat")
 
 
@@ -612,9 +628,10 @@ class ConvNeXtV2Ae(_Base, AeBase):
 
     def save(
         self,
-        base_path: Union[str, Path],
+        base_path: str | Path,
         fmt: Literal["coreml", "onnx", "tflite", "tfjs"],
-    ) -> tuple[Optional[Path], Optional[Path]]:
+    ) -> tuple[Path | None, Path | None]:
+        base_path = Path(base_path)
         # get paths
         _exporters = {
             "coreml": (lambda m, p: m.to_coreml().save(p), "mlpackage"),

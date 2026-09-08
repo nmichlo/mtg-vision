@@ -6,10 +6,11 @@ import random
 import shutil
 import uuid
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, TypedDict
 
 import faiss
 import numpy as np
+import numpy.typing as npt
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,17 +19,22 @@ from tqdm import tqdm
 from usearch.index import Index, ScalarKind
 
 from mtgvision.qdrant import VectorStoreQdrant
+from mtgvision.util.json import Json
+
+# a single vector as it flows through `process_vector`: float32 before
+# quantization, uint8 after
+type VecArray = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 
 
 class ReducerNet(nn.Module):
     def __init__(
         self,
-        in_dim,
-        out_dim,
-        hidden_dim=None,
+        in_dim: int,
+        out_dim: int,
+        hidden_dim: int | None = None,
         quant_bits: int = 8,
         mode: Literal["sigmoid", "linear"] = "linear",
-    ):
+    ) -> None:
         super().__init__()
 
         self.q_mode = mode
@@ -38,6 +44,7 @@ class ReducerNet(nn.Module):
 
         if hidden_dim is None:
             hidden_dim = max(out_dim, in_dim // 2)
+        self.hidden_dim = hidden_dim
 
         self.net = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
@@ -55,7 +62,7 @@ class ReducerNet(nn.Module):
                 self.scale.fill_(self.q_mid)
                 self.offset.fill_(self.q_mid)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.net(x)
         # forward
         if self.q_mode == "sigmoid":
@@ -74,7 +81,7 @@ class ReducerNet(nn.Module):
         x = x - (x % 1).detach()
         return x
 
-    def get_normalized(self, x):
+    def get_normalized(self, x: torch.Tensor) -> torch.Tensor:
         """Convert quantized values back to normalized vectors"""
         # undo sigmoid
         if self.q_mode == "sigmoid":
@@ -86,7 +93,7 @@ class ReducerNet(nn.Module):
         x = nn.functional.normalize(x, p=2, dim=1)
         return x
 
-    def get_quantization_params(self):
+    def get_quantization_params(self) -> dict[str, npt.NDArray[np.float32]]:
         """Get the learned scale and offset parameters for each dimension"""
         return {
             "scale": self.scale.detach().cpu().numpy(),
@@ -95,11 +102,11 @@ class ReducerNet(nn.Module):
 
 
 def train_reducer_net(
-    vectors: np.ndarray,
+    vectors: npt.NDArray[np.float32],
     out_dim: int,
     epochs: int = 100,
     batch_size: int = 1024 * 4,
-):
+) -> ReducerNet:
     D = vectors.shape[1]
     device = torch.device("mps")
     print(f"Using device: {device}")
@@ -112,7 +119,11 @@ def train_reducer_net(
 
     # ------------
     # BENCHMARK AGAINST
-    pca = faiss.PCAMatrix(d_in=D, d_out=out_dim, random_rotation=True)
+    # positional on purpose: faiss-cpu's runtime kwargs are (din, dout,
+    # eigen_power_in, random_rotation_in) but its bundled .pyi stub declares
+    # (d_in, d_out, eigen_power, random_rotation), so neither spelling of the
+    # keywords satisfies both. Positional agrees with each.
+    pca = faiss.PCAMatrix(D, out_dim, 0, True)
     pca.train(vectors)
     rrm = faiss.RandomRotationMatrix(D, out_dim)
     rrm.train(vectors)
@@ -129,7 +140,7 @@ def train_reducer_net(
 
     # ------------
     # BENCHMARK AGAINST
-    pca2 = faiss.PCAMatrix(d_in=D, d_out=out_dim, random_rotation=True)
+    pca2 = faiss.PCAMatrix(D, out_dim, 0, True)
     pca2.train(vectors)
     rrm2 = faiss.RandomRotationMatrix(D, out_dim)
     rrm2.train(vectors)
@@ -247,8 +258,8 @@ def train_reducer_net(
 
 
 def fetch_vectors_from_qdrant(
-    max_vectors: Optional[int] = None, dtype=np.float32
-) -> tuple[np.ndarray, list[str]]:
+    max_vectors: int | None = None, dtype: type[np.float32] = np.float32
+) -> tuple[npt.NDArray[np.float32], list[str]]:
     if max_vectors is None:
         max_vectors = 2**63 - 1
 
@@ -258,26 +269,28 @@ def fetch_vectors_from_qdrant(
     itr = itertools.islice(itr, max_vectors)
 
     # collect everything
-    ids = []
-    vectors = []
+    ids: list[str] = []
+    vectors: list[npt.NDArray[np.float32]] = []
     for point in tqdm(itr):
         ids.append(point.id)
         vectors.append(np.asarray(point.vector, dtype=dtype))
 
     # matrix
-    vectors = np.stack(vectors)
-    return vectors, ids
+    vectors_arr = np.stack(vectors)
+    return vectors_arr, ids
 
 
 @cachier()
 def fetch_vectors_from_qdrant_cached(
-    max_vectors: Optional[int] = None,
-    dtype=np.float32,
-):
+    max_vectors: int | None = None,
+    dtype: type[np.float32] = np.float32,
+) -> tuple[npt.NDArray[np.float32], list[str]]:
     return fetch_vectors_from_qdrant(max_vectors=max_vectors, dtype=dtype)
 
 
-def print_vectors_info(vectors: np.ndarray, name: str):
+def print_vectors_info(
+    vectors: npt.NDArray[np.float32], name: str
+) -> npt.NDArray[np.float32]:
     print(f"{name}: {vectors.shape}, {vectors.dtype}, {vectors.nbytes / 1024**2} MB")
     return vectors
 
@@ -289,13 +302,13 @@ def uuid_to_int(uuid_str: str) -> int:
     return uuid.UUID(uuid_str).int % (2**64)
 
 
-def resave_gz(path: str):
+def resave_gz(path: str) -> None:
     with open(path, "rb") as f_in:
         with gzip.open(path + ".gz", "wb") as f_out:
             f_out.writelines(f_in)
 
 
-def resave_parts(path: str, max_part_size_bytes: int = 3 * 1024 * 1024):
+def resave_parts(path: str, max_part_size_bytes: int = 3 * 1024 * 1024) -> None:
     """
     Split a file into parts.
 
@@ -338,19 +351,78 @@ def resave_parts(path: str, max_part_size_bytes: int = 3 * 1024 * 1024):
 # 128, pca, 0.01, 94.7%
 
 
+# ============================================================================ #
+# Metadata: describes the reduce/quantize pipeline so it can be replayed       #
+# without the original faiss/torch objects (see `process_vector`)             #
+# ============================================================================ #
+
+
+class LinearTransformParams(TypedDict):
+    A: list[list[float]]
+    b: list[float]
+
+
+class LinearTransformStep(TypedDict):
+    type: Literal["LinearTransform"]
+    in_dim: int
+    out_dim: int
+    in_dtype: str
+    out_dtype: str
+    params: LinearTransformParams
+
+
+class NeuralNetReducerParams(TypedDict):
+    state_dict: dict[str, Json]
+    hidden_dim: int
+
+
+class NeuralNetReducerStep(TypedDict):
+    type: Literal["NeuralNetReducer"]
+    in_dim: int
+    out_dim: int
+    in_dtype: str
+    out_dtype: str
+    params: NeuralNetReducerParams
+
+
+type ChainStep = LinearTransformStep | NeuralNetReducerStep
+
+
+class ScalarQuantizerParams(TypedDict):
+    vmin: list[float]
+    vdiff: list[float]
+
+
+class QuantizeStep(TypedDict):
+    type: Literal["ScalarQuantizer"]
+    in_dim: int
+    out_dim: int
+    in_dtype: str
+    out_dtype: str
+    params: ScalarQuantizerParams
+    mode: str
+
+
+class Metadata(TypedDict):
+    model: str | None
+    chain: list[ChainStep]
+    quantize: QuantizeStep | None
+    ids: list[str]
+
+
 def main(
     seed: int = 42,
     # load vectors
-    max_vectors: Optional[int] = None,
+    max_vectors: int | None = None,
     # reduction
-    reduce_dim: Optional[int] = 128,  # locked after training
+    reduce_dim: int | None = 128,  # locked after training
     reduce_mode: Literal["pca", "opq", "random", "nn"] = "nn",  # locked after training
-    reduce_quant: Optional[str] = "i8",  # locked after training
+    reduce_quant: str | None = "i8",  # locked after training
     # validation only
     validate_perturb_scale: float = 0.001,
     validate_apply_mode: Literal["lib", "manual", "manual_loop"] = "lib",
     cache: bool = True,
-):
+) -> None:
     random.seed(seed)
     np.random.seed(seed)
 
@@ -366,7 +438,7 @@ def main(
 
     # ============== CREATE METADATA ================== #
 
-    metadata = {
+    metadata: Metadata = {
         "model": None,  # string
         "chain": [],
         "quantize": None,
@@ -376,8 +448,14 @@ def main(
     # ============== CREATE PIPELINE ================== #
 
     # reduce op
-    reduce = None
-    if reduce_dim and reduce_mode:
+    reduce: (
+        ReducerNet
+        | faiss.PCAMatrix
+        | faiss.OPQMatrix
+        | faiss.RandomRotationMatrix
+        | None
+    ) = None
+    if reduce_dim:
         # linear transforms
         if reduce_mode == "nn":
             print("Training reduction network...")
@@ -397,12 +475,12 @@ def main(
                     "out_dtype": "float32",
                     "params": {
                         "state_dict": state_dict,
-                        "hidden_dim": reduce.net[0].out_features,
+                        "hidden_dim": reduce.hidden_dim,
                     },
                 }
             )
         elif reduce_mode == "pca":
-            reduce = faiss.PCAMatrix(d_in=D, d_out=reduce_dim, random_rotation=True)
+            reduce = faiss.PCAMatrix(D, reduce_dim, 0, True)
         elif reduce_mode == "opq":
             reduce = faiss.OPQMatrix(D, 16, reduce_dim)  # M????
         elif reduce_mode == "random":
@@ -430,7 +508,7 @@ def main(
         )
 
     # quantize op
-    quantizer = None
+    quantizer: faiss.ScalarQuantizer | None = None
     if reduce_quant:
         # quantizers
         q_dims = reduce_dim if reduce_dim else D
@@ -458,13 +536,15 @@ def main(
     # ============== PROCESS VECTORS ================== #
 
     def process_vector(
-        v: np.ndarray,
+        v: npt.NDArray[np.float32],
         mode: Literal["lib", "manual", "manual_loop"] = validate_apply_mode,
         skip_quant: bool = False,
-    ) -> np.ndarray:
+    ) -> VecArray:
         # REDUCE
         for step in metadata["chain"]:
             if step["type"] == "LinearTransform":
+                assert reduce is not None and not isinstance(reduce, ReducerNet)
+                assert reduce_dim is not None
                 if mode == "lib":
                     v = reduce.apply(v[None, :])[0]
                 elif mode == "manual":
@@ -480,6 +560,7 @@ def main(
                 else:
                     raise ValueError(f"Unknown mode: {mode}")
             elif step["type"] == "NeuralNetReducer":
+                assert isinstance(reduce, ReducerNet)
                 if mode == "lib":
                     with torch.no_grad():
                         v_tensor = torch.from_numpy(v[None, :].astype(np.float32))
@@ -489,13 +570,16 @@ def main(
             else:
                 raise ValueError(f"Unknown step type: {step['type']}")
         # QUANT
+        result: VecArray = v
         if not skip_quant:
-            if metadata["quantize"]["type"] == "ScalarQuantizer":
-                step = metadata["quantize"]
+            step = metadata["quantize"]
+            assert step is not None
+            if step["type"] == "ScalarQuantizer":
                 vmin = step["params"]["vmin"]
                 vdiff = step["params"]["vdiff"]
                 if mode == "lib":
-                    v = quantizer.compute_codes(v[None, :])[0]
+                    assert quantizer is not None
+                    result = quantizer.compute_codes(v[None, :])[0]
                 elif mode == "manual":
                     # def _manual_encode(x):
                     #     x = (x - vmin) / vdiff
@@ -506,7 +590,9 @@ def main(
                     #     x = vmin + x * vdiff
                     #     return x
                     # encode
-                    v = np.clip(((v - vmin) / vdiff) * 255, 0, 255).astype(np.uint8)
+                    result = np.clip(((v - vmin) / vdiff) * 255, 0, 255).astype(
+                        np.uint8
+                    )
                     # decode
                     # v = vmin + ((v + 0.5) / 255) * vdiff
                 elif mode == "manual_loop":
@@ -515,7 +601,7 @@ def main(
                     for i in range(len(v)):
                         vd = vdiff[i]
                         vm = vmin[i]
-                        xi = 0
+                        xi = 0.0
                         if vd != 0:
                             xi = (v[i] - vm) / vd
                             if xi < 0:
@@ -523,13 +609,13 @@ def main(
                             if xi > 1.0:
                                 xi = 1.0
                         out[i] = int(xi * 255)
-                    v = out
+                    result = out
                 else:
                     raise ValueError(f"Unknown mode: {mode}")
             else:
-                raise ValueError(f"Unknown step type: {metadata['quantize']['type']}")
+                raise ValueError(f"Unknown step type: {step['type']}")
         # done!
-        return v
+        return result
 
     # ============== VALIDATE QUANTIZATION ================== #
 
@@ -557,7 +643,7 @@ def main(
         for v in tqdm(vectors, "saving"):
             bytes_ = process_vector(v, mode="lib")
             bytes_ = bytes_.tobytes()
-            assert len(bytes_) == reduce_dim if reduce_dim else D
+            assert len(bytes_) == (reduce_dim if reduce_dim else D)
             fp.write(bytes_)
         fp.flush()
     # print size of fp
@@ -608,7 +694,9 @@ def main(
             progress=progress,
         )
 
-    def perturb_vector(vector: np.ndarray, scale=validate_perturb_scale):
+    def perturb_vector(
+        vector: npt.NDArray[np.float32], scale: float = validate_perturb_scale
+    ) -> npt.NDArray[np.float32]:
         noise = np.random.normal(0, scale, vector.shape)
         noise = noise / np.linalg.norm(noise)
         return vector + noise * scale
