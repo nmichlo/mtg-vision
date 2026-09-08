@@ -4,7 +4,7 @@ import itertools
 import multiprocessing
 from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Literal
 
 from doorway.x import ProxyDownloader
 from mtgdata import ScryfallImageType
@@ -16,10 +16,8 @@ from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.qdrant import QdrantPoint, VectorStoreQdrant
 from mtgvision.util.image import imread_float, resize
 
-T = TypeVar("T")
 
-
-def batched(iterable: Iterable[T], n: int) -> Iterator[Sequence[T]]:
+def batched[T](iterable: Iterable[T], n: int) -> Iterator[Sequence[T]]:
     """Yield successive n-sized batches from an iterable."""
     it = iter(iterable)
     while True:

@@ -47,7 +47,7 @@ R = TypeVar("R")
 
 
 @overload
-def ensure_float32(fn: Callable[P, R]) -> Callable[P, R]: ...
+def ensure_float32[**P, R](fn: Callable[P, R]) -> Callable[P, R]: ...
 
 
 @overload
@@ -56,7 +56,7 @@ def ensure_float32(
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
 
-def ensure_float32(
+def ensure_float32[**P, R](
     fn: Callable[P, R] | None = None, *, strict: bool = False, disable: bool = True
 ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """

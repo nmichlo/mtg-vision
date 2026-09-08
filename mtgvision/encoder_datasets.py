@@ -39,7 +39,6 @@ from math import ceil
 from pathlib import Path
 from typing import (
     Literal,
-    TypeVar,
 )
 
 import cv2
@@ -520,10 +519,8 @@ class CocoValImages(IlsvrcImages):
 SizeHW = tuple[int, int]
 PathOrImg = str | np.ndarray
 
-H = TypeVar("H", bound=Hashable)
 
-
-def idx_map(items: Iterable[H]) -> dict[H, int]:
+def idx_map[H: Hashable](items: Iterable[H]) -> dict[H, int]:
     """Generate labels for a sequence of items."""
     labels: dict[H, int] = {}
     for i, item in enumerate(sorted(set(items))):

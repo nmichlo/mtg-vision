@@ -86,7 +86,6 @@ select = [
 ]
 ignore = [
     "E501",   # line length is handled by the formatter
-    "UP047",  # PEP 695 generics
 ]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
