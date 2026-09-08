@@ -1,4 +1,6 @@
 # ========== Imports ==========
+from __future__ import annotations
+
 import asyncio
 import base64
 import dataclasses
@@ -7,9 +9,11 @@ import hashlib
 import time
 from collections.abc import Hashable
 from pathlib import Path
+from typing import cast
 
 import cv2
 import numpy as np
+import numpy.typing as npt
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from mtgdata.scryfall import ScryfallCardFace
@@ -21,12 +25,15 @@ from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.od_export import CardSegmenter, InstanceSeg
 from mtgvision.qdrant import VectorStoreQdrant
+from mtgvision.util.json import Json
 
 # ========== Global Context ==========
 
 
 @functools.lru_cache
-def get_ctx():
+def get_ctx() -> tuple[
+    CardSegmenter, CoreMlEncoder, VectorStoreQdrant, SyntheticBgFgMtgImages
+]:
     SEGMENTER = CardSegmenter()
     ENCODER = CoreMlEncoder()
     VECS = VectorStoreQdrant()
@@ -47,18 +54,22 @@ class TrackedData:
     # Update info
     last_update_time: float = dataclasses.field(default_factory=lambda: time.time())
     # Last Tracking info
-    last_instance: InstanceSeg = None
-    last_rgb_im: np.ndarray = None
-    last_rgb_im_encoded: str = None
+    last_instance: InstanceSeg | None = None
+    last_rgb_im: npt.NDArray[np.uint8] | None = None
+    last_rgb_im_encoded: str | None = None
     # Embed and search
-    avg_z: np.ndarray = None
+    avg_z: npt.NDArray[np.float32] | None = None
     ave_nearby_points: list[ScoredPoint] = dataclasses.field(default_factory=list)
     ave_nearby_cards: list[ScryfallCardFace] = dataclasses.field(default_factory=list)
 
-    def to_dict(self):
-        matches = []
+    def to_dict(self) -> dict[str, Json]:
+        # By the time `to_dict` is called, `update()` has always populated the
+        # tracking info below for this object.
+        assert self.last_instance is not None
+
+        matches: list[Json] = []
         for point, card in zip(self.ave_nearby_points, self.ave_nearby_cards):
-            match = {
+            match: dict[str, Json] = {
                 "id": str(point.id),
                 "score": point.score,
                 "name": card.name,
@@ -91,7 +102,7 @@ class TrackerCtx:
         self,
         update_wait_sec: float = 0.5,
         ewma_weight: float = 0.1,
-    ):
+    ) -> None:
         self.update_wait_sec = update_wait_sec
         self.ewma_weight = ewma_weight
         # create
@@ -104,7 +115,7 @@ class TrackerCtx:
             past_detections_length=10,
         )
         # Dictionary to store persistent data per tracked object
-        self.tracked_data = {}  # {id: {'z_avg': np.ndarray, 'last_query_time': float, 'nearby_points': list, 'nearby_cards': list}}
+        self.tracked_data: dict[int, TrackedData] = {}
         # Set to track card IDs that are currently being fetched from Scryfall
         # self.fetching_card_ids: Set[str] = set()
         # Dictionary to store tasks for async operations
@@ -129,12 +140,12 @@ class TrackerCtx:
     #         if card_id in self.async_tasks:
     #             del self.async_tasks[card_id]
 
-    def update(self, rgb_frame: np.ndarray) -> list[TrackedData]:
+    def update(self, rgb_frame: npt.NDArray[np.uint8]) -> list[TrackedData]:
         # 0. Segment the frame (RGB)
         segments = self.segmenter(rgb_frame)
 
         # 1. Create Norfair detections with minimal initial data
-        detections = []
+        detections: list[Detection] = []
         for seg in segments:
             detection = Detection(
                 points=np.asarray(seg.xyxyxyxy),
@@ -146,7 +157,7 @@ class TrackerCtx:
         tracked_objects = self.tracker.update(detections)
 
         # 3. Update tracked objects
-        objs = []
+        objs: list[TrackedData] = []
         current_time = time.time()
         for obj in tracked_objects:
             # 3.A If we have detections, otherwise we are work on predicted positions
@@ -156,15 +167,19 @@ class TrackerCtx:
             seg: InstanceSeg = obj.last_detection.data.seg
 
             # 3.B Get the object or create it
-            trk: TrackedData = self.tracked_data.get(obj.id)
+            # `obj.id` is only `None` while a tracked object is still initializing,
+            # i.e. before it has a matched `last_detection` -- guaranteed above.
+            assert obj.id is not None
+            obj_id = obj.id
+            trk = self.tracked_data.get(obj_id)
             if trk is None:
                 trk = TrackedData(
-                    id=obj.id,
-                    color=get_color(obj.id),
+                    id=obj_id,
+                    color=get_color(obj_id),
                     last_update_time=current_time,
                     last_instance=seg,
                 )
-                self.tracked_data[obj.id] = trk
+                self.tracked_data[obj_id] = trk
 
             # 3.C Update the tracked data
             # - extract the dewarped image
@@ -188,7 +203,7 @@ class TrackerCtx:
                     trk.avg_z, k=3, with_payload=True, with_vectors=False
                 )
                 trk.ave_nearby_cards = [
-                    self.data.get_card_by_id(p.id) for p in trk.ave_nearby_points
+                    self.data.get_card_by_id(str(p.id)) for p in trk.ave_nearby_points
                 ]
 
                 # Should be populated by `qdrant_populate_card_info`, no longer needed
@@ -209,7 +224,7 @@ class TrackerCtx:
 # ========== Utility Functions ==========
 
 
-def get_color(seed: Hashable):
+def get_color(seed: Hashable) -> str:
     hash = hashlib.sha256(str(seed).encode())
     h = int(hash.hexdigest(), 16)
     r = (h >> 16) & 0xFF
@@ -218,7 +233,7 @@ def get_color(seed: Hashable):
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def encode_rgb_im(rgb_im):
+def encode_rgb_im(rgb_im: npt.NDArray[np.uint8]) -> str:
     bgr_im = cv2.cvtColor(rgb_im, cv2.COLOR_RGB2BGR)
     _, buffer = cv2.imencode(".jpg", bgr_im, [cv2.IMWRITE_JPEG_QUALITY, 50])
     return base64.b64encode(buffer).decode("utf-8")
@@ -256,7 +271,7 @@ app = FastAPI()
 
 
 @app.websocket("/detect")
-async def detect_websocket(websocket: WebSocket):
+async def detect_websocket(websocket: WebSocket) -> None:
     ctx = TrackerCtx()
 
     times = [time.time(), time.time()]
@@ -274,12 +289,14 @@ async def detect_websocket(websocket: WebSocket):
             if frame is None:
                 print("Failed to decode frame, skipping...")
                 continue
+            # cv2-stubs type this too broadly; IMREAD_COLOR_RGB always yields uint8.
+            frame = cast(npt.NDArray[np.uint8], frame)
 
             # 3. Process the frame
             objs = ctx.update(frame)
 
             # 4. Send results
-            response = {
+            response: dict[str, Json] = {
                 "detections": [obj.to_dict() for obj in objs],
                 "server_process_time": time.time() - t1,
                 "server_process_period": times[1] - times[0],

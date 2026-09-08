@@ -65,6 +65,8 @@ select = [
     "F",   # pyflakes
     "I",   # isort
     "UP",  # pyupgrade
+    "ANN", # flake8-annotations
+    "TID", # flake8-tidy-imports
     # "B",   # flake8-bugbear
 ]
 ignore = [
@@ -72,11 +74,8 @@ ignore = [
     "UP047",  # PEP 695 generics
 ]
 
-# codebase is currently largely untyped
-[tool.ty.rules]
-unresolved-attribute = "warn"
-unresolved-import = "warn"
-possibly-missing-attribute = "warn"
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.Any".msg = "banned -- use a precise type or a TypeVar"
 
 [tool.pytest.ini_options]
 minversion = "8.0"

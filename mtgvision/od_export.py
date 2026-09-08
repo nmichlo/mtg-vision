@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,9 +24,9 @@ class InstanceSeg:
     conf: float
 
     # private
-    _xyxyxyxy: np.ndarray = None
-    _points_closed: np.ndarray = None
-    _dir_vec: np.ndarray = None
+    _xyxyxyxy: np.ndarray | None = None
+    _points_closed: np.ndarray | None = None
+    _dir_vec: np.ndarray | None = None
 
     @property
     def scores(self) -> np.ndarray:
@@ -37,19 +39,25 @@ class InstanceSeg:
     @property
     def points_closed(self) -> np.ndarray:
         self._orient()
-        return self._points_closed
+        points_closed = self._points_closed
+        assert points_closed is not None
+        return points_closed
 
     @property
     def xyxyxyxy(self) -> np.ndarray:
         self._orient()
-        return self._xyxyxyxy
+        xyxyxyxy = self._xyxyxyxy
+        assert xyxyxyxy is not None
+        return xyxyxyxy
 
     @property
     def dir_vec(self) -> np.ndarray:
         self._orient()
-        return self._dir_vec
+        dir_vec = self._dir_vec
+        assert dir_vec is not None
+        return dir_vec
 
-    def _orient(self, mode="u_shape") -> None:
+    def _orient(self, mode: str = "u_shape") -> None:
         if self._xyxyxyxy is not None:
             return
         assert mode == "u_shape", "Only u_shape dataset mode is supported"
@@ -73,7 +81,7 @@ class InstanceSeg:
         v = v / np.linalg.norm(v)
         # ===== BBOX ===== #
         # get 4 corner points from closed polygon
-        box_points = cv2.approxPolyN(self.points, 4, True)[0]
+        box_points = cv2.approxPolyN(self.points, 4, ensure_convex=True)[0]
         box_poly = Polygon(box_points)
         # check if the centroid when extended by the direction vector passes through the edge
         idx = 0
@@ -114,8 +122,8 @@ class InstanceSeg:
         self,
         frame: np.ndarray,
         color: tuple[int, int, int] = (128, 128, 128),
-        id: str = None,
-    ):
+        id: str | None = None,
+    ) -> None:
         xyxyxyxy = self.xyxyxyxy
         # Calculate color based on detection score
         c = ((1 - self.conf) * 0 + self.conf * np.asarray(color)).astype(int).tolist()
@@ -139,7 +147,7 @@ class InstanceSeg:
 
 
 class CardSegmenter:
-    def __init__(self, model_path: str | Path = None):
+    def __init__(self, model_path: str | Path | None = None) -> None:
         if model_path is None:
             model_path = MODEL_PATH_SEG.with_suffix(".mlpackage")
         from ultralytics import YOLO
@@ -148,7 +156,7 @@ class CardSegmenter:
 
     def __call__(self, rgb_im: np.ndarray) -> list[InstanceSeg]:
         results = self.yolo([rgb_im], verbose=False)[0]
-        detections = []
+        detections: list[InstanceSeg] = []
         if results.masks and results.boxes:
             for points, conf in zip(results.masks.xy, results.boxes.conf):
                 det = InstanceSeg(
@@ -160,7 +168,7 @@ class CardSegmenter:
         return detections
 
 
-def main():
+def main() -> None:
     from ultralytics import YOLO
 
     # Load your model

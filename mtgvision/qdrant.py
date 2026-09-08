@@ -1,25 +1,35 @@
+from __future__ import annotations
+
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import cast
 
 import qdrant_client
 from qdrant_client.http.models import Distance, ScoredPoint, VectorParams
+
+from mtgvision.util.json import Json
+
+
+def _as_flat_vector(vector: object) -> list[float] | None:
+    if isinstance(vector, list) and all(isinstance(v, float) for v in vector):
+        return cast(list[float], vector)
+    return None
 
 
 @dataclass
 class QdrantPoint:
     id: str  # UUID
     vector: list[float] | None = None
-    payload: dict[str, Any] | None = None
+    payload: dict[str, Json] | None = None
 
 
 class VectorStoreQdrant:
     _COLLECTION = "mtg"
     _VECTOR_SIZE: int = 768
 
-    def __init__(self, location: str = "localhost:6333"):
+    def __init__(self, location: str = "localhost:6333") -> None:
         logging.getLogger("httpx").setLevel(logging.WARNING)
         self.client = qdrant_client.QdrantClient(
             location=location,
@@ -33,7 +43,7 @@ class VectorStoreQdrant:
                 ),
             )
 
-    def drop_collection(self):
+    def drop_collection(self) -> None:
         self.client.delete_collection(self._COLLECTION)
 
     def retrieve(
@@ -51,26 +61,29 @@ class VectorStoreQdrant:
         )
         return [
             QdrantPoint(
-                id=point.id,
-                vector=point.vector,
+                id=str(point.id),
+                vector=_as_flat_vector(point.vector),
                 payload=point.payload,
             )
             for point in results
         ]
 
-    def save_points(self, iter_points: Iterable[QdrantPoint]):
+    def save_points(self, iter_points: Iterable[QdrantPoint]) -> None:
         from qdrant_client.http.models import PointStruct
 
-        self.client.upload_points(
-            collection_name=self._COLLECTION,
-            points=(
-                PointStruct(
+        def _to_structs() -> Iterator[PointStruct]:
+            for point in iter_points:
+                if point.vector is None:
+                    raise ValueError(f"point {point.id} has no vector to save")
+                yield PointStruct(
                     id=point.id,
                     vector=point.vector,
                     payload=point.payload,
                 )
-                for point in iter_points
-            ),
+
+        self.client.upload_points(
+            collection_name=self._COLLECTION,
+            points=_to_structs(),
             batch_size=64,
         )
 
@@ -81,7 +94,7 @@ class VectorStoreQdrant:
         *,
         with_payload: bool = True,
         with_vectors: bool = False,
-        score_threshold: float = None,
+        score_threshold: float | None = None,
     ) -> list[ScoredPoint]:
         from qdrant_client.http.models import QueryResponse
 
@@ -98,7 +111,7 @@ class VectorStoreQdrant:
     def update_payload(
         self,
         id_: str,
-        payload: dict[str, Any],
+        payload: dict[str, Json],
     ) -> QdrantPoint:
         self.client.overwrite_payload(
             collection_name=self._COLLECTION,
@@ -132,10 +145,11 @@ if __name__ == "__main__":
         # plt.imshow(ds.make_cropped(ds.get_image_by_id(i)))
         # plt.show()
 
-        [item] = db.retrieve([i], with_payload=True, with_vectors=True)
+        [point] = db.retrieve([i], with_payload=True, with_vectors=True)
+        assert point.vector is not None
 
         for item in db.query_nearby(
-            item.vector,
+            point.vector,
             k=3000,
             with_payload=False,
             with_vectors=False,

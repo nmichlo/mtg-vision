@@ -23,13 +23,20 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
+from __future__ import annotations
+
 import abc
 import random
 import warnings
 from abc import ABC
+from collections.abc import Callable, Sequence
+from typing import cast
+
+# a step in an augmentation pipeline; `None` is a no-op
+type Transform[T] = Callable[[T], T] | None
 
 
-def seed_all(seed: int):
+def seed_all(seed: int) -> None:
     # random
     random.seed(seed)
     # numpy
@@ -53,19 +60,22 @@ def seed_all(seed: int):
 # ============================================================================ #
 
 
-class Applicator(ABC):
-    def __init__(self, *callables):
-        self.callables = callables
-        if len(self.callables) == 1 and type(self.callables[0]) in [list, set, tuple]:
-            self.callables = self.callables[0]
-        if len(self.callables) < 1:
+class Applicator[T](ABC):
+    def __init__(self, *callables: Transform[T] | Sequence[Transform[T]]) -> None:
+        # a single list/set/tuple argument is unpacked; anything else is varargs
+        if len(callables) == 1 and type(callables[0]) in [list, set, tuple]:
+            items = list(cast(Sequence[Transform[T]], callables[0]))
+        else:
+            items = list(cast(Sequence[Transform[T]], callables))
+        if len(items) < 1:
             raise RuntimeError("There must be a callable")
+        self.callables: list[Transform[T]] = items
 
-    def __call__(self, x):
+    def __call__(self, x: T) -> T:
         return self._apply(x)
 
     @staticmethod
-    def _call(c, x):
+    def _call(c: Transform[T], x: T) -> T:
         if c is None:
             return x
         elif callable(c):
@@ -74,29 +84,29 @@ class Applicator(ABC):
             raise RuntimeError(f"Unsupported Callable Type: {type(c)}")
 
     @abc.abstractmethod
-    def _apply(self, x):
+    def _apply(self, x: T) -> T:
         pass
 
 
-class ApplyOrdered(Applicator):
-    def _apply(self, x):
+class ApplyOrdered[T](Applicator[T]):
+    def _apply(self, x: T) -> T:
         for c in self.callables:
             x = Applicator._call(c, x)
         return x
 
 
-class ApplyShuffled(Applicator):
-    def __init__(self, *callables):
-        super().__init__(callables)
-        self.indices = list(range(len(self.callables)))
+class ApplyShuffled[T](Applicator[T]):
+    def __init__(self, *callables: Transform[T] | Sequence[Transform[T]]) -> None:
+        super().__init__(*callables)
+        self.indices: list[int] = list(range(len(self.callables)))
 
-    def _apply(self, x):
+    def _apply(self, x: T) -> T:
         random.shuffle(self.indices)
         for i in self.indices:
             x = Applicator._call(self.callables[i], x)
         return x
 
 
-class ApplyChoice(Applicator):
-    def _apply(self, x):
+class ApplyChoice[T](Applicator[T]):
+    def _apply(self, x: T) -> T:
         return Applicator._call(random.choice(self.callables), x)

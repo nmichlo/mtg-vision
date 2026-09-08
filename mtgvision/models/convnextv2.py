@@ -3,8 +3,11 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+from __future__ import annotations
+
 import math
 import warnings
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn
@@ -13,8 +16,11 @@ from tqdm import tqdm
 
 
 def drop_path(
-    x, drop_prob: float = 0.0, training: bool = False, scale_by_keep: bool = True
-):
+    x: torch.Tensor,
+    drop_prob: float = 0.0,
+    training: bool = False,
+    scale_by_keep: bool = True,
+) -> torch.Tensor:
     """
     FROM TIMM
 
@@ -46,26 +52,28 @@ class DropPath(nn.Module):
     Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
     """
 
-    def __init__(self, drop_prob: float = 0.0, scale_by_keep: bool = True):
+    def __init__(self, drop_prob: float = 0.0, scale_by_keep: bool = True) -> None:
         super().__init__()
         self.drop_prob = drop_prob
         self.scale_by_keep = scale_by_keep
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return drop_path(x, self.drop_prob, self.training, self.scale_by_keep)
 
-    def extra_repr(self):
+    def extra_repr(self) -> str:
         return f"drop_prob={round(self.drop_prob, 3):0.3f}"
 
 
-def _trunc_normal_(tensor, mean, std, a, b):
+def _trunc_normal_(
+    tensor: torch.Tensor, mean: float, std: float, a: float, b: float
+) -> torch.Tensor:
     """
     From TIMM
     """
 
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
     # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
-    def norm_cdf(x):
+    def norm_cdf(x: float) -> float:
         # Computes standard normal cumulative distribution function
         return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
 
@@ -99,8 +107,13 @@ def _trunc_normal_(tensor, mean, std, a, b):
     return tensor
 
 
-def trunc_normal_(tensor, mean=0.0, std=1.0, a=-2.0, b=2.0):
-    # type: (torch.Tensor, float, float, float, float) -> torch.Tensor
+def trunc_normal_(
+    tensor: torch.Tensor,
+    mean: float = 0.0,
+    std: float = 1.0,
+    a: float = -2.0,
+    b: float = 2.0,
+) -> torch.Tensor:
     r"""
     From TIMM
 
@@ -136,7 +149,12 @@ class LayerNorm(nn.Module):
     with shape (batch_size, channels, height, width).
     """
 
-    def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
+    def __init__(
+        self,
+        normalized_shape: int,
+        eps: float = 1e-6,
+        data_format: str = "channels_last",
+    ) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.ones(normalized_shape))
         self.bias = nn.Parameter(torch.zeros(normalized_shape))
@@ -146,7 +164,7 @@ class LayerNorm(nn.Module):
             raise NotImplementedError
         self.normalized_shape = (normalized_shape,)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.data_format == "channels_last":
             return F.layer_norm(
                 x, self.normalized_shape, self.weight, self.bias, self.eps
@@ -157,17 +175,19 @@ class LayerNorm(nn.Module):
             x = (x - u) / torch.sqrt(s + self.eps)
             x = self.weight[:, None, None] * x + self.bias[:, None, None]
             return x
+        else:
+            raise NotImplementedError
 
 
 class GRN(nn.Module):
     """GRN (Global Response Normalization) layer"""
 
-    def __init__(self, dim):
+    def __init__(self, dim: int) -> None:
         super().__init__()
         self.gamma = nn.Parameter(torch.zeros(1, 1, 1, dim))
         self.beta = nn.Parameter(torch.zeros(1, 1, 1, dim))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         Gx = torch.norm(x, p=2, dim=(1, 2), keepdim=True)
         Nx = Gx / (Gx.mean(dim=-1, keepdim=True) + 1e-6)
         return self.gamma * (x * Nx) + self.beta + x
@@ -185,9 +205,9 @@ class Block(nn.Module):
         self,
         dim: int,
         drop_path: float = 0.0,
-        act: callable | None = None,
-        norm: callable | None = None,
-    ):
+        act: Callable[..., nn.Module] | None = None,
+        norm: Callable[..., nn.Module] | None = None,
+    ) -> None:
         if act is None:
             act = nn.GELU
         if norm is None:
@@ -208,7 +228,7 @@ class Block(nn.Module):
             DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         input = x
         x = self.dwconv(x)
         x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
@@ -237,13 +257,13 @@ class ConvNeXtV2(nn.Module):
 
     def __init__(
         self,
-        in_chans=3,
-        num_classes=1000,
-        depths=[3, 3, 9, 3],
-        dims=[96, 192, 384, 768],
-        drop_path_rate=0.0,
-        head_init_scale=1.0,
-    ):
+        in_chans: int = 3,
+        num_classes: int = 1000,
+        depths: tuple[int, ...] = (3, 3, 9, 3),
+        dims: tuple[int, ...] = (96, 192, 384, 768),
+        drop_path_rate: float = 0.0,
+        head_init_scale: float = 1.0,
+    ) -> None:
         super().__init__()
         self.depths = depths
         self.downsample_layers = (
@@ -283,12 +303,13 @@ class ConvNeXtV2(nn.Module):
         self.head.weight.data.mul_(head_init_scale)
         self.head.bias.data.mul_(head_init_scale)
 
-    def _init_weights(self, m):
+    def _init_weights(self, m: nn.Module) -> None:
         if isinstance(m, (nn.Conv2d, nn.Linear)):
             trunc_normal_(m.weight, std=0.02)
+            assert m.bias is not None
             nn.init.constant_(m.bias, 0)
 
-    def forward_features(self, x):
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         for i in range(4):
             x = self.downsample_layers[i](x)
             x = self.stages[i](x)
@@ -296,49 +317,145 @@ class ConvNeXtV2(nn.Module):
             x.mean([-2, -1])
         )  # global average pooling, (N, C, H, W) -> (N, C)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.forward_features(x)
         x = self.head(x)
         return x
 
 
-def convnextv2_atto(**kwargs):
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
+def convnextv2_atto(
+    in_chans: int = 3,
+    num_classes: int = 1000,
+    drop_path_rate: float = 0.0,
+    head_init_scale: float = 1.0,
+) -> ConvNeXtV2:
+    model = ConvNeXtV2(
+        depths=(2, 2, 6, 2),
+        dims=(40, 80, 160, 320),
+        in_chans=in_chans,
+        num_classes=num_classes,
+        drop_path_rate=drop_path_rate,
+        head_init_scale=head_init_scale,
+    )
     return model
 
 
-def convnextv2_femto(**kwargs):
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
+def convnextv2_femto(
+    in_chans: int = 3,
+    num_classes: int = 1000,
+    drop_path_rate: float = 0.0,
+    head_init_scale: float = 1.0,
+) -> ConvNeXtV2:
+    model = ConvNeXtV2(
+        depths=(2, 2, 6, 2),
+        dims=(48, 96, 192, 384),
+        in_chans=in_chans,
+        num_classes=num_classes,
+        drop_path_rate=drop_path_rate,
+        head_init_scale=head_init_scale,
+    )
     return model
 
 
-def convnextv2_pico(**kwargs):
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
+def convnextv2_pico(
+    in_chans: int = 3,
+    num_classes: int = 1000,
+    drop_path_rate: float = 0.0,
+    head_init_scale: float = 1.0,
+) -> ConvNeXtV2:
+    model = ConvNeXtV2(
+        depths=(2, 2, 6, 2),
+        dims=(64, 128, 256, 512),
+        in_chans=in_chans,
+        num_classes=num_classes,
+        drop_path_rate=drop_path_rate,
+        head_init_scale=head_init_scale,
+    )
     return model
 
 
-def convnextv2_nano(**kwargs):
-    model = ConvNeXtV2(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
+def convnextv2_nano(
+    in_chans: int = 3,
+    num_classes: int = 1000,
+    drop_path_rate: float = 0.0,
+    head_init_scale: float = 1.0,
+) -> ConvNeXtV2:
+    model = ConvNeXtV2(
+        depths=(2, 2, 8, 2),
+        dims=(80, 160, 320, 640),
+        in_chans=in_chans,
+        num_classes=num_classes,
+        drop_path_rate=drop_path_rate,
+        head_init_scale=head_init_scale,
+    )
     return model
 
 
-def convnextv2_tiny(**kwargs):
-    model = ConvNeXtV2(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
+def convnextv2_tiny(
+    in_chans: int = 3,
+    num_classes: int = 1000,
+    drop_path_rate: float = 0.0,
+    head_init_scale: float = 1.0,
+) -> ConvNeXtV2:
+    model = ConvNeXtV2(
+        depths=(3, 3, 9, 3),
+        dims=(96, 192, 384, 768),
+        in_chans=in_chans,
+        num_classes=num_classes,
+        drop_path_rate=drop_path_rate,
+        head_init_scale=head_init_scale,
+    )
     return model
 
 
-def convnextv2_base(**kwargs):
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
+def convnextv2_base(
+    in_chans: int = 3,
+    num_classes: int = 1000,
+    drop_path_rate: float = 0.0,
+    head_init_scale: float = 1.0,
+) -> ConvNeXtV2:
+    model = ConvNeXtV2(
+        depths=(3, 3, 27, 3),
+        dims=(128, 256, 512, 1024),
+        in_chans=in_chans,
+        num_classes=num_classes,
+        drop_path_rate=drop_path_rate,
+        head_init_scale=head_init_scale,
+    )
     return model
 
 
-def convnextv2_large(**kwargs):
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs)
+def convnextv2_large(
+    in_chans: int = 3,
+    num_classes: int = 1000,
+    drop_path_rate: float = 0.0,
+    head_init_scale: float = 1.0,
+) -> ConvNeXtV2:
+    model = ConvNeXtV2(
+        depths=(3, 3, 27, 3),
+        dims=(192, 384, 768, 1536),
+        in_chans=in_chans,
+        num_classes=num_classes,
+        drop_path_rate=drop_path_rate,
+        head_init_scale=head_init_scale,
+    )
     return model
 
 
-def convnextv2_huge(**kwargs):
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
+def convnextv2_huge(
+    in_chans: int = 3,
+    num_classes: int = 1000,
+    drop_path_rate: float = 0.0,
+    head_init_scale: float = 1.0,
+) -> ConvNeXtV2:
+    model = ConvNeXtV2(
+        depths=(3, 3, 27, 3),
+        dims=(352, 704, 1408, 2816),
+        in_chans=in_chans,
+        num_classes=num_classes,
+        drop_path_rate=drop_path_rate,
+        head_init_scale=head_init_scale,
+    )
     return model
 
 

@@ -2,13 +2,17 @@
 Embed images into qdrant and query them to validate models are working correctly.
 """
 
+from __future__ import annotations
+
 import dataclasses
 import itertools
 import time
-from collections.abc import Hashable, Sequence
+from collections.abc import Hashable, Iterator, Sequence
 
 import matplotlib.pyplot as plt
+import numpy as np
 from doorway.x import ProxyDownloader
+from mtgdata.scryfall import ScryfallCardFace
 from tqdm import tqdm
 
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
@@ -18,7 +22,7 @@ from mtgvision.qdrant_populate import VectorStoreQdrant
 from mtgvision.util.image import imread_float, resize
 
 
-def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
+def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")) -> None:
     encoder = CoreMlEncoder(MODEL_PATH.with_suffix(".encoder.mlpackage"))
 
     dataset = RanMtgEncDecDataset(default_batch_size=1)
@@ -28,31 +32,36 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
     db = VectorStoreQdrant()
 
     # 2. check accuracy
-    def _yield_virtual_points():
+    def _yield_virtual_points() -> Iterator[
+        tuple[list[np.ndarray | None], list[list[float] | None], ScryfallCardFace]
+    ]:
         for card in tqdm(dataset.mtg.card_iter(), total=len(dataset.mtg)):
             # get base image
             orig = imread_float(card.download(proxy=proxy))
             DS = SyntheticBgFgMtgImages
 
-            def pred(x):
+            def pred(x: np.ndarray) -> list[float]:
                 return encoder.predict(x).tolist()
 
             # get modes
-            im = [None, None, None]
-            zs = [None, None, None]
+            im: list[np.ndarray | None] = [None, None, None]
+            zs: list[list[float] | None] = [None, None, None]
             if "orig" in modes:
-                im[0] = resize(orig, (192, 128))
-                zs[0] = pred(im[0])
+                im_orig = resize(orig, (192, 128))
+                im[0] = im_orig
+                zs[0] = pred(im_orig)
             if "crop" in modes:
-                im[1] = DS.make_cropped(orig, size_hw=dataset.x_size_hw)
-                zs[1] = pred(im[1])
+                im_crop = DS.make_cropped(orig, size_hw=dataset.x_size_hw)
+                im[1] = im_crop
+                zs[1] = pred(im_crop)
             if "virtual" in modes:
-                im[2] = DS.make_virtual(
+                im_virtual = DS.make_virtual(
                     orig,
                     imread_float(dataset.ilsvrc.ran_path()),
                     size_hw=dataset.x_size_hw,
                 )
-                zs[2] = pred(im[2])
+                im[2] = im_virtual
+                zs[2] = pred(im_virtual)
             yield im, zs, card
 
     N = 10000
@@ -65,7 +74,7 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
         name: str = "N/A"
         _t: float = 0
 
-        def update(self, targ: Hashable, nerby: Sequence[Hashable]):
+        def update(self, targ: Hashable, nerby: Sequence[Hashable]) -> bool:
             self.i += 1
             correct = False
             if str(targ) == str(nerby[0]):
@@ -76,7 +85,7 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
                 correct = True
             return correct
 
-        def print_correct(self):
+        def print_correct(self) -> None:
             t = time.time()
             if t - self._t > 2:
                 self._t = t
@@ -103,14 +112,18 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
         # done!
         if not v_match:
             print(card.id, v_near)
+            assert imc is not None, (
+                "'crop' must be in `modes` to render this debug plot"
+            )
             plt.imshow(imc)
             plt.show()
+            assert imv is not None
             plt.imshow(imv)
             plt.show()
+            best_id = v_near[0]
+            assert isinstance(best_id, str), f"expected a str card id, got {best_id!r}"
             plt.imshow(
-                dataset.mtg.get_card_by_id(v_near[0]).dl_and_open_im_resized(
-                    proxy=proxy
-                )
+                dataset.mtg.get_card_by_id(best_id).dl_and_open_im_resized(proxy=proxy)
             )
             plt.show()
 

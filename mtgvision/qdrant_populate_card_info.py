@@ -8,7 +8,10 @@ TODO: card information might not be correctly produced by ScryfallDataset, I don
       e.g. cards with multiple faces might be overridden
 """
 
+from __future__ import annotations
+
 import itertools
+from collections.abc import Iterable, Iterator, Sequence
 
 from mtgdata import ScryfallImageType
 from tqdm import tqdm
@@ -17,7 +20,7 @@ from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.qdrant import VectorStoreQdrant
 
 
-def _iter_batches(iter, batch_size: int = 64):
+def _iter_batches[T](iter: Iterable[T], batch_size: int = 64) -> Iterator[Sequence[T]]:
     """Yield successive n-sized batches from an iterable."""
     it = iter
     while True:
@@ -27,7 +30,7 @@ def _iter_batches(iter, batch_size: int = 64):
         yield batch
 
 
-def _cli():
+def _cli() -> None:
     # qdrant
     vstore = VectorStoreQdrant()
 

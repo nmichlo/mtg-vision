@@ -23,14 +23,18 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
+from __future__ import annotations
+
 import base64
 import functools
+from collections.abc import Callable
 from math import ceil
 from os import PathLike
-from typing import Literal, TypeVar
+from typing import Literal, TypeVar, cast, overload
 
 import cv2
 import numpy as np
+import numpy.typing as npt
 from PIL import Image
 
 # ========================================================================= #
@@ -38,39 +42,53 @@ from PIL import Image
 # ========================================================================= #
 
 
-T = TypeVar("T")
+F = TypeVar("F", bound=Callable[..., object])
 
 
-def ensure_float32(fn: T = None, *, strict: bool = False, disable: bool = True) -> T:
+@overload
+def ensure_float32(fn: F) -> F: ...
+
+
+@overload
+def ensure_float32(
+    fn: None = None, *, strict: bool = False, disable: bool = True
+) -> Callable[[F], F]: ...
+
+
+def ensure_float32(
+    fn: F | None = None, *, strict: bool = False, disable: bool = True
+) -> F | Callable[[F], F]:
     """
     Decorator to ensure that a function returns a numpy array of type np.float32.
     """
 
-    def wrap(fn: T) -> T:
+    def wrap(fn: F) -> F:
         if disable:
             return fn
 
+        name = getattr(fn, "__name__", repr(fn))
+
         @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: object, **kwargs: object) -> object:
             result = fn(*args, **kwargs)
             if not isinstance(result, np.ndarray):
                 raise Exception(
-                    f"Function {fn.__name__} did not return a numpy array, got: {type(result)}"
+                    f"Function {name} did not return a numpy array, got: {type(result)}"
                 )
             if result.dtype != np.float32:
                 raise Exception(
-                    f"Function {fn.__name__} did not return a numpy array of type {np.float32}, got: {result.dtype}"
+                    f"Function {name} did not return a numpy array of type {np.float32}, got: {result.dtype}"
                 )
             if strict:
                 if np.min(result) < 0:
-                    msg = f"Function {fn.__name__} returned a numpy array with negative values, got: {np.min(result)}"
+                    msg = f"Function {name} returned a numpy array with negative values, got: {np.min(result)}"
                     raise RuntimeError(msg)
                 if np.max(result) > 1:
-                    msg = f"Function {fn.__name__} returned a numpy array with values greater than 1, got: {np.max(result)}"
+                    msg = f"Function {name} returned a numpy array with values greater than 1, got: {np.max(result)}"
                     raise RuntimeError(msg)
             return result
 
-        return wrapper
+        return cast(F, wrapper)
 
     if fn is not None:
         return wrap(fn)
@@ -78,7 +96,7 @@ def ensure_float32(fn: T = None, *, strict: bool = False, disable: bool = True) 
         return wrap
 
 
-def asrt_float(x):
+def asrt_float(x: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
     assert isinstance(x, np.ndarray) and x.dtype in [
         np.float16,
         np.float32,
@@ -92,18 +110,21 @@ def asrt_float(x):
 # ========================================================================= #
 
 
-def imwrite(path: str | PathLike, img: np.ndarray):
+def imwrite(
+    path: str | PathLike, img: npt.NDArray[np.floating] | npt.NDArray[np.integer]
+) -> None:
     """
     Save an image to disk, support both float images in range [0, 1]
     and int or uint images in range [0, 255]
     """
-    if img.dtype in [np.float16, np.float32, np.float64]:
-        img = (img * 255).astype(np.uint8)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(str(path), img)
+    out = img
+    if out.dtype in [np.float16, np.float32, np.float64]:
+        out = (out * 255).astype(np.uint8)
+    out = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(str(path), out)
 
 
-def imread_float(path: str | PathLike) -> np.ndarray[np.float32]:
+def imread_float(path: str | PathLike) -> npt.NDArray[np.float32]:
     """
     Read an image from disk, and convert it to a float32 image in range [0, 1].
     """
@@ -113,7 +134,9 @@ def imread_float(path: str | PathLike) -> np.ndarray[np.float32]:
     return img_float32(img)
 
 
-def imshow(image, window_name="image", scale=1):
+def imshow(
+    image: np.ndarray, window_name: str = "image", scale: float | None = 1
+) -> None:
     """
     Display an image in a window temporarily, this should be used
     with additional wait logic to keep the window open.
@@ -127,7 +150,7 @@ def imshow(image, window_name="image", scale=1):
 
 def imshow_loop(
     image: np.ndarray, window_name: str = "image", scale: float = 1, delay: int = 100
-):
+) -> None:
     """
     Display an image in a window, the window will stay open until the user
     presses the escape key or closes the window.
@@ -138,7 +161,7 @@ def imshow_loop(
             break
 
 
-def imwait(delay: int = 100, window_name: str = None):
+def imwait(delay: int = 100, window_name: str | None = None) -> bool:
     k = cv2.waitKey(delay)
     if (k == 27) or (
         window_name and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1
@@ -149,7 +172,7 @@ def imwait(delay: int = 100, window_name: str = None):
 
 
 @ensure_float32
-def safe_imread(path):
+def safe_imread(path: str | PathLike) -> npt.NDArray[np.float32]:
     """
     Read an image from disk, if the image is not found, return a blank image.
     """
@@ -196,7 +219,7 @@ def img_clip(img: np.ndarray) -> np.ndarray:
     return im
 
 
-def img_uint8(img: np.ndarray | Image.Image) -> np.ndarray[np.uint8]:
+def img_uint8(img: np.ndarray | Image.Image) -> npt.NDArray[np.uint8]:
     """
     Convert an image to uint8, supports float images in range [0, 1]
     and int or uint images in range [0, 255].
@@ -207,7 +230,7 @@ def img_uint8(img: np.ndarray | Image.Image) -> np.ndarray[np.uint8]:
         if img.dtype in [np.uint8]:
             return img
         elif img.dtype in [np.float16, np.float32, np.float64]:
-            return np.multiply(img_clip(img), 255.0, dtype=np.uint8)
+            return (img_clip(img) * 255.0).astype(np.uint8)
         elif img.dtype in [np.int32]:
             return img_clip(img)
         else:
@@ -216,13 +239,13 @@ def img_uint8(img: np.ndarray | Image.Image) -> np.ndarray[np.uint8]:
         raise Exception(f"Unsupported Type: {type(img)}")
 
 
-def img_float32(img: np.ndarray | Image.Image) -> np.ndarray[np.float32]:
+def img_float32(img: np.ndarray | Image.Image) -> npt.NDArray[np.float32]:
     """
     Convert an image to float32, supports float images in range [0, 1]
     and int or uint images in range [0, 255].
     """
     if isinstance(img, Image.Image):
-        return np.divide(img, 255.0, dtype=np.float32)
+        return np.divide(np.asarray(img), 255.0, dtype=np.float32)
     elif isinstance(img, np.ndarray):
         if img.dtype in [np.float32]:
             return img_clip(img)
@@ -243,9 +266,9 @@ def img_float32(img: np.ndarray | Image.Image) -> np.ndarray[np.float32]:
 
 @ensure_float32
 def rgba_over_rgb(
-    fg_rgba: np.ndarray[np.float32 | np.uint8],
-    bg_rgb: np.ndarray[np.float32 | np.uint8],
-):
+    fg_rgba: npt.NDArray[np.float32 | np.uint8],
+    bg_rgb: npt.NDArray[np.float32 | np.uint8],
+) -> npt.NDArray[np.float32 | np.uint8]:
     """
     Merge a foreground RGBA image with a background RGB image, supports float
     images in range [0, 1] and int or uint images in range [0, 255]. Both must
@@ -262,10 +285,10 @@ def rgba_over_rgb(
 
 @ensure_float32
 def rgb_mask_over_rgb(
-    fg_rgb: np.ndarray[np.float32 | np.uint8],
-    fg_mask: np.ndarray[np.float32 | np.uint8],
-    bg_rgb: np.ndarray[np.float32 | np.uint8],
-):
+    fg_rgb: npt.NDArray[np.float32 | np.uint8],
+    fg_mask: npt.NDArray[np.float32 | np.uint8],
+    bg_rgb: npt.NDArray[np.float32 | np.uint8],
+) -> npt.NDArray[np.float32 | np.uint8]:
     """
     Merge a foreground RGBA image with a background RGB image, supports float
     images in range [0, 1] and int or uint images in range [0, 255]. Both must
@@ -335,7 +358,7 @@ def resize(
 
 @ensure_float32
 def remove_border_resized(
-    img: np.ndarray, border_width: int, size_hw: tuple[int, int] = None
+    img: np.ndarray, border_width: int, size_hw: tuple[int, int] | None = None
 ) -> np.ndarray:
     """Remove a border of specified size (crop) from an image and resize it."""
     (ih, iw) = img.shape[:2]
@@ -414,7 +437,7 @@ def round_rect_mask(
     img = np.ones(size_hw[:2], dtype=np.float32)
     # corner piece
     corner = np.zeros((radius, radius), dtype=np.float32)
-    cv2.circle(corner, (0, 0), radius, 1, cv2.FILLED)
+    cv2.circle(corner, (0, 0), radius, (1.0,), cv2.FILLED)
     # fill corners
     y1, x1 = size_hw[:2]
     img[y1 - radius :, x1 - radius :] = np.rot90(corner, 0)  # br

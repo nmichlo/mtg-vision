@@ -12,17 +12,21 @@ The module supports drawing detection results on frames and extracting card imag
 for further processing like encoding and identification.
 """
 
+from __future__ import annotations
+
 from functools import lru_cache
 
 import cv2
 import norfair
 import numpy as np
 import requests
+from qdrant_client.http.models import ScoredPoint
 
 from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.od_export import MODEL_PATH_SEG, CardSegmenter
-from mtgvision.qdrant import QdrantPoint, VectorStoreQdrant
+from mtgvision.qdrant import VectorStoreQdrant
 from mtgvision.util.image import imwait
+from mtgvision.util.json import Json
 
 # ========================================================================= #
 # CORE                                                                      #
@@ -47,8 +51,8 @@ from mtgvision.util.image import imwait
 #     return 1
 
 
-def main():
-    def reid_fn(d1, d2):
+def main() -> None:
+    def reid_fn(d1: np.ndarray, d2: np.ndarray) -> np.floating:
         # d1 and d2 are the embeddings of the two detections
         # we can use the euclidean distance as a metric
         return np.linalg.norm(d1 - d2)
@@ -68,23 +72,23 @@ def main():
     )
 
     @lru_cache
-    def query_scryfall(id: str):
+    def query_scryfall(id: str) -> dict[str, Json] | None:
         response = requests.get(f"https://api.scryfall.com/cards/{id}")
         if response.status_code == 200:
-            data = response.json()
+            data: dict[str, Json] = response.json()
             print(f"Got Card ID: {id}")
             return data
         else:
             print(f"Error: {response.status_code}")
             return None
 
-    def get_nearby(z: np.ndarray) -> list[QdrantPoint]:
-        results = vstore.query_nearby(z, 3, with_payload=True)
+    def get_nearby(z: np.ndarray) -> list[ScoredPoint]:
+        results = vstore.query_nearby(z.tolist(), 3, with_payload=True)
         for result in results:
             if not result.payload:
-                result.payload = query_scryfall(result.id)
+                result.payload = query_scryfall(str(result.id))
                 if result.payload:
-                    vstore.update_payload(result.id, result.payload)
+                    vstore.update_payload(str(result.id), result.payload)
         return results
 
     # This one is quite good, seems more robust to objects in the world that look similar to cards, like bright box or dark box.

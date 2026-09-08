@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import time
-from typing import Literal
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal
 
 import torch
 from torch import nn
@@ -8,57 +11,67 @@ from tqdm import tqdm
 from mtgvision.models.ae_base import AeBase
 from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
 
+if TYPE_CHECKING:
+    from coremltools.models import MLModel
+
 # ========================================================================= #
 # Helper                                                                    #
 # ========================================================================= #
 
 
-def Act():
+def Act() -> nn.Module:
     return nn.Mish(inplace=True)
 
 
 class Reshape(nn.Module):
-    def __init__(self, shape):
+    def __init__(self, shape: tuple[int, ...]) -> None:
         super().__init__()
         self.shape = shape
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x.reshape(self.shape)
 
 
-def Norm2d(*args, **kwargs):
-    return LayerNorm(*args, **kwargs)
+def Norm2d(
+    normalized_shape: int, eps: float = 1e-6, data_format: str = "channels_last"
+) -> LayerNorm:
+    return LayerNorm(normalized_shape, eps=eps, data_format=data_format)
 
 
-def ConvBlock(**kwargs):
-    return Block(norm=Norm2d, act=Act, **kwargs)
+def ConvBlock(*, dim: int) -> Block:
+    return Block(norm=Norm2d, act=Act, dim=dim)
 
 
 class GlobalAveragePooling(nn.Module):
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # global average pooling, (N, C, H, W) -> (N, C, 1, 1)
         return x.mean([-2, -1])[:, :, None, None]
 
 
 class Index(nn.Module):
-    def __init__(self, shape):
+    def __init__(self, shape: tuple[slice | None, ...]) -> None:
         super().__init__()
         self.shape = shape
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x[self.shape]
 
 
 class Print(nn.Module):
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         print(x.shape)
         return x
 
 
 class MLP(nn.Module):
     def __init__(
-        self, in_dim: int, hidden_dim: int, out_dim: int, act=Act, act_out: bool = False
-    ):
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        act: Callable[[], nn.Module] = Act,
+        act_out: bool = False,
+    ) -> None:
         super().__init__()
         self.layers = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
@@ -67,29 +80,32 @@ class MLP(nn.Module):
             act() if act_out else nn.Identity(),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.layers(x)
 
 
 class _Branch(nn.Module):
-    def __init__(self, branch_a: nn.Module, branch_b: nn.Module):
+    def __init__(self, branch_a: nn.Module, branch_b: nn.Module) -> None:
         super().__init__()
         self.branch_a = branch_a
         self.branch_b = branch_b
 
-    def forward(self, x):
+    def _combine(self, x_a: torch.Tensor, x_b: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_a = self.branch_a(x)
         x_b = self.branch_b(x)
         return self._combine(x_a, x_b)
 
 
 class BranchSum(_Branch):
-    def _combine(self, x_a, x_b):
+    def _combine(self, x_a: torch.Tensor, x_b: torch.Tensor) -> torch.Tensor:
         return x_a + x_b
 
 
 class BranchMul(_Branch):
-    def _combine(self, x_a, x_b):
+    def _combine(self, x_a: torch.Tensor, x_b: torch.Tensor) -> torch.Tensor:
         return x_a * x_b  # element-wise multiplication
 
 
@@ -106,7 +122,7 @@ class _Base(nn.Module):
         z_size: int = 1000,
         depths: tuple[int, int, int, int] = (3, 3, 9, 3),
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
-    ):
+    ) -> None:
         super().__init__()
         self.image_wh = image_wh
         self.in_chans = in_chans
@@ -140,9 +156,10 @@ class _Base(nn.Module):
         ih = in_wh[1] // self.internal_scale
         return iw, ih
 
-    def _init_weights(self, m):
+    def _init_weights(self, m: nn.Module | None = None) -> None:
         if isinstance(m, (nn.Conv2d, nn.Linear)):
             trunc_normal_(m.weight, std=0.02)
+            assert m.bias is not None
             nn.init.constant_(m.bias, 0)
         # else:
         #     print(f"skipping {type(m)}")
@@ -174,7 +191,7 @@ class ConvNeXtV2Encoder(_Base):
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
         head_type: HeadHint = "conv+mlp",
         scale_io: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             image_wh=image_wh,
             in_chans=in_chans,
@@ -252,7 +269,7 @@ class ConvNeXtV2Encoder(_Base):
         # initialize weights
         self.apply(self._init_weights)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.scale_io:
             x = (x * 2) - 1
         x = self.block0(x)
@@ -264,7 +281,7 @@ class ConvNeXtV2Encoder(_Base):
         x = x.reshape(x.size(0), self.z_size)
         return x
 
-    def to_coreml(self):
+    def to_coreml(self) -> MLModel:
         from coremltools import TensorType, convert
 
         i = torch.randn((1, *self.tensor_shape)).to("cpu")
@@ -301,7 +318,7 @@ class ConvNeXtV2Decoder(_Base):
         dims: tuple[int, int, int, int] = (96, 192, 384, 768),
         head_type: HeadHint = "conv+mlp",
         scale_io: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             image_wh=image_wh,
             in_chans=in_chans,
@@ -384,7 +401,7 @@ class ConvNeXtV2Decoder(_Base):
         # initialize weights
         self.apply(self._init_weights)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         assert x.ndim == 2
         x = self.unhead(x)
         x = self.unpool(x)
@@ -396,7 +413,7 @@ class ConvNeXtV2Decoder(_Base):
             x = (x + 1) / 2
         return x
 
-    def to_coreml(self):
+    def to_coreml(self) -> MLModel:
         from coremltools import TensorType, convert
 
         i = torch.randn((1, self.z_size)).to("cpu")
@@ -430,7 +447,7 @@ class ConvNeXtV2Ae(_Base, AeBase):
         encoder_enabled: bool = True,
         decoder_enabled: bool = True,
         scale_io: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             image_wh=image_wh,
             in_chans=in_chans,
@@ -464,12 +481,12 @@ class ConvNeXtV2Ae(_Base, AeBase):
         else:
             self.decoder = None
 
-    def _encode(self, x) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    def _encode(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
         if self.encoder is None:
             raise RuntimeError(f"encoder is not enabled on: {self.__class__.__name__}")
         return self.encoder(x), []
 
-    def _decode(self, z) -> list[torch.Tensor]:
+    def _decode(self, z: torch.Tensor) -> list[torch.Tensor]:
         if self.decoder is None:
             raise RuntimeError(f"decoder is not enabled on: {self.__class__.__name__}")
         return [self.decoder(z)]
@@ -480,64 +497,292 @@ class ConvNeXtV2Ae(_Base, AeBase):
 # ========================================================================= #
 
 
-def convnextv2_atto(**kwargs):
-    model = ConvNeXtV2Ae(depths=(2, 2, 6, 2), dims=(40, 80, 160, 320), **kwargs)
-    return model
+def _make_ae(
+    depths: tuple[int, int, int, int],
+    dims: tuple[int, int, int, int],
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return ConvNeXtV2Ae(
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        depths=depths,
+        dims=dims,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2_femto(**kwargs):
-    model = ConvNeXtV2Ae(depths=(2, 2, 6, 2), dims=(48, 96, 192, 384), **kwargs)
-    return model
+def convnextv2_atto(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(2, 2, 6, 2),
+        dims=(40, 80, 160, 320),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_pico(**kwargs):
-    model = ConvNeXtV2Ae(depths=(2, 2, 6, 2), dims=(64, 128, 256, 512), **kwargs)
-    return model
+def convnextv2_femto(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(2, 2, 6, 2),
+        dims=(48, 96, 192, 384),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_nano(**kwargs):
-    model = ConvNeXtV2Ae(depths=(2, 2, 8, 2), dims=(80, 160, 320, 640), **kwargs)
-    return model
+def convnextv2ae_pico(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(2, 2, 6, 2),
+        dims=(64, 128, 256, 512),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_tiny(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(96, 192, 384, 768), **kwargs)
-    return model
+def convnextv2ae_nano(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(2, 2, 8, 2),
+        dims=(80, 160, 320, 640),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_tiny_9_128(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(128, 256, 384, 768), **kwargs)
-    return model
+def convnextv2ae_tiny(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(3, 3, 9, 3),
+        dims=(96, 192, 384, 768),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_tiny_12_128(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 12, 3), dims=(128, 256, 384, 768), **kwargs)
-    return model
+def convnextv2ae_tiny_9_128(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(3, 3, 9, 3),
+        dims=(128, 256, 384, 768),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_base_9(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 9, 3), dims=(128, 256, 512, 1024), **kwargs)
-    return model
+def convnextv2ae_tiny_12_128(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(3, 3, 12, 3),
+        dims=(128, 256, 384, 768),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_base_12(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 12, 3), dims=(128, 256, 512, 1024), **kwargs)
-    return model
+def convnextv2ae_base_9(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(3, 3, 9, 3),
+        dims=(128, 256, 512, 1024),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_base(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 27, 3), dims=(128, 256, 512, 1024), **kwargs)
-    return model
+def convnextv2ae_base_12(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(3, 3, 12, 3),
+        dims=(128, 256, 512, 1024),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_large(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 27, 3), dims=(192, 384, 768, 1536), **kwargs)
-    return model
+def convnextv2ae_base(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(3, 3, 27, 3),
+        dims=(128, 256, 512, 1024),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
-def convnextv2ae_huge(**kwargs):
-    model = ConvNeXtV2Ae(depths=(3, 3, 27, 3), dims=(352, 704, 1408, 2816), **kwargs)
-    return model
+def convnextv2ae_large(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(3, 3, 27, 3),
+        dims=(192, 384, 768, 1536),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
+
+
+def convnextv2ae_huge(
+    image_wh: tuple[int, int] = (224, 224),
+    in_chans: int = 3,
+    z_size: int = 768,
+    head_type: HeadHint = "conv+mlp",
+    encoder_enabled: bool = True,
+    decoder_enabled: bool = True,
+    scale_io: bool = True,
+) -> ConvNeXtV2Ae:
+    return _make_ae(
+        depths=(3, 3, 27, 3),
+        dims=(352, 704, 1408, 2816),
+        image_wh=image_wh,
+        in_chans=in_chans,
+        z_size=z_size,
+        head_type=head_type,
+        encoder_enabled=encoder_enabled,
+        decoder_enabled=decoder_enabled,
+        scale_io=scale_io,
+    )
 
 
 # ========================================================================= #
@@ -570,9 +815,13 @@ if __name__ == "__main__":
             print(f"\n{make_fn.__name__}:{head_type}")
 
             ae = make_fn(head_type=head_type, image_wh=(128, 192), z_size=768)
+            assert ae.encoder is not None
+            assert ae.decoder is not None
+            encoder = ae.encoder
+            decoder = ae.decoder
 
-            params_enc = sum(p.numel() for p in ae.encoder.parameters())
-            params_dec = sum(p.numel() for p in ae.decoder.parameters())
+            params_enc = sum(p.numel() for p in encoder.parameters())
+            params_dec = sum(p.numel() for p in decoder.parameters())
             params_ae = sum(p.numel() for p in ae.parameters())
 
             print(f"params_ae: {params_ae} ({params_ae / 1_000_000:.3f}M)")
@@ -592,7 +841,7 @@ if __name__ == "__main__":
             # ae.encoder(x)
             # ae.decoder(z)
 
-            def _repeat_secs(fn, sec=3):
+            def _repeat_secs(fn: Callable[[], object], sec: int = 3) -> None:
                 with tqdm() as pbar:
                     start_t = last_t = time.time()
                     while True:
@@ -604,5 +853,5 @@ if __name__ == "__main__":
                         fn()
 
             _repeat_secs(lambda: ae(x))
-            _repeat_secs(lambda: ae.encoder(x))
-            _repeat_secs(lambda: ae.decoder(z))
+            _repeat_secs(lambda: encoder(x))
+            _repeat_secs(lambda: decoder(z))

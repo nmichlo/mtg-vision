@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import itertools
 import multiprocessing
 from collections.abc import Iterable, Iterator, Sequence
@@ -5,10 +7,11 @@ from pathlib import Path
 from typing import TypeVar
 
 from doorway.x import ProxyDownloader
+from mtgdata import ScryfallImageType
 from mtgdata.scryfall import ScryfallCardFace
 from tqdm import tqdm
 
-from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
+from mtgvision.encoder_datasets import SizeHW, SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.qdrant import QdrantPoint, VectorStoreQdrant
 from mtgvision.util.image import imread_float
@@ -32,19 +35,21 @@ class CardProcessor(multiprocessing.Process):
         model_path: Path,
         job_queue: multiprocessing.Queue,
         result_queue: multiprocessing.Queue,
-    ):
+    ) -> None:
         """Initialize with picklable arguments."""
         super().__init__(daemon=True)
         self.model_path = model_path
         self.job_queue = job_queue
         self.result_queue = result_queue
         self._is_init = False
-        self._x_size_hw = None
-        self._encoder = None
-        self._vstore = None
-        self._proxy = None
+        # Non-picklable resources, lazily created by `_initialize` in the
+        # worker process once it starts running.
+        self._x_size_hw: SizeHW | None = None
+        self._encoder: CoreMlEncoder | None = None
+        self._vstore: VectorStoreQdrant | None = None
+        self._proxy: ProxyDownloader | None = None
 
-    def _initialize(self):
+    def _initialize(self) -> None:
         """Lazily initialize non-picklable resources in the worker process."""
         if not self._is_init:
             self._is_init = True
@@ -57,7 +62,7 @@ class CardProcessor(multiprocessing.Process):
             self._proxy = ProxyDownloader()
             print(f"Worker {self.pid} initialized")
 
-    def run(self):
+    def run(self) -> None:
         """Main loop for the worker process."""
         self._initialize()
         while True:
@@ -69,12 +74,13 @@ class CardProcessor(multiprocessing.Process):
 
     def process_batch(self, batch: Sequence[ScryfallCardFace]) -> int:
         """Process a batch of cards and upload missing ones to Qdrant."""
+        assert self._vstore is not None, "call _initialize() before process_batch()"
         # Extract card IDs and check existing entries in Qdrant
         existing_points = self._vstore.retrieve(str(card.id) for card in batch)
         existing_ids = {point.id for point in existing_points}
         missing_cards = [card for card in batch if str(card.id) not in existing_ids]
         # Process each missing card and prepare points for upload
-        points_to_upload = []
+        points_to_upload: list[QdrantPoint] = []
         for card in missing_cards:
             points_to_upload.append(self._get_card_point(card))
         if points_to_upload:
@@ -83,6 +89,11 @@ class CardProcessor(multiprocessing.Process):
 
     def _get_card_point(self, card: ScryfallCardFace) -> QdrantPoint:
         """Generate a Point object for a single card."""
+        assert self._proxy is not None, "call _initialize() before _get_card_point()"
+        assert self._x_size_hw is not None, (
+            "call _initialize() before _get_card_point()"
+        )
+        assert self._encoder is not None, "call _initialize() before _get_card_point()"
         path = card.download(proxy=self._proxy)
         x = imread_float(path)
         x = SyntheticBgFgMtgImages.make_cropped(x, size_hw=self._x_size_hw)
@@ -90,21 +101,23 @@ class CardProcessor(multiprocessing.Process):
         return QdrantPoint(id=str(card.id), vector=z, payload=None)
 
 
-def _cli():
+def _cli() -> None:
     from mtgvision.encoder_export import MODEL_PATH
 
     # Configuration
-    dataset = SyntheticBgFgMtgImages(img_type="small", predownload=False)
+    dataset = SyntheticBgFgMtgImages(
+        img_type=ScryfallImageType.small, predownload=False
+    )
     num_workers = 4  # Adjust based on CPU cores
     batch_size = 32  # Adjust based on memory/performance
     model_path = MODEL_PATH
 
     # Create job and result queues
-    job_queue = multiprocessing.Queue()
-    result_queue = multiprocessing.Queue()
+    job_queue: multiprocessing.Queue = multiprocessing.Queue()
+    result_queue: multiprocessing.Queue = multiprocessing.Queue()
 
     # Start worker processes
-    processes = []
+    processes: list[CardProcessor] = []
     for _ in range(num_workers):
         worker = CardProcessor(model_path, job_queue, result_queue)
         worker.start()

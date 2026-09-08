@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import sys
 from datetime import datetime
@@ -12,12 +14,12 @@ import mtgvision
 
 def _main(
     data_dir: str | Path,
-    weights: str | Path = None,
+    weights: str | Path | None = None,
     size: str = "n",
     epochs: int = 100,
     kind: Literal["obb", "seg"] = "obb",
     arch: Literal["11", "12"] = "11",
-):
+) -> None:
     settings.update({"wandb": True})
 
     # default root
@@ -69,7 +71,7 @@ def _main(
     model.save(str(model_dir / f"{current_time}_{model_name}.pt"))
 
 
-def cli():
+def cli() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--weights",

@@ -5,19 +5,22 @@ to embed the same images with different distortions into the same space.
 This is effectively facial recognition techniques.
 """
 
+from __future__ import annotations
+
 import argparse
 import random
 import sys
 import uuid
 import warnings
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 import kornia as K
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pydantic
 import pytorch_lightning as pl
 import pytorch_metric_learning.losses as mll
@@ -37,20 +40,26 @@ from torch.utils.data import DataLoader, IterableDataset
 import mtgvision.models.convnextv2ae as cnv2ae
 from mtgvision.encoder_datasets import IlsvrcImages, SyntheticBgFgMtgImages
 from mtgvision.util.image import img_clip
+from mtgvision.util.json import Json
 from mtgvision.util.random import seed_all
 
 Z_SIZE = 768
 
 
-def _cnv2ae_fn(fn):
-    return lambda hw, **k: fn(
-        image_wh=hw[::-1],
-        z_size=Z_SIZE,
-        **k,
-    )
+def _cnv2ae_fn(
+    fn: Callable[..., cnv2ae.ConvNeXtV2Ae],
+) -> Callable[..., cnv2ae.ConvNeXtV2Ae]:
+    def _make(hw: tuple[int, int], **k: object) -> cnv2ae.ConvNeXtV2Ae:
+        return fn(
+            image_wh=hw[::-1],
+            z_size=Z_SIZE,
+            **k,
+        )
+
+    return _make
 
 
-_MODELS = {
+_MODELS: dict[str, Callable[..., cnv2ae.ConvNeXtV2Ae]] = {
     "cnvnxt2ae_atto": _cnv2ae_fn(cnv2ae.convnextv2_atto),
     "cnvnxt2ae_femto": _cnv2ae_fn(cnv2ae.convnextv2_femto),
     "cnvnxt2ae_pico": _cnv2ae_fn(cnv2ae.convnextv2ae_pico),
@@ -73,11 +82,11 @@ _MODELS = {
 
 
 class BatchHintNumpy(TypedDict, total=False):
-    y: np.ndarray[np.float32]  # [:, H, W, C]
-    x: np.ndarray[np.float32]  # [:, H, W, C]
-    x_labels: np.ndarray[int]  # [:, 0] ids, [:, 1] names, [:, 2] sets
-    x2: np.ndarray[np.float32]  # [:, H, W, C]
-    x2_labels: np.ndarray[int]  # [:, 0] ids, [:, 1] names, [:, 2] sets
+    y: npt.NDArray[np.float32]  # [:, H, W, C]
+    x: npt.NDArray[np.float32]  # [:, H, W, C]
+    x_labels: npt.NDArray[np.integer]  # [:, 0] ids, [:, 1] names, [:, 2] sets
+    x2: npt.NDArray[np.float32]  # [:, H, W, C]
+    x2_labels: npt.NDArray[np.integer]  # [:, 0] ids, [:, 1] names, [:, 2] sets
 
 
 class BatchHintTensor(TypedDict, total=False):
@@ -88,7 +97,7 @@ class BatchHintTensor(TypedDict, total=False):
     x2_labels: torch.Tensor  # [:, 0] ids, [:, 1] names, [:, 2] sets
 
 
-class RanMtgEncDecDataset(IterableDataset):
+class RanMtgEncDecDataset(IterableDataset[BatchHintTensor]):
     def __init__(
         self,
         default_batch_size: int,
@@ -102,21 +111,23 @@ class RanMtgEncDecDataset(IterableDataset):
         target_is_input_prob: float = 0.05,
         similar_neg_prob: float = 0.2,
         check_data: bool = False,
-    ):
+    ) -> None:
         assert default_batch_size > 0
         self.default_batch_size = default_batch_size
         self.paired = paired
         self.targets = targets
         self.x_size_hw = x_size_hw
         self.y_size_hw = y_size_hw
-        self.mtg = SyntheticBgFgMtgImages(img_type="small", predownload=predownload)
+        self.mtg = SyntheticBgFgMtgImages(
+            img_type=ScryfallImageType.small, predownload=predownload
+        )
         self.ilsvrc = IlsvrcImages()
         self.half_upsidedown = half_upsidedown
         self.target_is_input_prob = target_is_input_prob
         self.similar_neg_prob = similar_neg_prob
         self.check_data = check_data
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[BatchHintTensor]:
         while True:
             yield self.random_tensor_batch()
 
@@ -137,17 +148,19 @@ class RanMtgEncDecDataset(IterableDataset):
             target_in_prob=t,
             similar_neg_prob=n,
         )
-        return self._get_dict(imgs, lbls)
+        return self._get_dict_numpy(imgs, lbls)
 
     def random_tensor_batch(self, n: int | None = None) -> BatchHintTensor:
         imgs, lbls = self._random_image_batch(n)
-        return self._get_dict(imgs, lbls, K.image_to_tensor, torch.asarray)
+        return self._get_dict_tensor(imgs, lbls)
 
     def random_image_batch(self, n: int | None = None) -> BatchHintNumpy:
         imgs, lbls = self._random_image_batch(n)
-        return self._get_dict(imgs, lbls)
+        return self._get_dict_numpy(imgs, lbls)
 
-    def _random_image_batch(self, n: int | None = None):
+    def _random_image_batch(
+        self, n: int | None = None
+    ) -> tuple[dict[str, npt.NDArray[np.float32]], dict[str, npt.NDArray[np.integer]]]:
         if n is None:
             n = self.default_batch_size
         # get random images
@@ -157,16 +170,22 @@ class RanMtgEncDecDataset(IterableDataset):
         )
 
     @classmethod
-    def _get_dict(
+    def _get_dict_numpy(
         cls,
-        imgs: "dict[str, np.ndarray[np.float32]]",
-        lbls: "dict[str, np.ndarray[int]]",
-        apply_imgs=lambda v: v,
-        apply_lbls=lambda v: v,
-    ) -> BatchHintTensor | BatchHintNumpy:
+        imgs: dict[str, npt.NDArray[np.float32]],
+        lbls: dict[str, npt.NDArray[np.integer]],
+    ) -> BatchHintNumpy:
+        return {**imgs, **lbls}
+
+    @classmethod
+    def _get_dict_tensor(
+        cls,
+        imgs: dict[str, npt.NDArray[np.float32]],
+        lbls: dict[str, npt.NDArray[np.integer]],
+    ) -> BatchHintTensor:
         return {
-            **{k: apply_imgs(v) for k, v in imgs.items()},
-            **{k: apply_lbls(v) for k, v in lbls.items()},
+            **{k: K.image_to_tensor(v) for k, v in imgs.items()},
+            **{k: torch.asarray(v) for k, v in lbls.items()},
         }
 
     def __make_y__(self, card_img: np.ndarray) -> np.ndarray:
@@ -174,7 +193,7 @@ class RanMtgEncDecDataset(IterableDataset):
         return y
 
     def __make_x__(
-        self, card_img: np.ndarray, bg: np.ndarray, target_is_input_prob: float
+        self, card_img: np.ndarray, bg: np.ndarray, target_is_input_prob: float | None
     ) -> np.ndarray:
         if random.random() < (target_is_input_prob or self.target_is_input_prob):
             x = SyntheticBgFgMtgImages.make_cropped(card_img, size_hw=self.x_size_hw)
@@ -192,9 +211,9 @@ class RanMtgEncDecDataset(IterableDataset):
         cards: list[ScryfallCardFace],
         bg_imgs: list[np.ndarray],
         *,
-        target_in_prob: float = None,
-        similar_neg_prob: float = None,
-    ) -> "tuple[dict[str, np.ndarray[np.float32]], dict[str, np.ndarray[int]]]":
+        target_in_prob: float | None = None,
+        similar_neg_prob: float | None = None,
+    ) -> tuple[dict[str, npt.NDArray[np.float32]], dict[str, npt.NDArray[np.integer]]]:
         assert len(cards) == len(bg_imgs), f"{len(cards)} != {len(bg_imgs)}"
         # A. generate random samples
         imgs, lbls = defaultdict(list), defaultdict(list)
@@ -230,11 +249,11 @@ class RanMtgEncDecDataset(IterableDataset):
         lbls = {k: np.stack(v, axis=0) for k, v in lbls.items()}
         return imgs, lbls
 
-    def set_batch_size(self, batch_size):
+    def set_batch_size(self, batch_size: int) -> None:
         self.default_batch_size = batch_size
 
     @classmethod
-    def from_hparams(cls, hparams: "Config"):
+    def from_hparams(cls, hparams: Config) -> RanMtgEncDecDataset:
         return cls(
             default_batch_size=hparams.batch_size,
             predownload=hparams.force_download,
@@ -256,12 +275,12 @@ class RanMtgEncDecDataset(IterableDataset):
 
 
 class MtgVisionEncoder(pl.LightningModule):
-    hparams: "Config"
-    model: "cnv2ae.ConvNeXtV2Ae"
-    metric: "torch.nn.Module"
-    metric_set: "torch.nn.Module"
+    hparams: Config
+    model: cnv2ae.ConvNeXtV2Ae
+    _metric: torch.nn.Module
+    _metric_set: torch.nn.Module
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict) -> None:
         super().__init__()
         config = Config(**config).model_dump()  # add in missing defaults
         self.save_hyperparameters(config)
@@ -285,14 +304,14 @@ class MtgVisionEncoder(pl.LightningModule):
         if self.hparams.loss_set_contrastive:
             self._metric_set = self._get_metric(self.hparams.loss_set_contrastive)
 
-    def on_load_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
+    def on_load_checkpoint(self, checkpoint: Mapping[str, Json]) -> None:
         self.configure_model()
 
-    def _get_loss_recon(self):
-        # generate
-        if getattr(self, "_recon_loss", None) is not None:
-            return self._recon_loss
+    def _get_loss_recon(
+        self,
+    ) -> torch.nn.Module | Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
         # make loss
+        assert self.hparams.loss_recon is not None
         loss_fn = {
             "mse": F.mse_loss,
             "l1": F.l1_loss,
@@ -310,13 +329,12 @@ class MtgVisionEncoder(pl.LightningModule):
             ),
             "ms_ssim": K.losses.MS_SSIMLoss(),
         }[self.hparams.loss_recon]
-        try:
+        if isinstance(loss_fn, torch.nn.Module):
             return loss_fn.to(self.device)
-        except Exception:
-            return loss_fn
+        return loss_fn
 
     @classmethod
-    def test_checkpoint(cls, path):
+    def test_checkpoint(cls, path: str | Path) -> None:
         model = MtgVisionEncoder.load_from_checkpoint(path, map_location="cpu")
         # Initialize model
         data_module = MtgDataModule(
@@ -332,40 +350,40 @@ class MtgVisionEncoder(pl.LightningModule):
         _, ([outx], *_) = model(x[None])
         _, ([outy], *_) = model(y[None])
         # log images
-        x = K.tensor_to_image(x)
-        y = K.tensor_to_image(y)
-        outx = K.tensor_to_image(outx)
-        outy = K.tensor_to_image(outy)
+        x_np = K.tensor_to_image(x)
+        y_np = K.tensor_to_image(y)
+        outx_np = K.tensor_to_image(outx)
+        outy_np = K.tensor_to_image(outy)
         # show
-        plt.imshow(x)
+        plt.imshow(x_np)
         plt.show()
-        plt.imshow(outx)
+        plt.imshow(outx_np)
         plt.show()
-        plt.imshow(y)
+        plt.imshow(y_np)
         plt.show()
-        plt.imshow(outy)
+        plt.imshow(outy_np)
         plt.show()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         z, multi = self.model(x)
         return z, multi[0]
 
-    def forward_img(self, img):
+    def forward_img(self, img: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         assert img.ndim == 3
         assert img.shape[-1] == 3
         assert img.dtype == np.float32  # in range [0, 1]
         _, [y, *_] = self(K.image_to_tensor(img)[None, ...])
         return K.tensor_to_image(y)
 
-    def encode(self, x):
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
         z, multi = self.model.encode(x)
         return z
 
-    def decode(self, z):
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
         multi = self.model.decode(z)
         return multi[0]
 
-    def _get_metric(self, name: str):
+    def _get_metric(self, name: str) -> torch.nn.Module:
         # not good for qdrant search?
         if name == "ntxent":
             # needs very large batch sizes ~= 4096
@@ -405,8 +423,11 @@ class MtgVisionEncoder(pl.LightningModule):
         else:
             raise KeyError(f"Unknown metric: {name}")
 
-    def training_step(self, batch: BatchHintTensor, batch_idx: int):
-        logs, loss = {}, 0
+    def training_step(
+        self, batch: BatchHintTensor, batch_idx: int
+    ) -> dict[str, torch.Tensor | float]:
+        logs: dict[str, torch.Tensor | float] = {}
+        loss: torch.Tensor | float = 0
 
         # recon loss
         if not self.hparams.loss_recon:
@@ -433,12 +454,14 @@ class MtgVisionEncoder(pl.LightningModule):
 
         # contrastive loss -- based on card IDs as labels
         if self.hparams.loss_contrastive:
+            assert labels_all is not None
             loss_cont = self._metric(z_all, labels_all[:, 0])
             logs["loss_metric"] = loss_cont
             loss += loss_cont * self.hparams.scale_loss_contrastive
 
         # contrastive set loss -- based on set codes as labels
         if self.hparams.loss_set_contrastive:
+            assert labels_all is not None
             loss_set_cont = self._metric_set(z_all, labels_all[:, 2])
             logs["loss_set_metric"] = loss_set_cont
             loss += loss_set_cont * self.hparams.scale_loss_set_contrastive
@@ -450,7 +473,7 @@ class MtgVisionEncoder(pl.LightningModule):
         # loss is required key
         return logs
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> torch.optim.Optimizer:
         if self.hparams.optimizer == "adam":
             opt = optim.Adam(
                 self.parameters(),
@@ -488,13 +511,16 @@ class MtgVisionEncoder(pl.LightningModule):
         if self.hparams.skip_first_optimizer_load_state:
             _old_ = opt.load_state_dict
 
-            def _skip_load_state_dict_(*args, **kwargs):
+            def _skip_load_state_dict_(state_dict: Json) -> None:
                 print(
                     "Loading state dict... SKIPPED!, resetting load_state_dict to default."
                 )
-                opt.load_state_dict = _old_
+                # restore the original bound method, dynamically -- this
+                # intentionally bypasses static attribute typing since we are
+                # monkey-patching an instance method for one call only.
+                setattr(opt, "load_state_dict", _old_)
 
-            opt.load_state_dict = _skip_load_state_dict_
+            setattr(opt, "load_state_dict", _skip_load_state_dict_)
 
         # done!
         return opt
@@ -511,14 +537,14 @@ class MtgDataModule(pl.LightningDataModule):
         train_dataset: RanMtgEncDecDataset,
         num_workers: int = 3,
         batch_size: int | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.num_workers = num_workers
         self.train_dataset = train_dataset
         if batch_size is not None:
             self.train_dataset.set_batch_size(batch_size)
 
-    def train_dataloader(self):
+    def train_dataloader(self) -> DataLoader[BatchHintTensor]:
         return DataLoader(
             self.train_dataset,
             batch_size=None,  # no auto collation
@@ -533,24 +559,34 @@ class MtgDataModule(pl.LightningDataModule):
 
 
 class ImageLoggingCallback(Callback):
-    def __init__(self, vis_batches_np, log_every_n_steps=1000):
+    def __init__(
+        self, vis_batches_np: list[BatchHintNumpy], log_every_n_steps: int = 1000
+    ) -> None:
         self.vis_batches_np = vis_batches_np
         self.log_every_n_steps = log_every_n_steps
         self.last_steps = -(log_every_n_steps * 10)
         self._first_log = True
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+    def on_train_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: object,
+        batch: object,
+        batch_idx: int,
+    ) -> None:
         current_steps = trainer.global_step
         if current_steps - self.last_steps >= self.log_every_n_steps:
+            assert isinstance(pl_module, MtgVisionEncoder)
             self.log_images(pl_module)
             self.last_steps = current_steps
 
     @staticmethod
-    def join_images_into_row(images: Sequence[np.ndarray], padding=5):
+    def join_images_into_row(images: np.ndarray, padding: int = 5) -> np.ndarray:
         const = 127
         if images[0].dtype in [np.float16, np.float32, np.float64]:
             const = 0.5
-        images = [
+        padded = [
             np.pad(
                 image,
                 [(padding, padding), (padding, padding), (0, 0)],
@@ -559,10 +595,10 @@ class ImageLoggingCallback(Callback):
             )
             for image in images
         ]
-        return np.concatenate(images, axis=1)
+        return np.concatenate(padded, axis=1)
 
     @staticmethod
-    def _wandb_img(image: np.ndarray, caption: str):
+    def _wandb_img(image: np.ndarray, caption: str) -> wandb.Image:
         if image.dtype == np.uint8:
             pass
         elif image.dtype == np.float32:
@@ -576,28 +612,30 @@ class ImageLoggingCallback(Callback):
             raise ValueError(f"{caption} image dtype unsupported: {image.dtype}")
         return wandb.Image(image, caption=caption)
 
-    def log_images(self, model: MtgVisionEncoder):
-        vis_batches_np: list[dict] = self.vis_batches_np
-        logs = {}
+    def log_images(self, model: MtgVisionEncoder) -> None:
+        vis_batches_np: list[BatchHintNumpy] = self.vis_batches_np
+        logs: dict[str, wandb.Image] = {}
         model.eval()
 
         def take_imgs(
-            batches: list[dict],
+            batches: list[BatchHintNumpy],
             bkey: str,
             bidx: int,
         ) -> np.ndarray | None:
             if self._first_log and bkey in batches[0]:
-                images = [batch[bkey][bidx] for batch in batches]
+                images = [
+                    cast(dict[str, np.ndarray], batch)[bkey][bidx] for batch in batches
+                ]
                 images = np.stack(images, axis=0)
                 return images
             return None
 
-        def _log_images(images, logs_key: str, caption: str):
+        def _log_images(images: np.ndarray | None, logs_key: str, caption: str) -> None:
             if images is not None:
                 image = self.join_images_into_row(images)
                 logs[logs_key] = self._wandb_img(image, caption)
 
-        def _forward_imgs(images: np.ndarray | None):
+        def _forward_imgs(images: np.ndarray | None) -> np.ndarray | None:
             if model.hparams.loss_recon and images is not None:
                 inputs = torch.from_numpy(images).float().permute(0, 3, 1, 2)
                 inputs = inputs.to(model.device)
@@ -639,8 +677,8 @@ class ImageLoggingCallback(Callback):
 
 def get_test_image_batches(
     train_dataset: RanMtgEncDecDataset,
-    seed: int = None,
-):
+    seed: int | None = None,
+) -> list[BatchHintNumpy]:
     if seed is not None:
         seed_all(seed)
 
@@ -672,7 +710,7 @@ def get_test_image_batches(
     return vis_batches
 
 
-def train(config: "Config"):
+def train(config: Config) -> None:
     seed_all(config.seed)
 
     # Initialize model
@@ -686,7 +724,7 @@ def train(config: "Config"):
     vis_batches = get_test_image_batches(data_module.train_dataset, seed=config.seed)
 
     # Initialize wandb
-    parts = [
+    parts: list[tuple[object, str | None]] = [
         (config.prefix, config.prefix),
         (True, config.model_name),
         (True, config.head_type),
@@ -709,21 +747,22 @@ def train(config: "Config"):
     seed_all(config.seed)
 
     # Initialize model and compile
-    model = MtgVisionEncoder(config.model_dump())
+    model: pl.LightningModule = MtgVisionEncoder(config.model_dump())
     if config.compile:
         # torch._dynamo.list_backends() # ['cudagraphs', 'inductor', 'onnxrt', 'openxla', 'tvm']
-        model = torch.compile(
-            model,
-            **(
-                {"backend": "aot_eager"}
-                if device == "mps"
-                else {"mode": "reduce-overhead"}
-            ),
-        )
+        # torch.compile's stub only reports a plain `Callable` return type, but
+        # pytorch_lightning explicitly supports passing the resulting
+        # `OptimizedModule` wrapper anywhere a `LightningModule` is expected.
+        if device == "mps":
+            model = cast(pl.LightningModule, torch.compile(model, backend="aot_eager"))
+        else:
+            model = cast(
+                pl.LightningModule, torch.compile(model, mode="reduce-overhead")
+            )
 
     # logger
     wandb_logger = WandbLogger(
-        name="_".join([v for k, v in parts if k]),
+        name="_".join([v for k, v in parts if k and v is not None]),
         project="mtgvision_encoder",
         config=config,
     )
@@ -787,9 +826,9 @@ def train(config: "Config"):
 # ========================================================================= #
 
 
-def _cli():
+def _cli() -> None:
     # generate parser
-    _BOOLS = []
+    _BOOLS: list[str] = []
     parser = argparse.ArgumentParser()
     for name, field in Config().model_fields.items():
         if field.annotation is bool:

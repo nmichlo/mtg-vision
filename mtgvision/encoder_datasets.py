@@ -6,6 +6,8 @@ embeddings invariant to their distortions.
 Using similar techniques to facial recognition.
 """
 
+from __future__ import annotations
+
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 #  MIT License
 #
@@ -29,7 +31,6 @@ Using similar techniques to facial recognition.
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
-
 import random
 import uuid
 from collections import defaultdict
@@ -57,6 +58,10 @@ from mtgvision.util.image import ensure_float32
 # RANDOM TRANSFORMS                                                         #
 # ========================================================================= #
 
+# the fill colour choices used by `Mutate.random_erasing`, either a single
+# choice, or a sequence of choices from which one is picked at random.
+ErasingColor = Literal["random", "uniform_random", "zeros", "ones", "mean"]
+
 
 class Mutate:
     """
@@ -65,7 +70,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def flip(img, horr=True, vert=True):
+    def flip(img: np.ndarray, horr: bool = True, vert: bool = True) -> np.ndarray:
         return uimg.flip(
             img,
             horr=horr and (random.random() >= 0.5),
@@ -74,19 +79,23 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def rotate_bounded(img, deg_min=0, deg_max=360):
+    def rotate_bounded(
+        img: np.ndarray, deg_min: float = 0, deg_max: float = 360
+    ) -> np.ndarray:
         return uimg.rotate_bounded(
             img, deg_min + np.random.random() * (deg_max - deg_min)
         )
 
     @staticmethod
     @ensure_float32
-    def upsidedown(img):
+    def upsidedown(img: np.ndarray) -> np.ndarray:
         return np.rot90(img, k=2)
 
     @staticmethod
     @ensure_float32
-    def warp(img, warp_ratio=0.3, warp_ratio_min=-0.25):
+    def warp(
+        img: np.ndarray, warp_ratio: float = 0.3, warp_ratio_min: float = -0.25
+    ) -> np.ndarray:
         # [top left, top right, bottom left, bottom right]
         (h, w) = (img.shape[0] - 1, img.shape[1] - 1)
         src_pts = np.asarray([(0, 0), (0, w), (h, 0), (h, w)], dtype=np.float32)
@@ -105,12 +114,14 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def warp_inv(img, warp_ratio=0.5, warp_ratio_min=0.25):
+    def warp_inv(
+        img: np.ndarray, warp_ratio: float = 0.5, warp_ratio_min: float = 0.25
+    ) -> np.ndarray:
         return Mutate.warp(img, warp_ratio=-warp_ratio, warp_ratio_min=-warp_ratio_min)
 
     @staticmethod
     @ensure_float32
-    def noise(img, amount=0.5):
+    def noise(img: np.ndarray, amount: float = 0.5) -> np.ndarray:
         noise_type = random.choice(["speckle", "gaussian", "pepper", "poisson"])
         if noise_type == "speckle":
             noisy = uimg.noise_speckle(img, strength=0.3)
@@ -128,28 +139,28 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def blur(img, n_max=3):
+    def blur(img: np.ndarray, n_max: int = 3) -> np.ndarray:
         n = np.random.randint(0, (n_max - 1) // 2 + 1) * 2 + 1
         return cv2.GaussianBlur(img, (n, n), 0)
 
     @staticmethod
     @ensure_float32
     def downscale_upscale(
-        img,
-        n_min=0,
-        n_max=2,
-        choices=(
+        img: np.ndarray,
+        n_min: int = 0,
+        n_max: int = 2,
+        choices: tuple[int, ...] = (
             cv2.INTER_NEAREST,
             cv2.INTER_LINEAR,
             cv2.INTER_CUBIC,
         ),
-    ):
+    ) -> np.ndarray:
         n = np.random.randint(n_min, n_max + 1)
         orig_h, orig_w = img.shape[:2]
         new_h = orig_h // (2**n)
         new_w = orig_w // (2**n)
-        interp_down = np.random.choice(choices)
-        interp_up = np.random.choice(choices)
+        interp_down = int(np.random.choice(choices))
+        interp_up = int(np.random.choice(choices))
         # resize
         img = cv2.resize(img, (new_w, new_h), interpolation=interp_down)
         img = cv2.resize(img, (orig_w, orig_h), interpolation=interp_up)
@@ -157,7 +168,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def tint(img, amount=0.15):
+    def tint(img: np.ndarray, amount: float = 0.15) -> np.ndarray:
         for i in range(3):
             r = 1 + amount * (2 * np.random.random() - 1)
             img[:, :, i] = uimg.img_clip(r * img[:, :, i])
@@ -165,21 +176,23 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def fade_white(img, amount=0.33):
+    def fade_white(img: np.ndarray, amount: float = 0.33) -> np.ndarray:
         ratio = np.random.random() * amount
         img[:, :, :3] = (ratio) * 1 + (1 - ratio) * img[:, :, :3]
         return img
 
     @staticmethod
     @ensure_float32
-    def fade_black(img, amount=0.5):
+    def fade_black(img: np.ndarray, amount: float = 0.5) -> np.ndarray:
         ratio = np.random.random() * amount
         img[:, :, :3] = (ratio) * 0 + (1 - ratio) * img[:, :, :3]
         return img
 
     @staticmethod
     @ensure_float32
-    def brightness_contrast(img, brightness=0.2, contrast=0.2):
+    def brightness_contrast(
+        img: np.ndarray, brightness: float = 0.2, contrast: float = 0.2
+    ) -> np.ndarray:
         alpha = 1.0 + np.random.uniform(-contrast, contrast)
         beta = np.random.uniform(-brightness, brightness)
         img = alpha * img + beta
@@ -187,7 +200,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def rgb_jitter_add(img, brightness=0.3):
+    def rgb_jitter_add(img: np.ndarray, brightness: float = 0.3) -> np.ndarray:
         # Randomly change the brightness of the image
         rgb = np.random.uniform(-brightness, brightness, size=(1, 1, 3))
         img[:, :, :3] *= rgb
@@ -195,7 +208,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def rgb_jitter_mul(img, brightness=0.3):
+    def rgb_jitter_mul(img: np.ndarray, brightness: float = 0.3) -> np.ndarray:
         # Randomly change the brightness of the image
         rgb = np.random.uniform(1 - brightness, 1 + brightness, size=(1, 1, 3))
         img[:, :, :3] *= rgb
@@ -214,13 +227,17 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def gaussian_noise(img, mean=0, sigma=0.25):
+    def gaussian_noise(
+        img: np.ndarray, mean: float = 0, sigma: float = 0.25
+    ) -> np.ndarray:
         noise = np.random.normal(mean, sigma, img.shape).astype(np.float32)
         return uimg.img_clip(img + noise)
 
     @staticmethod
     @ensure_float32
-    def salt_pepper_noise(img, salt_prob=0.01, pepper_prob=0.01):
+    def salt_pepper_noise(
+        img: np.ndarray, salt_prob: float = 0.01, pepper_prob: float = 0.01
+    ) -> np.ndarray:
         noisy = img.copy()
         num_salt = np.ceil(salt_prob * img.size)
         num_pepper = np.ceil(pepper_prob * img.size)
@@ -234,7 +251,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def sharpen(img):
+    def sharpen(img: np.ndarray) -> np.ndarray:
         kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
         img = cv2.filter2D(img, -1, kernel)
         return uimg.img_clip(img)
@@ -251,7 +268,9 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def cutout(img, num_holes=8, max_h_size=8, max_w_size=8):
+    def cutout(
+        img: np.ndarray, num_holes: int = 8, max_h_size: int = 8, max_w_size: int = 8
+    ) -> np.ndarray:
         h, w, _ = img.shape
         for _ in range(num_holes):
             y = np.random.randint(h)
@@ -266,11 +285,11 @@ class Mutate:
     @staticmethod
     @ensure_float32
     def random_erasing(
-        img,
+        img: np.ndarray,
         *,
         scale_min_max: tuple[float, float] = (0.2, 0.4),  # [0, 1]
         aspect_min_max: tuple[float, float] = (1, 3),  # [1, inf]
-        color: Literal["random", "uniform_random", "zeros", "ones", "mean"] = (
+        color: ErasingColor | tuple[ErasingColor, ...] = (
             "random",
             "uniform_random",
             "zeros",
@@ -278,7 +297,7 @@ class Mutate:
             "mean",
         ),
         inside: bool = False,
-    ):
+    ) -> np.ndarray:
         h, w = img.shape[:2]
         # scale
         scale = np.random.uniform(*scale_min_max)
@@ -345,7 +364,13 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def affine_transform(img, angle=5, translate=(10, 10), scale=0.1, shear=0.3):
+    def affine_transform(
+        img: np.ndarray,
+        angle: float = 5,
+        translate: tuple[float, float] = (10, 10),
+        scale: float = 0.1,
+        shear: float = 0.3,
+    ) -> np.ndarray:
         # random
         angle = np.random.uniform(-angle, angle)
         translate = (
@@ -369,10 +394,10 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def perspective_transform(img, strength=0.1):
+    def perspective_transform(img: np.ndarray, strength: float = 0.1) -> np.ndarray:
         rows, cols, _ = img.shape
-        pts1 = np.float32([[0, 0], [cols, 0], [0, rows], [cols, rows]])
-        pts2 = np.float32(
+        pts1 = np.array([[0, 0], [cols, 0], [0, rows], [cols, rows]], dtype=np.float32)
+        pts2 = np.array(
             [
                 [
                     np.random.uniform(-strength, strength) * cols,
@@ -390,7 +415,8 @@ class Mutate:
                     cols + np.random.uniform(-strength, strength) * cols,
                     rows + np.random.uniform(-strength, strength) * rows,
                 ],
-            ]
+            ],
+            dtype=np.float32,
         )
         M = cv2.getPerspectiveTransform(pts1, pts2)
         return cv2.warpPerspective(img, M, (cols, rows))
@@ -431,7 +457,7 @@ class IlsvrcImages:
         self,
         root: str | Path = DATASETS_ROOT / "ilsvrc" / "2010",
         subdir: str | Path = "val",
-    ):
+    ) -> None:
         root = Path(root)
         if subdir is not None:
             subdir = Path(subdir)
@@ -447,16 +473,16 @@ class IlsvrcImages:
             f"Dataset is empty. Please download the dataset. {root}"
         )
 
-    def _load_image(self, path):
+    def _load_image(self, path: str) -> np.ndarray:
         return uimg.imread_float(path)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._paths)
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: int) -> np.ndarray:
         return self._load_image(self._paths[item])
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[np.ndarray]:
         for card in self._paths:
             yield self._load_image(card)
 
@@ -466,7 +492,7 @@ class IlsvrcImages:
     def ran(self) -> np.ndarray:
         return self._load_image(self.ran_path())
 
-    def get(self, idx) -> np.ndarray:
+    def get(self, idx: int) -> np.ndarray:
         return self[idx]
 
 
@@ -483,7 +509,7 @@ class CocoValImages(IlsvrcImages):
         self,
         root: str | Path = DATASETS_ROOT / "coco" / "2017",
         subdir: str | Path = "val2017",
-    ):
+    ) -> None:
         super().__init__(root=root, subdir=subdir)
 
 
@@ -499,7 +525,7 @@ H = TypeVar("H", bound=Hashable)
 
 def idx_map(items: Iterable[H]) -> dict[H, int]:
     """Generate labels for a sequence of items."""
-    labels = {}
+    labels: dict[H, int] = {}
     for i, item in enumerate(sorted(set(items))):
         labels[item] = i
     return labels
@@ -520,7 +546,7 @@ class SyntheticBgFgMtgImages:
         bulk_type: ScryfallBulkType = ScryfallBulkType.default_cards,
         predownload: bool = False,
         force_update: bool = False,
-    ):
+    ) -> None:
         path = Path(__file__).parent.parent.parent / "data/ds/load.lock"
         self.img_type = img_type
         self.bulk_type = bulk_type
@@ -531,9 +557,9 @@ class SyntheticBgFgMtgImages:
 
     def make_scryfall_data(
         self,
-        force_update: bool = None,
-        predownload: bool = None,
-    ):
+        force_update: bool | None = None,
+        predownload: bool | None = None,
+    ) -> ScryfallDataset:
         if predownload is None:
             predownload = self._predownload
         if force_update is None:
@@ -547,7 +573,7 @@ class SyntheticBgFgMtgImages:
         )
         return ds
 
-    def _init_(self):
+    def _init_(self) -> None:
         # LOAD CARDS ... TEMPORARY
         ds = self.make_scryfall_data()
         # cards
@@ -557,9 +583,12 @@ class SyntheticBgFgMtgImages:
         GroupHint = defaultdict[str, dict[str, ScryfallCardFace]]
         self._cards_by_name: GroupHint = defaultdict(dict)
         self._cards_by_set: GroupHint = defaultdict(dict)
-        cards, card_ids, card_names, card_sets = [], [], [], []
+        cards: list[ScryfallCardFace] = []
+        card_ids: list[str] = []
+        card_names: list[str] = []
+        card_sets: list[str] = []
         for card in tqdm(ds):
-            self._card_by_id[card.id] = card
+            self._card_by_id[str(card.id)] = card
             self._cards_by_name[card.name][card.id] = card
             self._cards_by_set[card.set_code][card.id] = card
             cards.append(card)
@@ -577,7 +606,7 @@ class SyntheticBgFgMtgImages:
         )
 
     def card_get_labels(self, card: ScryfallCardFace) -> tuple[int, int, int]:
-        id_idx = self._labels_by_id[card.id]
+        id_idx = self._labels_by_id[str(card.id)]
         name_idx = self._labels_by_name[card.name]
         set_idx = self._labels_by_set[card.set_code]
         return id_idx, name_idx, set_idx
@@ -587,9 +616,7 @@ class SyntheticBgFgMtgImages:
         return self.card_get_labels(card)
 
     def get_card_by_id(self, id_: uuid.UUID | str) -> ScryfallCardFace:
-        if isinstance(id_, str):
-            id_ = uuid.UUID(id_)
-        return self._card_by_id[id_]
+        return self._card_by_id[str(id_)]
 
     def get_image_by_id(self, id_: uuid.UUID | str) -> np.ndarray:
         _, img = self.get_card_and_image_by_id(id_)
@@ -601,7 +628,9 @@ class SyntheticBgFgMtgImages:
         card = self.get_card_by_id(id_)
         return card, self._load_card_image(card)
 
-    def _get_group(self, card, mode) -> dict[str, ScryfallCardFace]:
+    def _get_group(
+        self, card: ScryfallCardFace, mode: Literal["name", "set"]
+    ) -> dict[str, ScryfallCardFace]:
         if mode == "name":
             return self._cards_by_name[card.name]
         elif mode == "set":
@@ -617,22 +646,22 @@ class SyntheticBgFgMtgImages:
         assert card.id in group
         # get similar card with non-same ID
         group = dict(group)
-        group.pop(card.id)
+        group.pop(str(card.id))
         if group:
             return random.choice(list(group.values()))
         return None
 
     @classmethod
-    def _load_card_image(cls, card: ScryfallCardFace):
+    def _load_card_image(cls, card: ScryfallCardFace) -> np.ndarray:
         return uimg.img_float32(card.dl_and_open_im_resized())
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._card_ids)
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: int) -> np.ndarray:
         return self._load_card_image(self.get_card_by_id(self._card_ids[item]))
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[np.ndarray]:
         for card in self.card_iter():
             yield self._load_card_image(card)
 
@@ -656,7 +685,7 @@ class SyntheticBgFgMtgImages:
         id_ = random.choice(self._card_ids)
         return self.get_card_by_id(id_)
 
-    def get(self, idx) -> np.ndarray:
+    def get(self, idx: int) -> np.ndarray:
         return self[idx]
 
     _RAN_BG = uran.ApplyShuffled(
@@ -753,7 +782,8 @@ class SyntheticBgFgMtgImages:
             if isinstance(path_or_img, str)
             else path_or_img
         )
-        mask = uimg.round_rect_mask(card.shape[:2], radius_ratio=0.05)
+        card_h, card_w = card.shape[:2]
+        mask = uimg.round_rect_mask((card_h, card_w), radius_ratio=0.05)
         ret = cv2.merge(
             (
                 card[:, :, 0],
@@ -833,7 +863,7 @@ class SyntheticBgFgMtgImages:
 
 
 if __name__ == "__main__":
-    mtg = SyntheticBgFgMtgImages(img_type="small", predownload=False)
+    mtg = SyntheticBgFgMtgImages(img_type=ScryfallImageType.small, predownload=False)
     ilsvrc = IlsvrcImages()
 
     # with tqdm(total=len(mtg)) as pbar:

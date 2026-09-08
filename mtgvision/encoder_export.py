@@ -2,6 +2,8 @@
 Export a trained encoder to coreml or other formats.
 """
 
+from __future__ import annotations
+
 import argparse
 import functools
 import warnings
@@ -13,6 +15,7 @@ import numpy as np
 from tqdm import tqdm
 
 from mtgvision.encoder_train import (
+    BatchHintNumpy,
     MtgVisionEncoder,
     RanMtgEncDecDataset,
     get_test_image_batches,
@@ -27,14 +30,14 @@ MODEL_PATH = Path(MODEL_DETAILS["path"])
 
 
 @functools.lru_cache(maxsize=1)
-def _get_data():
+def _get_data() -> list[BatchHintNumpy]:
     return get_test_image_batches(
         RanMtgEncDecDataset(default_batch_size=1),
         seed=42,
     )
 
 
-def _export(path: Path, debug: bool = True):
+def _export(path: Path, debug: bool = True) -> None:
     # LOAD
     print("loading model from", path)
     model: MtgVisionEncoder = MtgVisionEncoder.load_from_checkpoint(path)
@@ -55,39 +58,39 @@ def _export(path: Path, debug: bool = True):
     coreml_encoder_path = path.with_suffix(".encoder.mlpackage")
     if model.model.encoder is not None:
         print("Exporting encoder to", coreml_encoder_path)
-        encoder = model.model.encoder.to_coreml()
-        encoder.save(coreml_encoder_path)
+        encoder_mlmodel = model.model.encoder.to_coreml()
+        encoder_mlmodel.save(str(coreml_encoder_path))
 
-    decoder = None
+    coreml_decoder_path = path.with_suffix(".decoder.mlpackage")
     if has_decoder:
-        coreml_decoder_path = path.with_suffix(".decoder.mlpackage")
         if model.model.decoder is not None:
             print("Encoder exported to", coreml_decoder_path)
-            decoder = model.model.decoder.to_coreml()
-            decoder.save(coreml_decoder_path)
+            decoder_mlmodel = model.model.decoder.to_coreml()
+            decoder_mlmodel.save(str(coreml_decoder_path))
 
     # DEBUG
     if debug:
         encoder = CoreMlEncoder(coreml_encoder_path)
+        decoder: CoreMlDecoder | None = None
         if has_decoder:
             decoder = CoreMlDecoder(coreml_decoder_path)
         for img in _get_data()[:1]:
             plt.imshow(img["x"][0])
             plt.show()
             z = encoder.predict(img["x"][0])
-            if has_decoder:
+            if decoder is not None:
                 x_recon = decoder.predict(z)
                 plt.imshow(x_recon)
                 plt.show()
 
 
 class CoreMlEncoder:
-    def __init__(self, model_path: Path = None):
+    def __init__(self, model_path: Path | None = None) -> None:
         if model_path is None:
             model_path = MODEL_PATH.with_suffix(".encoder.mlpackage")
         self.model = ct.models.MLModel(str(model_path))
 
-    def predict(self, rgb_im: np.ndarray):
+    def predict(self, rgb_im: np.ndarray) -> np.ndarray:
         rgb_im = img_float32(rgb_im)
         assert rgb_im.ndim == 3, f"{rgb_im.shape}"
         assert rgb_im.shape[-1] == 3, f"{rgb_im.shape}"
@@ -105,17 +108,17 @@ class CoreMlEncoder:
         [_, c, h, w] = x.type.multiArrayType.shape
         return h, w, c
 
-    def ran_forward(self):
+    def ran_forward(self) -> np.ndarray:
         return self.predict(np.random.rand(*self.input_hwc))
 
 
 class CoreMlDecoder:
-    def __init__(self, model_path: Path):
+    def __init__(self, model_path: Path) -> None:
         if model_path is None:
             model_path = MODEL_PATH.with_suffix(".encoder.mlpackage")
         self.model = ct.models.MLModel(str(model_path))
 
-    def predict(self, z: np.ndarray):
+    def predict(self, z: np.ndarray) -> np.ndarray:
         assert z.ndim == 1
         y = self.model.predict({"z": z[None, ...]})["x_hat"]
         assert y.ndim == 4
@@ -126,14 +129,14 @@ class CoreMlDecoder:
         return y
 
 
-def _test_infer(path: Path):
+def _test_infer(path: Path) -> None:
     model = CoreMlEncoder(path.with_suffix(".encoder.mlpackage"))
     model.ran_forward()
     for _ in tqdm(range(1000)):
         model.ran_forward()
 
 
-def _cli():
+def _cli() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", default=MODEL_PATH, type=Path)
     parser.add_argument("--no-export", dest="export", action="store_false")

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import warnings
+from collections.abc import Callable
 from typing import final
 
 import torch
@@ -6,26 +9,30 @@ import torch.nn as nn
 
 
 class AeBase(nn.Module):
-    encoded: torch.Tensor = None
+    encoded: torch.Tensor | None = None
     multiscale: bool = False
 
-    def _encode(self, x) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    def _encode(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
         raise NotImplementedError
 
-    def _decode(self, z) -> list[torch.Tensor]:
+    def _decode(self, z: torch.Tensor) -> list[torch.Tensor]:
         raise NotImplementedError
 
-    def _init_weights(self):
-        """Initialize weights for convolutional and batch norm layers."""
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+    def _init_weights(self, m: nn.Module | None = None) -> None:
+        """Initialize weights for convolutional and batch norm layers.
+
+        If `m` is given (e.g. when used as `self.apply(self._init_weights)`),
+        only that module is initialized. Otherwise, every submodule is.
+        """
+        for mod in self.modules() if m is None else [m]:
+            if isinstance(mod, nn.Conv2d):
+                nn.init.kaiming_normal_(mod.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(mod, nn.BatchNorm2d):
+                nn.init.constant_(mod.weight, 1)
+                nn.init.constant_(mod.bias, 0)
 
     @final
-    def decode(self, z, **kwargs) -> list[torch.Tensor]:
+    def decode(self, z: torch.Tensor, **kwargs: object) -> list[torch.Tensor]:
         # should output more tensors if multiscale
         # * first is always the full scale
         # * second is half the scale
@@ -33,7 +40,9 @@ class AeBase(nn.Module):
         return self._decode(z)
 
     @final
-    def encode(self, x, **kwargs) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    def encode(
+        self, x: torch.Tensor, **kwargs: object
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         # Input shape: (1, 3, 192, 128) if NCHW, or (1, 192, 128, 3) if NHWC
         # if x.size(1) != 3:
         #     if x.size(3) == 3:
@@ -44,13 +53,20 @@ class AeBase(nn.Module):
         return z, multi
 
     @final
-    def forward(self, x, **kwargs) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    def forward(
+        self, x: torch.Tensor, **kwargs: object
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         z, multi = self.encode(x)
         multiout = self.decode(z)
         return z, multiout + multi
 
     @classmethod
-    def create_model(cls, x_size, y_size, **kwargs) -> "AeBase":
+    def create_model(
+        cls,
+        x_size: tuple[int, int, int, int],
+        y_size: tuple[int, int, int, int],
+        **kwargs: object,
+    ) -> AeBase:
         assert len(x_size) == 4 and len(y_size) == 4
         assert x_size[1:] == (192, 128, 3) and y_size[1:] == (192, 128, 3)
         model = cls(**kwargs)
@@ -61,10 +77,10 @@ class AeBase(nn.Module):
         cls,
         batch_size: int = 16,
         n: int = 100,
-        model=None,
+        model: AeBase | None = None,
         compile: bool = False,
-        **model_kwargs,
-    ):
+        **model_kwargs: object,
+    ) -> None:
         from tqdm import tqdm
 
         # Define input and output sizes in NHWC format
@@ -87,8 +103,11 @@ class AeBase(nn.Module):
         model = model.to(device)
 
         # compile
+        runner: Callable[[torch.Tensor], tuple[torch.Tensor, list[torch.Tensor]]] = (
+            model
+        )
         if compile:
-            model = torch.compile(model)
+            runner = torch.compile(model)
 
         # Create dummy input
         dummy_input = torch.randn(batch_size, 192, 128, 3).to(device)
@@ -96,12 +115,12 @@ class AeBase(nn.Module):
         # Warm-up runs
         with torch.no_grad():
             for _ in range(10):
-                model(dummy_input)
+                runner(dummy_input)
 
         # Benchmark
         with torch.no_grad():
             for i in tqdm(range(n)):
-                z, (output, *_) = model(dummy_input)
+                z, (output, *_) = runner(dummy_input)
 
         # Print shapes and bottleneck size
         print(f"Input shape: {dummy_input.shape}")  # (16, 192, 128, 3) NHWC

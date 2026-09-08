@@ -23,10 +23,17 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+
 import cv2
 import numpy as np
 
 from mtgvision.util.image import img_uint8
+
+# a point as accepted by `as_point`: either an ndarray or a plain (x, y) sequence
+type Point = np.ndarray | Sequence[float]
 
 # ============================================================================ #
 # CV2 Shape Helper Functions                                                   #
@@ -34,11 +41,14 @@ from mtgvision.util.image import img_uint8
 # ============================================================================ #
 
 
-def cv2_poly_is_convex(pts):
+def cv2_poly_is_convex(pts: np.ndarray) -> bool:
     if len(pts) < 3:
         raise Exception("Need at least 3 pts")
-    total, i, pts = 0, 0, list(np.array(pts).reshape((-1, 2)))
-    for (ax, ay), (bx, by), (cx, cy) in zip(pts, pts[1:] + pts[:1], pts[2:] + pts[:2]):
+    total, i = 0, 0
+    points = list(np.array(pts).reshape((-1, 2)))
+    for (ax, ay), (bx, by), (cx, cy) in zip(
+        points, points[1:] + points[:1], points[2:] + points[:2]
+    ):
         dx1 = bx - ax
         dy1 = by - ay
         dx2 = cx - bx
@@ -50,7 +60,7 @@ def cv2_poly_is_convex(pts):
     return True
 
 
-def cv2_quad_flip_upright(quad):
+def cv2_quad_flip_upright(quad: np.ndarray) -> np.ndarray:
     assert len(quad) == 4
     shape = quad.shape
     quad = quad.reshape((-1, 2))
@@ -63,7 +73,7 @@ def cv2_quad_flip_upright(quad):
     return quad.reshape(shape)
 
 
-def cv2_poly_expand(poly, ratio=0.05):
+def cv2_poly_expand(poly: np.ndarray, ratio: float = 0.05) -> np.ndarray:
     assert len(poly) > 0
     shape = poly.shape
     poly = poly.reshape((-1, 2))
@@ -72,7 +82,7 @@ def cv2_poly_expand(poly, ratio=0.05):
     return poly.reshape(shape)
 
 
-def cv2_poly_center(poly):
+def cv2_poly_center(poly: np.ndarray) -> np.ndarray:
     assert len(poly) > 0
     return np.average(poly.reshape((-1, 2)), axis=0)
 
@@ -82,7 +92,11 @@ def cv2_poly_center(poly):
 # ============================================================================ #
 
 
-def cv2_warp_imgs_onto(img, cards, bounds):
+def cv2_warp_imgs_onto(
+    img: np.ndarray,
+    cards: Iterable[np.ndarray],
+    bounds: Iterable[np.ndarray],
+) -> np.ndarray:
     img = img.copy()
     for card, bound in zip(cards, bounds):
         scnvs = img.shape
@@ -103,7 +117,12 @@ def cv2_warp_imgs_onto(img, cards, bounds):
     return img
 
 
-def cv2_draw_contours(image, contours, color=(0, 255, 0), thickness=1):
+def cv2_draw_contours(
+    image: np.ndarray,
+    contours: Iterable[np.ndarray],
+    color: tuple[int, int, int] = (0, 255, 0),
+    thickness: int = 1,
+) -> None:
     for contour in contours:
         cv2.drawContours(image, [contour], -1, color, thickness)
 
@@ -113,25 +132,40 @@ def cv2_draw_contours(image, contours, color=(0, 255, 0), thickness=1):
 # ========================================================================= #
 
 
+def as_color(color: tuple[int, int, int] | int) -> tuple[int, int, int]:
+    """Broadcast a grey level to BGR. cv2 stubs require a sequence, not a scalar."""
+    if isinstance(color, int):
+        return (color, color, color)
+    return color
+
+
+def as_point(point: Point) -> tuple[int, int]:
+    """cv2 stubs type points as a 2-tuple of ints, not an ndarray."""
+    x, y = np.asarray(point).astype(int).reshape(2).tolist()
+    return int(x), int(y)
+
+
 def lerp_color(
     color1: tuple[int, int, int] | int,
     color2: tuple[int, int, int] | int,
     t: float,
 ) -> tuple[int, int, int]:
-    if isinstance(color1, int):
-        color1 = (color1, color1, color1)
-    if isinstance(color2, int):
-        color2 = (color2, color2, color2)
-    return tuple(int(c1 * (1 - t) + c2 * t) for c1, c2 in zip(color1, color2))
+    a = as_color(color1)
+    b = as_color(color2)
+    return (
+        int(a[0] * (1 - t) + b[0] * t),
+        int(a[1] * (1 - t) + b[1] * t),
+        int(a[2] * (1 - t) + b[2] * t),
+    )
 
 
 def cv2_draw_poly(
     frame: np.ndarray,
     points: np.ndarray,
     c: tuple[int, int, int] | int = (255, 0, 0),
-    color_mod: tuple[int, int, int] | int = None,
-):
-    poly_color = c if color_mod is None else lerp_color(c, color_mod, 0.5)
+    color_mod: tuple[int, int, int] | int | None = None,
+) -> None:
+    poly_color = as_color(c) if color_mod is None else lerp_color(c, color_mod, 0.5)
     cv2.polylines(
         frame,
         [np.asarray(points).astype(int)],
@@ -143,16 +177,16 @@ def cv2_draw_poly(
 
 def cv2_draw_arrow(
     frame: np.ndarray,
-    start: np.ndarray,
-    end: np.ndarray,
+    start: Point,
+    end: Point,
     c: tuple[int, int, int] | int = (0, 0, 255),
-    color_mod: tuple[int, int, int] | int = None,
-):
-    arrow_color = c if color_mod is None else lerp_color(c, color_mod, 0.5)
+    color_mod: tuple[int, int, int] | int | None = None,
+) -> None:
+    arrow_color = as_color(c) if color_mod is None else lerp_color(c, color_mod, 0.5)
     cv2.arrowedLine(
         frame,
-        np.asarray(start).astype(int),
-        np.asarray(end).astype(int),
+        as_point(start),
+        as_point(end),
         color=arrow_color,
         thickness=1,
     )
@@ -161,16 +195,16 @@ def cv2_draw_arrow(
 def cv2_draw_text(
     frame: np.ndarray,
     text: str,
-    center: np.ndarray,
+    center: Point,
     c: tuple[int, int, int] | int = (0, 0, 255),
-    color_mod: tuple[int, int, int] | int = None,
+    color_mod: tuple[int, int, int] | int | None = None,
     font_scale: float = 0.25,
-):
-    color = c if color_mod is None else lerp_color(c, color_mod, 0.5)
+) -> None:
+    color = as_color(c) if color_mod is None else lerp_color(c, color_mod, 0.5)
     cv2.putText(
         frame,
         text,
-        np.asarray(center).astype(int),
+        as_point(center),
         cv2.FONT_HERSHEY_SIMPLEX,
         font_scale,
         color,

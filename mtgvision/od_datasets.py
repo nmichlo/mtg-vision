@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import functools
 import math
 import os
 import random
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -10,6 +13,7 @@ import albumentations as A
 import cv2
 import numpy as np
 import yaml
+from mtgdata import ScryfallImageType
 from shapely.geometry import Polygon
 from tqdm import tqdm
 
@@ -27,7 +31,7 @@ from mtgvision.util.random import seed_all
 
 
 def corner_jitter_2d(
-    pts: np.ndarray, jitter_ratio: float, center: tuple[float, float] = None
+    pts: np.ndarray, jitter_ratio: float, center: tuple[float, float] | None = None
 ) -> np.ndarray:
     assert pts.shape[-1] == 2
     if center is None:
@@ -75,11 +79,8 @@ def apply_transform_2d_img(
     M: np.ndarray,
     out_size_hw: tuple[int, int] | int | None = None,
 ) -> np.ndarray:
-    if out_size_hw is None:
-        out_size_hw = img.shape[:2]
-    else:
-        out_size_hw = get_hw(out_size_hw)
-    return cv2.warpPerspective(img, M, out_size_hw[::-1], flags=cv2.INTER_LINEAR)
+    out_hw = get_hw(img.shape) if out_size_hw is None else get_hw(out_size_hw)
+    return cv2.warpPerspective(img, M, out_hw[::-1], flags=cv2.INTER_LINEAR)
 
 
 def get_rotate_over_output_transform(
@@ -88,7 +89,7 @@ def get_rotate_over_output_transform(
     out_size_hw: tuple[int, int] | int,
     mode: Literal["cover", "inside"] = "cover",
     scale_factor: float = 1.0,
-):
+) -> np.ndarray:
     h, w = get_hw(in_size_hw)
     oh, ow = get_hw(out_size_hw)
     # get scale
@@ -133,14 +134,17 @@ class Sample(TypedDict, total=False):
     keypoints: np.ndarray
     # shape (N,)
     keypoints_labels: np.ndarray
+    # shape (4, 2) - axis-aligned card corners before placement, used for
+    # collision detection against other already-placed cards
+    bbox: np.ndarray
 
 
-def get_hw(hw: tuple[int, int] | int | Sample) -> tuple[int, int]:
-    if isinstance(hw, (int, float)):
+def get_hw(hw: tuple[int, ...] | int) -> tuple[int, int]:
+    if isinstance(hw, int):
         return (hw, hw)
-    elif isinstance(hw, (list, tuple)):
-        h, w = hw[:2]
-        return h, w
+    elif isinstance(hw, tuple):
+        h, w = hw[0], hw[1]
+        return (h, w)
     raise ValueError(f"Invalid type: {type(hw)}")
 
 
@@ -150,13 +154,13 @@ def get_hw(hw: tuple[int, int] | int | Sample) -> tuple[int, int]:
 
 
 def rotate_over_output(
-    x: "Sample",
+    x: Sample,
     *,
     deg: float,
     out_size_hw: tuple[int, int] | int,
     mode: Literal["cover", "inside"] = "cover",
     scale_factor: float = 1.0,
-) -> "Sample":
+) -> Sample:
     # get inputs
     image = x["image"]
     mask = x.get("mask")
@@ -192,18 +196,18 @@ def rotate_over_output(
 # ========================================================================= #
 
 
-def make_background(bg: np.ndarray, bg_size: tuple[int, int]) -> np.ndarray:
+def make_background(bg: np.ndarray, bg_size: tuple[int, int] | int) -> np.ndarray:
     """
     Load and rotate/resize a random background image to encompass the target shape
     """
-    bg = rotate_over_output(
+    out = rotate_over_output(
         {"image": bg}, deg=np.random.randint(0, 360), out_size_hw=bg_size, mode="cover"
     )
     # augment colors and things like that
-    return bg["image"]
+    return out["image"]
 
 
-def make_aug_background(bg: np.ndarray, bg_size: tuple[int, int]) -> np.ndarray:
+def make_aug_background(bg: np.ndarray, bg_size: tuple[int, int] | int) -> np.ndarray:
     bg = make_background(bg, bg_size)
     bg = get_bg_transform_light()(image=bg)["image"]
     bg = get_bg_transform(extra=True)(image=bg)["image"]
@@ -233,7 +237,17 @@ def make_card_with_mask(
     # Generate rounded rectangle mask
     mask = round_rect_mask((h, w), radius_ratio=corner_radius_ratio)
 
-    def _box(lft, top, rht, bot, margin=0.0, mlr=1.0, mrr=1.0, mtr=1.0, mbr=1.0):
+    def _box(
+        lft: float,
+        top: float,
+        rht: float,
+        bot: float,
+        margin: float = 0.0,
+        mlr: float = 1.0,
+        mrr: float = 1.0,
+        mtr: float = 1.0,
+        mbr: float = 1.0,
+    ) -> list[tuple[float, float]]:
         return [
             (lft + margin * mlr, top + margin * mtr),
             (rht - margin * mrr, top + margin * mtr),
@@ -289,7 +303,7 @@ def place_card_on_background_get_transform(
     card_sample: Sample,
     # bg
     bg: np.ndarray,
-    bg_existing_polygons: list[Polygon],
+    bg_existing_polygons: list[np.ndarray],
     *,
     # scaling
     min_area_ratio: float = 0.01,
@@ -382,15 +396,22 @@ def place_card_on_background_get_transform(
 # ========================================================================= #
 
 
-def compose(fn):
+def compose[**P](
+    fn: Callable[P, A.BasicTransform | A.BaseCompose],
+) -> Callable[P, A.Compose]:
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> A.Compose:
         return A.Compose([fn(*args, **kwargs)], p=1)
 
     return wrapper
 
 
-def random_order(*transforms, n=None, replace=False, p=1.0):
+def random_order(
+    *transforms: A.BasicTransform | A.BaseCompose,
+    n: int | None = None,
+    replace: bool = False,
+    p: float = 1.0,
+) -> A.RandomOrder:
     # random order force applies, so need wrapper component to actually do probabilities
     return A.RandomOrder(
         transforms=[A.Sequential([t]) for t in transforms],
@@ -400,7 +421,7 @@ def random_order(*transforms, n=None, replace=False, p=1.0):
     )
 
 
-def one_of(*transforms, p=1.0):
+def one_of(*transforms: A.BasicTransform | A.BaseCompose, p: float = 1.0) -> A.OneOf:
     # one of force applies, so need wrapper component to actually do probabilities
     return A.OneOf(
         transforms=[A.Sequential([t]) for t in transforms],
@@ -408,7 +429,7 @@ def one_of(*transforms, p=1.0):
     )
 
 
-def seq(*transforms, p=1.0):
+def seq(*transforms: A.BasicTransform | A.BaseCompose, p: float = 1.0) -> A.Sequential:
     return A.Sequential([t for t in transforms], p=p)
 
 
@@ -418,7 +439,7 @@ def seq(*transforms, p=1.0):
 
 
 @compose
-def get_bg_transform_light():
+def get_bg_transform_light() -> A.RandomOrder:
     return random_order(
         A.RandomBrightnessContrast(
             brightness_limit=(-0.4, 0.4),
@@ -439,8 +460,8 @@ def get_bg_transform_light():
 
 
 @compose
-def get_bg_transform(extra: bool = False):
-    def _noise_blur(p: float):
+def get_bg_transform(extra: bool = False) -> A.RandomOrder:
+    def _noise_blur(p: float) -> list[A.OneOf]:
         return [
             one_of(
                 A.GaussNoise(std_range=(0.0, 0.2), p=p),
@@ -488,7 +509,7 @@ def get_bg_transform(extra: bool = False):
 
 
 @compose
-def get_card_transform():
+def get_card_transform() -> A.RandomOrder:
     return random_order(
         A.RandomBrightnessContrast(
             brightness_limit=(-0.2, 0.2),
@@ -533,7 +554,7 @@ def generate_synthetic_image(
     card_no_contains: bool = True,
     card_max_place_attempts: int = 10,
     kind: Literal["obb", "seg"] = "obb",
-):
+) -> Sample:
     """
     Generate a synthetic image with cards and their rotated bounding box annotations.
     """
@@ -589,8 +610,8 @@ def generate_synthetic_image(
     # warp cards onto images, we need to apply to image in reverse order
     # because of overlap checks. Cards added later collide with ALL other cards, cards
     # added first don't check with later cards. So these need to be ON TOP.
-    keypoints = []
-    keypoints_labels = []
+    keypoints: list[np.ndarray] = []
+    keypoints_labels: list[np.ndarray] = []
     for sample, M in list(zip(card_samples, card_Ms))[::-1]:
         mask = apply_transform_2d_img(sample["mask"], M, out_size_hw=bg.shape)
         img = apply_transform_2d_img(sample["image"], M, out_size_hw=bg.shape)
@@ -636,9 +657,9 @@ class Gen:
         ilsvrc_vs_coco_sample_weights: tuple[float, float] | None = (1.0, 1.0),
         # segment
         kind: Literal["obb", "seg"] = "obb",
-    ):
+    ) -> None:
         # Initialize datasets (replace with your actual classes)
-        self.mtg_ds = SyntheticBgFgMtgImages(img_type="small")
+        self.mtg_ds = SyntheticBgFgMtgImages(img_type=ScryfallImageType.small)
         self.bg_ds = IlsvrcImages()
         self.bg2_ds = CocoValImages()
 
@@ -667,22 +688,22 @@ class Gen:
         self._bg_p = p / np.sum(p)
         self._bg_arr = [self.bg_ds, self.bg2_ds]
 
-    def _get_bg_ds(self):
+    def _get_bg_ds(self) -> IlsvrcImages:
         idx = np.random.choice(2, p=self._bg_p)
         return self._bg_arr[idx]
 
-    def random_bg(self):
+    def random_bg(self) -> Sample:
         bg = make_aug_background(
             bg=imread_float(self._get_bg_ds().ran_path()),
             bg_size=self.bg_size_hw,
         )
         return {
             "image": bg,
-            "keypoints": [],
-            "keypoints_labels": [],
+            "keypoints": np.asarray([]),
+            "keypoints_labels": np.asarray([]),
         }
 
-    def random(self):
+    def random(self) -> Sample:
         if self.ratio_bg and np.random.uniform(0, 1) < self.ratio_bg:
             return self.random_bg()
         sample = generate_synthetic_image(
@@ -703,7 +724,7 @@ class Gen:
         )
         return sample
 
-    def debug_show_loop(self, n: int = None):
+    def debug_show_loop(self, n: int | None = None) -> None:
         colors = [
             (0, 255, 0),
             (255, 0, 0),
@@ -732,12 +753,12 @@ class Gen:
 def create_yolo_obb_dataset(
     generator: Gen,
     *,
-    output_dir: str,
+    output_dir: str | Path,
     num_train: int = 20000,
     num_val_ratio: float = 0.1,
     num_test_ratio: float = 0.1,
     ext: Literal["png", "jpg"] = "jpg",
-):
+) -> None:
     """
     Generate a YOLO dataset with synthetic images and annotations.
     """
@@ -797,7 +818,7 @@ def save_sample(
     label_dir: str | Path,
     img_dir: str | Path,
     ext: Literal["png", "jpg"] = "jpg",
-):
+) -> None:
     img = sample["image"]
     kps = sample["keypoints"]
     kps_labels = sample["keypoints_labels"]
