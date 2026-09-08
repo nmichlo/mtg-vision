@@ -455,6 +455,10 @@ def main(
         | faiss.RandomRotationMatrix
         | None
     ) = None
+    # only set by the faiss reducers -- `reduce_mode="nn"` emits a
+    # NeuralNetReducer chain step instead of a LinearTransform one
+    A_mat: npt.NDArray[np.float32] | None = None
+    b_vec: npt.NDArray[np.float32] | None = None
     if reduce_dim:
         # linear transforms
         if reduce_mode == "nn":
@@ -487,25 +491,27 @@ def main(
             reduce = faiss.RandomRotationMatrix(D, reduce_dim)
         else:
             raise ValueError(f"Unknown reduce mode: {reduce_mode}")
-        # train!
-        print(f"Training {reduce_mode}...")
-        reduce.train(vectors)
-        # Extract the final transformation components computed by FAISS
-        # - although PCAMat and eigenvectors are available, the PCAMatrix is a subclass
-        #   of linear transformation, so when trained it modifies the A and b attributes
-        #   instead of modifying the application pipeline.
-        A_mat = faiss.vector_float_to_array(reduce.A).reshape(reduce_dim, D)
-        b_vec = faiss.vector_float_to_array(reduce.b)
-        metadata["chain"].append(
-            {
-                "type": "LinearTransform",
-                "in_dim": D,
-                "out_dim": reduce_dim if reduce_dim else D,
-                "in_dtype": "float32",
-                "out_dtype": "float32",
-                "params": {"A": A_mat.tolist(), "b": b_vec.tolist()},
-            }
-        )
+        # train! -- faiss transforms only. `reduce_mode="nn"` is already trained
+        # by `train_reducer_net` above and has appended its own chain step.
+        if not isinstance(reduce, ReducerNet):
+            print(f"Training {reduce_mode}...")
+            reduce.train(vectors)
+            # Extract the final transformation components computed by FAISS
+            # - although PCAMat and eigenvectors are available, the PCAMatrix is a subclass
+            #   of linear transformation, so when trained it modifies the A and b attributes
+            #   instead of modifying the application pipeline.
+            A_mat = faiss.vector_float_to_array(reduce.A).reshape(reduce_dim, D)
+            b_vec = faiss.vector_float_to_array(reduce.b)
+            metadata["chain"].append(
+                {
+                    "type": "LinearTransform",
+                    "in_dim": D,
+                    "out_dim": reduce_dim if reduce_dim else D,
+                    "in_dtype": "float32",
+                    "out_dtype": "float32",
+                    "params": {"A": A_mat.tolist(), "b": b_vec.tolist()},
+                }
+            )
 
     # quantize op
     quantizer: faiss.ScalarQuantizer | None = None
@@ -516,8 +522,18 @@ def main(
             quantizer = faiss.ScalarQuantizer(q_dims, faiss.ScalarQuantizer.QT_8bit)
         else:
             raise ValueError(f"Unknown quantizer: {reduce_quant}")
-        # train!
-        x = vectors if reduce is None else reduce.apply(vectors)
+        # train! -- the quantizer sees whatever the reducer emits
+        x: npt.NDArray[np.float32]
+        if reduce is None:
+            x = vectors
+        elif isinstance(reduce, ReducerNet):
+            # ReducerNet already rounds to `quant_bits` integers; the scalar
+            # quantizer only packs them into the 1-byte-per-dim layout that
+            # `index_vecs.bin` and the usearch ScalarKind.I8 index require.
+            with torch.no_grad():
+                x = reduce(torch.from_numpy(vectors)).numpy()
+        else:
+            x = reduce.apply(vectors)
         quantizer.train(x)
         # extract
         # - the trained quantizer operates over a min-max range of 0-1?
@@ -545,6 +561,7 @@ def main(
             if step["type"] == "LinearTransform":
                 assert reduce is not None and not isinstance(reduce, ReducerNet)
                 assert reduce_dim is not None
+                assert A_mat is not None and b_vec is not None
                 if mode == "lib":
                     v = reduce.apply(v[None, :])[0]
                 elif mode == "manual":
@@ -697,7 +714,7 @@ def main(
     def perturb_vector(
         vector: npt.NDArray[np.float32], scale: float = validate_perturb_scale
     ) -> npt.NDArray[np.float32]:
-        noise = np.random.normal(0, scale, vector.shape)
+        noise = np.random.normal(0, scale, vector.shape).astype(np.float32)
         noise = noise / np.linalg.norm(noise)
         return vector + noise * scale
 
