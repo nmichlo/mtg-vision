@@ -23,11 +23,10 @@
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
 
-import numpy as np
 import cv2
+import numpy as np
 
 from mtgvision.util.image import img_uint8
-
 
 # ============================================================================ #
 # CV2 Shape Helper Functions                                                   #

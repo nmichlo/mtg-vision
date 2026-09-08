@@ -6,37 +6,38 @@ This is effectively facial recognition techniques.
 """
 
 import argparse
+import random
 import sys
 import uuid
 import warnings
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional, Sequence, Tuple, TypedDict
+from typing import Any, Literal, TypedDict
+
+import kornia as K
 import matplotlib.pyplot as plt
+import numpy as np
 import pydantic
+import pytorch_lightning as pl
+import pytorch_metric_learning.losses as mll
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import IterableDataset, DataLoader
-import numpy as np
-import random
 import wandb
-import kornia as K
-import pytorch_lightning as pl
-import pytorch_metric_learning.losses as mll
-from pytorch_lightning.loggers import WandbLogger
+from mtgdata import ScryfallBulkType, ScryfallImageType
+from mtgdata.scryfall import ScryfallCardFace
 from pytorch_lightning.callbacks import (
     Callback,
     ModelCheckpoint,
 )
+from pytorch_lightning.loggers import WandbLogger
+from torch.utils.data import DataLoader, IterableDataset
 
-from mtgdata import ScryfallBulkType, ScryfallImageType
 import mtgvision.models.convnextv2ae as cnv2ae
-from mtgdata.scryfall import ScryfallCardFace
 from mtgvision.encoder_datasets import IlsvrcImages, SyntheticBgFgMtgImages
 from mtgvision.util.image import img_clip
 from mtgvision.util.random import seed_all
-
 
 Z_SIZE = 768
 
@@ -95,8 +96,8 @@ class RanMtgEncDecDataset(IterableDataset):
         predownload: bool = False,
         paired: bool = False,  # for contrastive loss, two random aug of same cards
         targets: bool = True,
-        x_size_hw: Tuple[int, int] = (192, 128),
-        y_size_hw: Tuple[int, int] = (192, 128),
+        x_size_hw: tuple[int, int] = (192, 128),
+        y_size_hw: tuple[int, int] = (192, 128),
         half_upsidedown: bool = False,
         target_is_input_prob: float = 0.05,
         similar_neg_prob: float = 0.2,
@@ -211,8 +212,8 @@ class RanMtgEncDecDataset(IterableDataset):
             #    example, but sometimes we randomly swap it out with a negative card
             #    that probably looks similar to the original card, but is not the same
             if self.paired:
-                pair_card: "ScryfallCardFace" = card
-                pair_card_im: "np.ndarray" = card_img
+                pair_card: ScryfallCardFace = card
+                pair_card_im: np.ndarray = card_img
                 # 3.a randomly swap out with nearby negative example
                 if random.random() < (similar_neg_prob or self.similar_neg_prob):
                     _card = self.mtg.get_similar_card(card.id)
@@ -298,12 +299,15 @@ class MtgVisionEncoder(pl.LightningModule):
             "ssim5": K.losses.SSIMLoss(5),
             "ssim7": K.losses.SSIMLoss(7),
             "ssim9": K.losses.SSIMLoss(9),
-            "ssim5+mse": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5
-            + F.mse_loss(x, y) * 0.5,
-            "ssim5+l1": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5
-            + F.l1_loss(x, y) * 0.5,
-            "ssim7+l1": lambda x, y: K.losses.ssim_loss(x, y, 7) * 0.5
-            + F.l1_loss(x, y) * 0.5,
+            "ssim5+mse": lambda x, y: (
+                K.losses.ssim_loss(x, y, 5) * 0.5 + F.mse_loss(x, y) * 0.5
+            ),
+            "ssim5+l1": lambda x, y: (
+                K.losses.ssim_loss(x, y, 5) * 0.5 + F.l1_loss(x, y) * 0.5
+            ),
+            "ssim7+l1": lambda x, y: (
+                K.losses.ssim_loss(x, y, 7) * 0.5 + F.l1_loss(x, y) * 0.5
+            ),
             "ms_ssim": K.losses.MS_SSIMLoss(),
         }[self.hparams.loss_recon]
         try:
@@ -419,8 +423,8 @@ class MtgVisionEncoder(pl.LightningModule):
             loss += loss_recon * self.hparams.scale_loss_recon
 
         # get z2
-        z_all: "torch.Tensor | None" = None
-        labels_all: "torch.Tensor | None" = None
+        z_all: torch.Tensor | None = None
+        labels_all: torch.Tensor | None = None
         if self.hparams.loss_contrastive or self.hparams.loss_set_contrastive:
             _z2 = self.encode(batch["x2"])
             z_all = torch.cat([z, _z2], dim=0)
@@ -506,7 +510,7 @@ class MtgDataModule(pl.LightningDataModule):
         self,
         train_dataset: RanMtgEncDecDataset,
         num_workers: int = 3,
-        batch_size: Optional[int] = None,
+        batch_size: int | None = None,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -869,10 +873,10 @@ class Config(pydantic.BaseModel):
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss
-    loss_recon: Optional[str] = None  # 'ssim5+l1'
+    loss_recon: str | None = None  # 'ssim5+l1'
     # ntxent, triplet, triplet_smooth, arc_face, sub_center_arc_face, sup_con, circle
-    loss_contrastive: Optional[str] = "circle"  # sub_center_arc_face
-    loss_set_contrastive: Optional[str] = None  # arc_face
+    loss_contrastive: str | None = "circle"  # sub_center_arc_face
+    loss_set_contrastive: str | None = None  # arc_face
     scale_loss_recon: float = 1
     scale_loss_contrastive: float = 1
     scale_loss_set_contrastive: float = 0.05
@@ -881,8 +885,8 @@ class Config(pydantic.BaseModel):
     max_steps: int = 100001
     num_workers: int = 6
     # logging
-    prefix: Optional[str] = None
-    checkpoint: Optional[str] = None
+    prefix: str | None = None
+    checkpoint: str | None = None
     log_every_n_steps: int = 2500
     ckpt_every_n_steps: int = 2500
     # needed if model architecture changes or optimizer changes

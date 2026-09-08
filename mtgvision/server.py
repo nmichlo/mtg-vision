@@ -1,32 +1,31 @@
 # ========== Imports ==========
 import asyncio
+import base64
 import dataclasses
 import functools
 import hashlib
 import time
-from typing import Hashable, Dict
-
-from fastapi import FastAPI, WebSocket
-from fastapi.staticfiles import StaticFiles
+from collections.abc import Hashable
 from pathlib import Path
+
 import cv2
 import numpy as np
-import base64
-from norfair import Tracker, Detection
+from fastapi import FastAPI, WebSocket
+from fastapi.staticfiles import StaticFiles
+from mtgdata.scryfall import ScryfallCardFace
+from norfair import Detection, Tracker
 from norfair.distances import mean_euclidean
 from qdrant_client.http.models import ScoredPoint
 
-from mtgdata.scryfall import ScryfallCardFace
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.od_export import CardSegmenter, InstanceSeg
 from mtgvision.qdrant import VectorStoreQdrant
 
-
 # ========== Global Context ==========
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_ctx():
     SEGMENTER = CardSegmenter()
     ENCODER = CoreMlEncoder()
@@ -109,7 +108,7 @@ class TrackerCtx:
         # Set to track card IDs that are currently being fetched from Scryfall
         # self.fetching_card_ids: Set[str] = set()
         # Dictionary to store tasks for async operations
-        self.async_tasks: Dict[str, asyncio.Task] = {}
+        self.async_tasks: dict[str, asyncio.Task] = {}
 
     # Should be populated by `qdrant_populate_card_info`, no longer needed
     # async def fetch_missing_payloads(self, card_id: str):

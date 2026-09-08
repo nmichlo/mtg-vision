@@ -5,10 +5,9 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from ultralytics import YOLO, settings
 
 import mtgvision
-from ultralytics import YOLO
-from ultralytics import settings
 
 
 def _main(

@@ -1,17 +1,17 @@
 import itertools
 import multiprocessing
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence, TypeVar
-from tqdm import tqdm
-
+from typing import TypeVar
 
 from doorway.x import ProxyDownloader
 from mtgdata.scryfall import ScryfallCardFace
+from tqdm import tqdm
+
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.qdrant import QdrantPoint, VectorStoreQdrant
 from mtgvision.util.image import imread_float
-
 
 T = TypeVar("T")
 

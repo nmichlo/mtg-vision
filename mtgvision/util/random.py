@@ -24,9 +24,9 @@
 
 
 import abc
+import random
 import warnings
 from abc import ABC
-import random
 
 
 def seed_all(seed: int):
@@ -34,7 +34,7 @@ def seed_all(seed: int):
     random.seed(seed)
     # numpy
     try:
-        import np
+        import numpy as np
 
         np.random.seed(seed)
     except ImportError:
@@ -71,7 +71,7 @@ class Applicator(ABC):
         elif callable(c):
             return c(x)
         else:
-            raise RuntimeError("Unsupported Callable Type: {}".format(type(c)))
+            raise RuntimeError(f"Unsupported Callable Type: {type(c)}")
 
     @abc.abstractmethod
     def _apply(self, x):

@@ -20,10 +20,9 @@ import numpy as np
 import requests
 
 from mtgvision.encoder_export import CoreMlEncoder
-from mtgvision.od_export import CardSegmenter, MODEL_PATH_SEG
+from mtgvision.od_export import MODEL_PATH_SEG, CardSegmenter
 from mtgvision.qdrant import QdrantPoint, VectorStoreQdrant
 from mtgvision.util.image import imwait
-
 
 # ========================================================================= #
 # CORE                                                                      #
@@ -57,7 +56,7 @@ def main():
     vstore = VectorStoreQdrant()
     encoder = CoreMlEncoder()
     segmenter = CardSegmenter(MODEL_PATH_SEG.with_suffix(".mlpackage"))
-    tracker = norfair.Tracker(
+    _tracker = norfair.Tracker(
         initialization_delay=1,
         distance_function="euclidean",
         hit_counter_max=10,
@@ -136,7 +135,7 @@ def main():
             seg.debug_draw_on(frame)
 
         # # track using norfair
-        # tracked_objects = tracker.update(detections=detections)
+        # tracked_objects = _tracker.update(detections=detections)
         #
         # # draw tracked objects
         # for obj in tracked_objects:

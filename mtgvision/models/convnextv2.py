@@ -5,7 +5,6 @@
 
 import math
 import warnings
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -48,7 +47,7 @@ class DropPath(nn.Module):
     """
 
     def __init__(self, drop_prob: float = 0.0, scale_by_keep: bool = True):
-        super(DropPath, self).__init__()
+        super().__init__()
         self.drop_prob = drop_prob
         self.scale_by_keep = scale_by_keep
 
@@ -186,8 +185,8 @@ class Block(nn.Module):
         self,
         dim: int,
         drop_path: float = 0.0,
-        act: Optional[callable] = None,
-        norm: Optional[callable] = None,
+        act: callable | None = None,
+        norm: callable | None = None,
     ):
         if act is None:
             act = nn.GELU
@@ -205,7 +204,7 @@ class Block(nn.Module):
         self.act = act()
         self.grn = GRN(4 * dim)
         self.pwconv2 = nn.Linear(4 * dim, dim)
-        self.drop_path: "nn.Module" = (
+        self.drop_path: nn.Module = (
             DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         )
 

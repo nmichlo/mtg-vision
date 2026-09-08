@@ -1,5 +1,5 @@
 import warnings
-from typing import final, List, Tuple
+from typing import final
 
 import torch
 import torch.nn as nn
@@ -9,10 +9,10 @@ class AeBase(nn.Module):
     encoded: torch.Tensor = None
     multiscale: bool = False
 
-    def _encode(self, x) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def _encode(self, x) -> tuple[torch.Tensor, list[torch.Tensor]]:
         raise NotImplementedError
 
-    def _decode(self, z) -> List[torch.Tensor]:
+    def _decode(self, z) -> list[torch.Tensor]:
         raise NotImplementedError
 
     def _init_weights(self):
@@ -25,7 +25,7 @@ class AeBase(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     @final
-    def decode(self, z, **kwargs) -> List[torch.Tensor]:
+    def decode(self, z, **kwargs) -> list[torch.Tensor]:
         # should output more tensors if multiscale
         # * first is always the full scale
         # * second is half the scale
@@ -33,7 +33,7 @@ class AeBase(nn.Module):
         return self._decode(z)
 
     @final
-    def encode(self, x, **kwargs) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def encode(self, x, **kwargs) -> tuple[torch.Tensor, list[torch.Tensor]]:
         # Input shape: (1, 3, 192, 128) if NCHW, or (1, 192, 128, 3) if NHWC
         # if x.size(1) != 3:
         #     if x.size(3) == 3:
@@ -44,7 +44,7 @@ class AeBase(nn.Module):
         return z, multi
 
     @final
-    def forward(self, x, **kwargs) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def forward(self, x, **kwargs) -> tuple[torch.Tensor, list[torch.Tensor]]:
         z, multi = self.encode(x)
         multiout = self.decode(z)
         return z, multiout + multi

@@ -1,10 +1,11 @@
 import logging
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import qdrant_client
-from qdrant_client.http.models import ScoredPoint, VectorParams, Distance
+from qdrant_client.http.models import Distance, ScoredPoint, VectorParams
 
 
 @dataclass

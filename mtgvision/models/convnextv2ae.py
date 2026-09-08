@@ -1,13 +1,12 @@
 import time
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
 from torch import nn
 from tqdm import tqdm
 
-from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
 from mtgvision.models.ae_base import AeBase
-
+from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
 
 # ========================================================================= #
 # Helper                                                                    #
@@ -266,7 +265,7 @@ class ConvNeXtV2Encoder(_Base):
         return x
 
     def to_coreml(self):
-        from coremltools import convert, TensorType
+        from coremltools import TensorType, convert
 
         i = torch.randn((1, *self.tensor_shape)).to("cpu")
         m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
@@ -398,7 +397,7 @@ class ConvNeXtV2Decoder(_Base):
         return x
 
     def to_coreml(self):
-        from coremltools import convert, TensorType
+        from coremltools import TensorType, convert
 
         i = torch.randn((1, self.z_size)).to("cpu")
         m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
@@ -417,8 +416,8 @@ class ConvNeXtV2Decoder(_Base):
 
 
 class ConvNeXtV2Ae(_Base, AeBase):
-    encoder: Optional[ConvNeXtV2Encoder]
-    decoder: Optional[ConvNeXtV2Decoder]
+    encoder: ConvNeXtV2Encoder | None
+    decoder: ConvNeXtV2Decoder | None
 
     def __init__(
         self,

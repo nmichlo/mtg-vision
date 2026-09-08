@@ -4,7 +4,7 @@ import os
 import random
 import warnings
 from pathlib import Path
-from typing import Literal, Optional, TypedDict
+from typing import Literal, TypedDict
 
 import albumentations as A
 import cv2
@@ -297,7 +297,7 @@ def place_card_on_background_get_transform(
     size_sample_mode: Literal["uniform", "log_uniform"] = "log_uniform",
     # collision
     min_visible: float = 0.5,
-    min_visible_edge: Optional[float] = 1.0,
+    min_visible_edge: float | None = 1.0,
     no_contains: bool = True,
     jitter_ratio: float = 0.25,
     max_attempts: int = 10,
@@ -525,7 +525,7 @@ def generate_synthetic_image(
     num_cards_min: int = 1,
     num_cards_max: int = 10,
     card_min_visible_ratio: float = 0.5,
-    card_min_visible_ratio_edges: Optional[float] = 1.0,
+    card_min_visible_ratio_edges: float | None = 1.0,
     card_jitter_ratio: float = 0.25,
     card_min_area_ratio: float = 0.01,
     card_max_area_ratio: float = 0.9,
@@ -624,14 +624,14 @@ class Gen:
         num_cards_min: int = 1,
         num_cards_max: int = 10,
         card_min_visible_ratio: float = 0.5,
-        card_min_visible_ratio_edges: Optional[float] = 1.0,
+        card_min_visible_ratio_edges: float | None = 1.0,
         card_jitter_ratio: float = 0.3,
         card_min_area_ratio: float = 0.02,
         card_max_area_ratio: float = 0.9,
         card_size_sample_mode: Literal["uniform", "log_uniform"] = "log_uniform",
         card_no_contains: bool = True,
         card_max_place_attempts: int = 10,
-        ratio_bg: Optional[float] = None,
+        ratio_bg: float | None = None,
         # 50000 vs 5000
         ilsvrc_vs_coco_sample_weights: tuple[float, float] | None = (1.0, 1.0),
         # segment

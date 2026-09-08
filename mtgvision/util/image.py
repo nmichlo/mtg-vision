@@ -33,7 +33,6 @@ import cv2
 import numpy as np
 from PIL import Image
 
-
 # ========================================================================= #
 # VARS                                                                      #
 # ========================================================================= #
@@ -110,7 +109,7 @@ def imread_float(path: str | PathLike) -> np.ndarray[np.float32]:
     """
     img = cv2.imread(str(path), cv2.IMREAD_COLOR_RGB)
     if img is None:
-        raise Exception("Image not found: {}".format(str(path)))
+        raise Exception(f"Image not found: {str(path)}")
     return img_float32(img)
 
 
@@ -173,7 +172,7 @@ def image2base64(
     Convert an image to a base64 encoded string, supports any kind of input image.
     """
     img = img_uint8(img)
-    _, encoding = cv2.imencode(".{}".format(encode), img)
+    _, encoding = cv2.imencode(f".{encode}", img)
     return base64.b64encode(encoding)
 
 

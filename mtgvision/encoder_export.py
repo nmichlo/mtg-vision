@@ -19,7 +19,6 @@ from mtgvision.encoder_train import (
 )
 from mtgvision.util.image import img_float32
 
-
 MODEL_DETAILS = {
     "head_type": "conv+linear",
     "path": "/Users/nathanmichlo/Desktop/active/mtg/data/gen/embeddings/encoder_nano_aivb8jvk/checkpoints/epoch=0-step=47500.ckpt",

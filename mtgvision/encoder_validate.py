@@ -5,15 +5,14 @@ Embed images into qdrant and query them to validate models are working correctly
 import dataclasses
 import itertools
 import time
-from typing import Hashable, Sequence
+from collections.abc import Hashable, Sequence
 
 import matplotlib.pyplot as plt
+from doorway.x import ProxyDownloader
 from tqdm import tqdm
 
-from doorway.x import ProxyDownloader
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
-from mtgvision.encoder_export import CoreMlEncoder, MODEL_PATH
-
+from mtgvision.encoder_export import MODEL_PATH, CoreMlEncoder
 from mtgvision.encoder_train import RanMtgEncDecDataset
 from mtgvision.qdrant_populate import VectorStoreQdrant
 from mtgvision.util.image import imread_float, resize
@@ -34,7 +33,10 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
             # get base image
             orig = imread_float(card.download(proxy=proxy))
             DS = SyntheticBgFgMtgImages
-            pred = lambda x: encoder.predict(x).tolist()
+
+            def pred(x):
+                return encoder.predict(x).tolist()
+
             # get modes
             im = [None, None, None]
             zs = [None, None, None]
@@ -74,12 +76,13 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
                 correct = True
             return correct
 
-        def print_correct():
+        def print_correct(self):
             t = time.time()
             if t - self._t > 2:
                 self._t = t
                 print(
-                    f"[{name}] top_1: {top_1_correct / (i + 1) * 100:.2f}%, top_5: {top_5_correct / (i + 1) * 100:.2f}%"
+                    f"[{self.name}] top_1: {self.top_1_correct / (self.i + 1) * 100:.2f}%, "
+                    f"top_5: {self.top_5_correct / (self.i + 1) * 100:.2f}%"
                 )
 
     virtual = Stat()
@@ -87,13 +90,13 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
         itertools.islice(_yield_virtual_points(), N)
     ):
         # get matches
-        o_match, c_match, v_match = True, True, True
+        v_match = True
         if o is not None:
             o_near = [p.id for p in db.query_nearby(o, k=5)]
-            o_match = virtual.update(card.id, o_near)
+            virtual.update(card.id, o_near)
         if c is not None:
             c_near = [p.id for p in db.query_nearby(c, k=5)]
-            c_match = virtual.update(card.id, c_near)
+            virtual.update(card.id, c_near)
         if v is not None:
             v_near = [p.id for p in db.query_nearby(v, k=5)]
             v_match = virtual.update(card.id, v_near)
@@ -111,7 +114,7 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")):
             )
             plt.show()
 
-    _print_correct()
+    virtual.print_correct()
 
 
 if __name__ == "__main__":

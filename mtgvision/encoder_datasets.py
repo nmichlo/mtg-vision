@@ -30,35 +30,28 @@ Using similar techniques to facial recognition.
 #  SOFTWARE.
 #  ~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~
 
+import random
 import uuid
 from collections import defaultdict
+from collections.abc import Hashable, Iterable, Iterator
+from math import ceil
 from pathlib import Path
 from typing import (
-    DefaultDict,
-    Hashable,
-    Iterable,
-    Iterator,
-    List,
     Literal,
-    Optional,
     TypeVar,
 )
 
 import cv2
 import numpy as np
-from math import ceil
-import random
-
 from filelock import FileLock
+from mtgdata import ScryfallDataset, ScryfallImageType
+from mtgdata.scryfall import ScryfallBulkType, ScryfallCardFace
 from tqdm import tqdm
 
-from mtgdata import ScryfallDataset, ScryfallImageType
-from mtgvision.util.image import ensure_float32
+import mtgvision.util.files as ufls
 import mtgvision.util.image as uimg
 import mtgvision.util.random as uran
-import mtgvision.util.files as ufls
-from mtgdata.scryfall import ScryfallBulkType, ScryfallCardFace
-
+from mtgvision.util.image import ensure_float32
 
 # ========================================================================= #
 # RANDOM TRANSFORMS                                                         #
@@ -449,7 +442,7 @@ class IlsvrcImages:
             subdir = root
         if not root.is_dir():
             print(self._get_download_message(root, subdir))
-        self._paths: "list[str]" = sorted(ufls.get_image_paths(root, prefixed=True))
+        self._paths: list[str] = sorted(ufls.get_image_paths(root, prefixed=True))
         assert len(self._paths) > 0, (
             f"Dataset is empty. Please download the dataset. {root}"
         )
@@ -559,9 +552,9 @@ class SyntheticBgFgMtgImages:
         ds = self.make_scryfall_data()
         # cards
         self._card_by_id: dict[str, ScryfallCardFace] = {}
-        self._card_ids: List[str] = []
+        self._card_ids: list[str] = []
         # group cards by names so we can find adversarial ones
-        GroupHint = DefaultDict[str, dict[str, ScryfallCardFace]]
+        GroupHint = defaultdict[str, dict[str, ScryfallCardFace]]
         self._cards_by_name: GroupHint = defaultdict(dict)
         self._cards_by_set: GroupHint = defaultdict(dict)
         cards, card_ids, card_names, card_sets = [], [], [], []
@@ -618,7 +611,7 @@ class SyntheticBgFgMtgImages:
 
     def get_similar_card(
         self, id_: uuid.UUID | str, mode: Literal["name", "set"] = "name"
-    ) -> Optional[ScryfallCardFace]:
+    ) -> ScryfallCardFace | None:
         card = self.get_card_by_id(id_)
         group = self._get_group(card, mode=mode)
         assert card.id in group

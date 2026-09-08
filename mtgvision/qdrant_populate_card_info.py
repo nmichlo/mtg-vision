@@ -10,9 +10,9 @@ TODO: card information might not be correctly produced by ScryfallDataset, I don
 
 import itertools
 
+from mtgdata import ScryfallImageType
 from tqdm import tqdm
 
-from mtgdata import ScryfallImageType
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.qdrant import VectorStoreQdrant
 
