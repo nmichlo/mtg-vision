@@ -191,9 +191,8 @@ The demo application consists of
 2. install deps
 
    ```bash
-   # install python deps
-   conda create -n mtg-vision python=3.12
-   pip install -e ./
+   # install python deps (uv creates and manages the venv)
+   uv sync
 
    # install node 22 with nvm, and install pnpm, and install deps
    nvm install 22
@@ -207,23 +206,23 @@ The demo application consists of
 
    ```bash
    # populate qdrant vectors (needs to be run first)
-   python -m mtgvision.qdrant_populate
+   uv run python -m mtgvision.qdrant_populate
    # populate qdrant payloads, run after populating vectors
-   python -m mtgvision.qdrant_populate_card_info
+   uv run python -m mtgvision.qdrant_populate_card_info
 
    # other
-   # $ python -m mtgvision.encoder_train
-   # $ python -m mtgvision.encoder_export
-   # $ python -m mtgvision.od_datasets  # generate dataset for yolo
-   # $ python -m mtgvision.od_train
-   # $ python -m mtgvision.od_export
+   # $ uv run python -m mtgvision.encoder_train
+   # $ uv run python -m mtgvision.encoder_export
+   # $ uv run python -m mtgvision.od_datasets  # generate dataset for yolo
+   # $ uv run python -m mtgvision.od_train
+   # $ uv run python -m mtgvision.od_export
    ```
 
 4. start the server
 
    ```bash
    cd "mtg-vision"
-   fastapi dev mtgvision/server.py --host 0.0.0.0
+   uv run fastapi dev mtgvision/server.py --host 0.0.0.0
    ```
 
 5. start the client

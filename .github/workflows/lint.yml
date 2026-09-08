@@ -6,3 +6,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/ruff-action@v3
+        with:
+          args: "check"
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check"
+
+  ty:
+    runs-on: ubuntu-latest
+    # `ty` is pre-1.0 and this codebase is largely unannotated, so type errors
+    # are surfaced as CI output but do not block the PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - run: uv run ty check

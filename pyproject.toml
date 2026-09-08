@@ -13,15 +13,13 @@ name = "mtgvision"
 dynamic = ["version"]  # Version is managed by setuptools_scm
 description = "Realtime MTG detection and recognition."
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "Nathan Juraj Michlo", email = "NathanJMichlo@gmail.com" }]
 urls = { Homepage = "https://github.com/nmichlo/mtg-vision" }
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Intended Audience :: Science/Research"
 ]
@@ -40,10 +38,47 @@ dependencies = [
     "pytorch_lightning",
     "pytorch-metric-learning",
     "ijson",
+    "albumentations",
+    "shapely",
+    "fastapi[standard]",
+    "qdrant-client",
+    "norfair",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.14",
+    "ty>=0.0.1a1",
+]
 
-# extra dependencies
-[project.optional-dependencies]
+# ========================================================================= #
+# tooling                                                                   #
+# ========================================================================= #
 
-extra = []
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    # "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "UP047",  # PEP 695 generics
+]
+
+# codebase is currently largely untyped
+[tool.ty.rules]
+unresolved-attribute = "warn"
+unresolved-import = "warn"
+possibly-missing-attribute = "warn"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "--color=yes --verbose"
