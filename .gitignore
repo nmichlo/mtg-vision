@@ -156,3 +156,8 @@ labels.cache
 */images/*/*.png
 */images/*/*.jpg
 */labels/*/*.txt
+
+# claude code
+CLAUDE.md
+CLAUDE.local.md
+.claude/
