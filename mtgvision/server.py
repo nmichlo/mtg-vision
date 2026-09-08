@@ -9,7 +9,6 @@ import hashlib
 import time
 from collections.abc import Hashable
 from pathlib import Path
-from typing import cast
 
 import cv2
 import numpy as np
@@ -20,6 +19,7 @@ from mtgdata.scryfall import ScryfallCardFace
 from norfair import Detection, Tracker
 from norfair.distances import mean_euclidean
 from qdrant_client.http.models import ScoredPoint
+from typing_extensions import TypeIs
 
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
@@ -239,6 +239,12 @@ def encode_rgb_im(rgb_im: npt.NDArray[np.uint8]) -> str:
     return base64.b64encode(buffer).decode("utf-8")
 
 
+def _is_uint8_array(a: object) -> TypeIs[npt.NDArray[np.uint8]]:
+    # cv2's MatLike stub is wider (any int/float dtype) than the true runtime
+    # dtype for frames decoded with IMREAD_COLOR_RGB, which is always uint8.
+    return isinstance(a, np.ndarray) and a.dtype == np.uint8
+
+
 # Should be populated by `qdrant_populate_card_info`, no longer needed
 # async def async_query_scryfall(card_id: str, vecs: VectorStoreQdrant):
 #     """Asynchronously query Scryfall API for card data and update Qdrant payload."""
@@ -289,8 +295,7 @@ async def detect_websocket(websocket: WebSocket) -> None:
             if frame is None:
                 print("Failed to decode frame, skipping...")
                 continue
-            # cv2-stubs type this too broadly; IMREAD_COLOR_RGB always yields uint8.
-            frame = cast(npt.NDArray[np.uint8], frame)
+            assert _is_uint8_array(frame)
 
             # 3. Process the frame
             objs = ctx.update(frame)

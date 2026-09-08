@@ -4,17 +4,21 @@ import logging
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import cast
 
 import qdrant_client
 from qdrant_client.http.models import Distance, ScoredPoint, VectorParams
+from typing_extensions import TypeIs
 
 from mtgvision.util.json import Json
 
 
+def _is_float_list(vector: object) -> TypeIs[list[float]]:
+    return isinstance(vector, list) and all(isinstance(v, float) for v in vector)
+
+
 def _as_flat_vector(vector: object) -> list[float] | None:
-    if isinstance(vector, list) and all(isinstance(v, float) for v in vector):
-        return cast(list[float], vector)
+    if _is_float_list(vector):
+        return vector
     return None
 
 

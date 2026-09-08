@@ -30,7 +30,7 @@ import functools
 from collections.abc import Callable
 from math import ceil
 from os import PathLike
-from typing import Literal, TypeVar, cast, overload
+from typing import Literal, ParamSpec, TypeVar, overload
 
 import cv2
 import numpy as np
@@ -42,53 +42,52 @@ from PIL import Image
 # ========================================================================= #
 
 
-F = TypeVar("F", bound=Callable[..., object])
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 @overload
-def ensure_float32(fn: F) -> F: ...
+def ensure_float32(fn: Callable[P, R]) -> Callable[P, R]: ...
 
 
 @overload
 def ensure_float32(
     fn: None = None, *, strict: bool = False, disable: bool = True
-) -> Callable[[F], F]: ...
+) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
 
 def ensure_float32(
-    fn: F | None = None, *, strict: bool = False, disable: bool = True
-) -> F | Callable[[F], F]:
+    fn: Callable[P, R] | None = None, *, strict: bool = False, disable: bool = True
+) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Decorator to ensure that a function returns a numpy array of type np.float32.
     """
 
-    def wrap(fn: F) -> F:
+    def wrap(fn: Callable[P, R]) -> Callable[P, R]:
         if disable:
             return fn
 
-        name = getattr(fn, "__name__", repr(fn))
-
         @functools.wraps(fn)
-        def wrapper(*args: object, **kwargs: object) -> object:
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             result = fn(*args, **kwargs)
             if not isinstance(result, np.ndarray):
                 raise Exception(
-                    f"Function {name} did not return a numpy array, got: {type(result)}"
+                    f"Function {fn} did not return a numpy array, got: {type(result)}"
                 )
             if result.dtype != np.float32:
                 raise Exception(
-                    f"Function {name} did not return a numpy array of type {np.float32}, got: {result.dtype}"
+                    f"Function {fn} did not return a numpy array of type {np.float32}, got: {result.dtype}"
                 )
             if strict:
                 if np.min(result) < 0:
-                    msg = f"Function {name} returned a numpy array with negative values, got: {np.min(result)}"
+                    msg = f"Function {fn} returned a numpy array with negative values, got: {np.min(result)}"
                     raise RuntimeError(msg)
                 if np.max(result) > 1:
-                    msg = f"Function {name} returned a numpy array with values greater than 1, got: {np.max(result)}"
+                    msg = f"Function {fn} returned a numpy array with values greater than 1, got: {np.max(result)}"
                     raise RuntimeError(msg)
             return result
 
-        return cast(F, wrapper)
+        return wrapper
 
     if fn is not None:
         return wrap(fn)

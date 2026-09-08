@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Literal, TypedDict
 
 import kornia as K
 import matplotlib.pyplot as plt
@@ -35,6 +35,8 @@ from pytorch_lightning.callbacks import (
     ModelCheckpoint,
 )
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.utilities.compile import from_compiled
+from torch._dynamo import OptimizedModule
 from torch.utils.data import DataLoader, IterableDataset
 
 import mtgvision.models.convnextv2ae as cnv2ae
@@ -274,6 +276,37 @@ class RanMtgEncDecDataset(IterableDataset[BatchHintTensor]):
 # ========================================================================= #
 
 
+class _SkipFirstOptimizerLoadState(torch.optim.Optimizer):
+    """Mixin: the first call to `load_state_dict` is a no-op; every later call
+    loads normally. Used to resume training from a checkpoint while
+    intentionally discarding the previous optimizer state, e.g. after changing
+    the optimizer type or hyperparameters.
+    """
+
+    _skip_next_load_state: bool = True
+
+    def load_state_dict(self, state_dict: dict[str, object]) -> None:
+        if self._skip_next_load_state:
+            self._skip_next_load_state = False
+            print(
+                "Loading state dict... SKIPPED!, resetting load_state_dict to default."
+            )
+            return
+        super().load_state_dict(state_dict)
+
+
+class _SkipFirstAdam(_SkipFirstOptimizerLoadState, optim.Adam):
+    pass
+
+
+class _SkipFirstRAdam(_SkipFirstOptimizerLoadState, optim.RAdam):
+    pass
+
+
+class _SkipFirstSGD(_SkipFirstOptimizerLoadState, optim.SGD):
+    pass
+
+
 class MtgVisionEncoder(pl.LightningModule):
     hparams: Config
     model: cnv2ae.ConvNeXtV2Ae
@@ -474,22 +507,26 @@ class MtgVisionEncoder(pl.LightningModule):
         return logs
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
+        skip_load = self.hparams.skip_first_optimizer_load_state
         if self.hparams.optimizer == "adam":
-            opt = optim.Adam(
+            adam_cls = _SkipFirstAdam if skip_load else optim.Adam
+            opt = adam_cls(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay,
                 eps=1e-4,  # needed for mixed precision
             )
         elif self.hparams.optimizer == "radam":
-            opt = optim.RAdam(
+            radam_cls = _SkipFirstRAdam if skip_load else optim.RAdam
+            opt = radam_cls(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay,
                 eps=1e-4,  # needed for mixed precision
             )
         elif self.hparams.optimizer == "sgd":
-            opt = optim.SGD(
+            sgd_cls = _SkipFirstSGD if skip_load else optim.SGD
+            opt = sgd_cls(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay,
@@ -499,28 +536,21 @@ class MtgVisionEncoder(pl.LightningModule):
         elif self.hparams.optimizer == "deepspeed_cpu_adam":
             from deepspeed.ops.adam import DeepSpeedCPUAdam
 
-            opt = DeepSpeedCPUAdam(
+            class _SkipFirstDeepSpeedCPUAdam(
+                _SkipFirstOptimizerLoadState, DeepSpeedCPUAdam
+            ):
+                pass
+
+            deepspeed_cls = (
+                _SkipFirstDeepSpeedCPUAdam if skip_load else DeepSpeedCPUAdam
+            )
+            opt = deepspeed_cls(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay,
             )
         else:
             raise ValueError(f"Unknown optimizer: {self.hparams.optimizer}")
-
-        # reset load
-        if self.hparams.skip_first_optimizer_load_state:
-            _old_ = opt.load_state_dict
-
-            def _skip_load_state_dict_(state_dict: Json) -> None:
-                print(
-                    "Loading state dict... SKIPPED!, resetting load_state_dict to default."
-                )
-                # restore the original bound method, dynamically -- this
-                # intentionally bypasses static attribute typing since we are
-                # monkey-patching an instance method for one call only.
-                setattr(opt, "load_state_dict", _old_)
-
-            setattr(opt, "load_state_dict", _skip_load_state_dict_)
 
         # done!
         return opt
@@ -619,13 +649,11 @@ class ImageLoggingCallback(Callback):
 
         def take_imgs(
             batches: list[BatchHintNumpy],
-            bkey: str,
+            bkey: Literal["x", "y"],
             bidx: int,
         ) -> np.ndarray | None:
             if self._first_log and bkey in batches[0]:
-                images = [
-                    cast(dict[str, np.ndarray], batch)[bkey][bidx] for batch in batches
-                ]
+                images = [batch[bkey][bidx] for batch in batches]
                 images = np.stack(images, axis=0)
                 return images
             return None
@@ -750,15 +778,17 @@ def train(config: Config) -> None:
     model: pl.LightningModule = MtgVisionEncoder(config.model_dump())
     if config.compile:
         # torch._dynamo.list_backends() # ['cudagraphs', 'inductor', 'onnxrt', 'openxla', 'tvm']
-        # torch.compile's stub only reports a plain `Callable` return type, but
-        # pytorch_lightning explicitly supports passing the resulting
-        # `OptimizedModule` wrapper anywhere a `LightningModule` is expected.
+        # torch.compile's stub only reports a plain `Callable` return type, but at
+        # runtime it always returns a `torch._dynamo.OptimizedModule` wrapping `model`
+        # here. `from_compiled` is pytorch_lightning's supported way to get back a real
+        # `LightningModule` instance (with the compiled methods patched in) -- it's
+        # exactly what `Trainer.fit` does internally for a bare `OptimizedModule`.
         if device == "mps":
-            model = cast(pl.LightningModule, torch.compile(model, backend="aot_eager"))
+            compiled = torch.compile(model, backend="aot_eager")
         else:
-            model = cast(
-                pl.LightningModule, torch.compile(model, mode="reduce-overhead")
-            )
+            compiled = torch.compile(model, mode="reduce-overhead")
+        assert isinstance(compiled, OptimizedModule)
+        model = from_compiled(compiled)
 
     # logger
     wandb_logger = WandbLogger(
@@ -853,9 +883,9 @@ def _cli() -> None:
     # parse args
     args = parser.parse_args()
     for name in _BOOLS:
-        val = getattr(args, name)
+        val = vars(args)[name]
         if val is not None:
-            setattr(args, name, val.lower() in ("y", "yes", "true"))
+            vars(args)[name] = val.lower() in ("y", "yes", "true")
 
     # get config
     print("ARGS:", args)

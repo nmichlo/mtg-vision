@@ -29,11 +29,13 @@ import abc
 import random
 import warnings
 from abc import ABC
-from collections.abc import Callable, Sequence
-from typing import cast
+from collections.abc import Callable
 
 # a step in an augmentation pipeline; `None` is a no-op
 type Transform[T] = Callable[[T], T] | None
+# the concrete sequence types `Applicator.__init__` unpacks as a single argument
+# -- kept concrete (not `Sequence[Transform[T]]`) so `isinstance` fully narrows it
+type _Transforms[T] = list[Transform[T]] | set[Transform[T]] | tuple[Transform[T], ...]
 
 
 def seed_all(seed: int) -> None:
@@ -61,12 +63,15 @@ def seed_all(seed: int) -> None:
 
 
 class Applicator[T](ABC):
-    def __init__(self, *callables: Transform[T] | Sequence[Transform[T]]) -> None:
+    def __init__(self, *callables: Transform[T] | _Transforms[T]) -> None:
         # a single list/set/tuple argument is unpacked; anything else is varargs
-        if len(callables) == 1 and type(callables[0]) in [list, set, tuple]:
-            items = list(cast(Sequence[Transform[T]], callables[0]))
+        if len(callables) == 1 and isinstance(callables[0], (list, set, tuple)):
+            items: list[Transform[T]] = list(callables[0])
         else:
-            items = list(cast(Sequence[Transform[T]], callables))
+            items = []
+            for c in callables:
+                assert not isinstance(c, (list, set, tuple))
+                items.append(c)
         if len(items) < 1:
             raise RuntimeError("There must be a callable")
         self.callables: list[Transform[T]] = items
@@ -96,7 +101,7 @@ class ApplyOrdered[T](Applicator[T]):
 
 
 class ApplyShuffled[T](Applicator[T]):
-    def __init__(self, *callables: Transform[T] | Sequence[Transform[T]]) -> None:
+    def __init__(self, *callables: Transform[T] | _Transforms[T]) -> None:
         super().__init__(*callables)
         self.indices: list[int] = list(range(len(self.callables)))
 

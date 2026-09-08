@@ -67,6 +67,8 @@ select = [
     "UP",  # pyupgrade
     "ANN", # flake8-annotations
     "TID", # flake8-tidy-imports
+    "B009", # getattr with a constant -- use normal attribute access
+    "B010", # setattr with a constant -- use normal attribute access
     # "B",   # flake8-bugbear
 ]
 ignore = [
@@ -76,6 +78,7 @@ ignore = [
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.Any".msg = "banned -- use a precise type or a TypeVar"
+"typing.cast".msg = "banned -- narrow with isinstance/assert, or fix the real type"
 
 [tool.pytest.ini_options]
 minversion = "8.0"
