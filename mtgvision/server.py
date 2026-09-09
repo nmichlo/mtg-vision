@@ -9,6 +9,7 @@ import hashlib
 import time
 from collections.abc import Hashable
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import cv2
 import numpy as np
@@ -43,6 +44,13 @@ def get_ctx() -> tuple[
 @dataclasses.dataclass
 class DetData:
     seg: InstanceSeg
+
+
+@runtime_checkable
+class DetectionWithData(Protocol):
+    """`norfair_rs.Detection` carries `data` at runtime, but its stub omits it."""
+
+    data: DetData
 
 
 @dataclasses.dataclass
@@ -158,12 +166,19 @@ class TrackerCtx:
         # 3. Update tracked objects
         objs: list[TrackedData] = []
         current_time = time.time()
+        seg_ids = {id(seg) for seg in segments}
         for obj in tracked_objects:
             # 3.A If we have detections, otherwise we are work on predicted positions
-            #     of detections that are not yet removed
-            if obj.last_detection not in detections:
+            #     of detections that are not yet removed. `norfair_rs` hands back a
+            #     fresh `Detection` wrapper on every access, so the detection cannot
+            #     be compared directly -- the attached `data` payload is the same
+            #     object we created above, so compare that instead.
+            det = obj.last_detection
+            if not isinstance(det, DetectionWithData):
                 continue
-            seg: InstanceSeg = obj.last_detection.data.seg
+            seg: InstanceSeg = det.data.seg
+            if id(seg) not in seg_ids:
+                continue
 
             # 3.B Get the object or create it
             # `obj.id` is only `None` while a tracked object is still initializing,

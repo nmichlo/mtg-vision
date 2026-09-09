@@ -29,8 +29,6 @@ dependencies = [
     "mtgdata[convert]~=0.3.0",
     "ultralytics~=8.3.80",
     "wandb",
-    "mlx",
-    "mlx-data",
     "torch",
     "torchvision",
     "coremltools",
