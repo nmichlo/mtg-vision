@@ -9,21 +9,26 @@ import hashlib
 import time
 from collections.abc import Hashable
 from pathlib import Path
+from typing import Protocol
+from typing import runtime_checkable
 
 import cv2
 import numpy as np
 import numpy.typing as npt
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
+from fastapi import WebSocket
 from fastapi.staticfiles import StaticFiles
 from mtgdata.scryfall import ScryfallCardFace
-from norfair import Detection, Tracker
-from norfair.distances import mean_euclidean
+from norfair_rs import Detection
+from norfair_rs import Tracker
+from norfair_rs import mean_euclidean
 from qdrant_client.http.models import ScoredPoint
 from typing_extensions import TypeIs
 
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
-from mtgvision.od_export import CardSegmenter, InstanceSeg
+from mtgvision.od_export import CardSegmenter
+from mtgvision.od_export import InstanceSeg
 from mtgvision.qdrant import VectorStoreQdrant
 from mtgvision.util.json import Json
 
@@ -31,9 +36,7 @@ from mtgvision.util.json import Json
 
 
 @functools.lru_cache
-def get_ctx() -> tuple[
-    CardSegmenter, CoreMlEncoder, VectorStoreQdrant, SyntheticBgFgMtgImages
-]:
+def get_ctx() -> tuple[CardSegmenter, CoreMlEncoder, VectorStoreQdrant, SyntheticBgFgMtgImages]:
     SEGMENTER = CardSegmenter()
     ENCODER = CoreMlEncoder()
     VECS = VectorStoreQdrant()
@@ -44,6 +47,13 @@ def get_ctx() -> tuple[
 @dataclasses.dataclass
 class DetData:
     seg: InstanceSeg
+
+
+@runtime_checkable
+class DetectionWithData(Protocol):
+    """`norfair_rs.Detection` carries `data` at runtime, but its stub omits it."""
+
+    data: DetData
 
 
 @dataclasses.dataclass
@@ -159,12 +169,19 @@ class TrackerCtx:
         # 3. Update tracked objects
         objs: list[TrackedData] = []
         current_time = time.time()
+        seg_ids = {id(seg) for seg in segments}
         for obj in tracked_objects:
             # 3.A If we have detections, otherwise we are work on predicted positions
-            #     of detections that are not yet removed
-            if obj.last_detection not in detections:
+            #     of detections that are not yet removed. `norfair_rs` hands back a
+            #     fresh `Detection` wrapper on every access, so the detection cannot
+            #     be compared directly -- the attached `data` payload is the same
+            #     object we created above, so compare that instead.
+            det = obj.last_detection
+            if not isinstance(det, DetectionWithData):
                 continue
-            seg: InstanceSeg = obj.last_detection.data.seg
+            seg: InstanceSeg = det.data.seg
+            if id(seg) not in seg_ids:
+                continue
 
             # 3.B Get the object or create it
             # `obj.id` is only `None` while a tracked object is still initializing,
@@ -189,22 +206,15 @@ class TrackerCtx:
             # - if enough time has passed, do a full update instead
             #   of a partial update OR if no update has been done yet
             #   then force an update
-            if (
-                current_time - trk.last_update_time > self.update_wait_sec
-                or trk.avg_z is None
-            ):
+            if current_time - trk.last_update_time > self.update_wait_sec or trk.avg_z is None:
                 # * embed the image
                 _z = self.encoder.predict(trk.last_rgb_im)
                 if trk.avg_z is None:
                     trk.avg_z = _z
                 trk.avg_z = self.ewma_weight * _z + (1 - self.ewma_weight) * trk.avg_z
                 # * query the vector store
-                trk.ave_nearby_points = self.vecs.query_nearby(
-                    trk.avg_z, k=3, with_payload=True, with_vectors=False
-                )
-                trk.ave_nearby_cards = [
-                    self.data.get_card_by_id(str(p.id)) for p in trk.ave_nearby_points
-                ]
+                trk.ave_nearby_points = self.vecs.query_nearby(trk.avg_z, k=3, with_payload=True, with_vectors=False)
+                trk.ave_nearby_cards = [self.data.get_card_by_id(str(p.id)) for p in trk.ave_nearby_points]
 
                 # Should be populated by `qdrant_populate_card_info`, no longer needed
                 # Check for missing payloads and trigger async fetching
@@ -307,12 +317,7 @@ async def detect_websocket(websocket: WebSocket) -> None:
                 "server_process_period": times[1] - times[0],
                 "server_recv_im_bytes": len(data),
                 "server_send_im_bytes": sum(
-                    [
-                        len(obj.last_rgb_im_encoded)
-                        for obj in objs
-                        if obj.last_rgb_im_encoded
-                    ]
-                    + [0]
+                    [len(obj.last_rgb_im_encoded) for obj in objs if obj.last_rgb_im_encoded] + [0]
                 ),
             }
             await websocket.send_json(response)

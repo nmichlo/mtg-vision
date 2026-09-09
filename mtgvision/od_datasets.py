@@ -7,7 +7,8 @@ import random
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
+from typing import TypedDict
 
 import albumentations as A
 import cv2
@@ -17,12 +18,13 @@ from mtgdata import ScryfallImageType
 from shapely.geometry import Polygon
 from tqdm import tqdm
 
-from mtgvision.encoder_datasets import (
-    CocoValImages,
-    IlsvrcImages,
-    SyntheticBgFgMtgImages,
-)
-from mtgvision.util.image import imread_float, imshow_loop, imwrite, round_rect_mask
+from mtgvision.encoder_datasets import CocoValImages
+from mtgvision.encoder_datasets import IlsvrcImages
+from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
+from mtgvision.util.image import imread_float
+from mtgvision.util.image import imshow_loop
+from mtgvision.util.image import imwrite
+from mtgvision.util.image import round_rect_mask
 from mtgvision.util.random import seed_all
 
 # ========================================================================= #
@@ -30,9 +32,7 @@ from mtgvision.util.random import seed_all
 # ========================================================================= #
 
 
-def corner_jitter_2d(
-    pts: np.ndarray, jitter_ratio: float, center: tuple[float, float] | None = None
-) -> np.ndarray:
+def corner_jitter_2d(pts: np.ndarray, jitter_ratio: float, center: tuple[float, float] | None = None) -> np.ndarray:
     assert pts.shape[-1] == 2
     if center is None:
         center = np.mean(pts, axis=0)
@@ -51,9 +51,7 @@ def corner_jitter_2d(
     return pts
 
 
-def rotate_2d(
-    pts: np.ndarray, deg: float, center: tuple[float, float] = (0, 0), scale: float = 1
-) -> np.ndarray:
+def rotate_2d(pts: np.ndarray, deg: float, center: tuple[float, float] = (0, 0), scale: float = 1) -> np.ndarray:
     M = np.identity(3)
     m = cv2.getRotationMatrix2D(center, deg, scale)
     M[:2, :] = m
@@ -200,9 +198,7 @@ def make_background(bg: np.ndarray, bg_size: tuple[int, int] | int) -> np.ndarra
     """
     Load and rotate/resize a random background image to encompass the target shape
     """
-    out = rotate_over_output(
-        {"image": bg}, deg=np.random.randint(0, 360), out_size_hw=bg_size, mode="cover"
-    )
+    out = rotate_over_output({"image": bg}, deg=np.random.randint(0, 360), out_size_hw=bg_size, mode="cover")
     # augment colors and things like that
     return out["image"]
 
@@ -354,13 +350,9 @@ def place_card_on_background_get_transform(
         dst_pts = src_pts.copy()
         dst_pts = corner_jitter_2d(dst_pts, jitter_ratio=jitter_ratio)
         dst_pts = rotate_2d(dst_pts, deg=deg, center=(cw / 2, ch / 2), scale=scale)
-        dst_pts = translate_2d(
-            dst_pts, dx=cx - (cw / 2) * scale, dy=cy - (ch / 2) * scale
-        )
+        dst_pts = translate_2d(dst_pts, dx=cx - (cw / 2) * scale, dy=cy - (ch / 2) * scale)
         # transform matrix
-        M = cv2.getPerspectiveTransform(
-            src_pts.astype(np.float32), dst_pts.astype(np.float32)
-        )
+        M = cv2.getPerspectiveTransform(src_pts.astype(np.float32), dst_pts.astype(np.float32))
         # warp points
         keypoints = card_sample["keypoints"]  # shape (-1, 4, 2), first [0] is card
         keypoints = apply_transform_2d(keypoints, M)
@@ -450,9 +442,7 @@ def get_bg_transform_light() -> A.RandomOrder:
         A.GaussNoise(std_range=(0.0, 0.1), p=0.2),
         A.Erasing(
             scale=(0.02, 0.2),
-            fill=np.random.choice(
-                ["random", "random_uniform", 1, 0], p=[0.1, 0.5, 0.2, 0.2]
-            ),
+            fill=np.random.choice(["random", "random_uniform", 1, 0], p=[0.1, 0.5, 0.2, 0.2]),
             p=0.4,
         ),
         n=3,
@@ -497,9 +487,7 @@ def get_bg_transform(extra: bool = False) -> A.RandomOrder:
             else [
                 A.Erasing(
                     scale=(0.02, 0.4),
-                    fill=np.random.choice(
-                        ["random", "random_uniform", 1, 0], p=[0.1, 0.1, 0.4, 0.4]
-                    ),
+                    fill=np.random.choice(["random", "random_uniform", 1, 0], p=[0.1, 0.1, 0.4, 0.4]),
                     p=0.4,
                 ),
             ]
@@ -524,9 +512,7 @@ def get_card_transform() -> A.RandomOrder:
         ),
         A.Erasing(
             scale=(0.02, 0.2),
-            fill=np.random.choice(
-                ["random", "random_uniform", 1, 0], p=[0.1, 0.5, 0.2, 0.2]
-            ),
+            fill=np.random.choice(["random", "random_uniform", 1, 0], p=[0.1, 0.5, 0.2, 0.2]),
             p=0.3,
         ),
         n=2,
@@ -737,9 +723,7 @@ class Gen:
             img = sample["image"]
             for bbox, label in zip(sample["keypoints"], sample["keypoints_labels"]):
                 for (x0, y0), (x1, y1) in zip(bbox, np.roll(bbox, 1, axis=0)):
-                    cv2.line(
-                        img, (int(x0), int(y0)), (int(x1), int(y1)), color=colors[label]
-                    )
+                    cv2.line(img, (int(x0), int(y0)), (int(x1), int(y1)), color=colors[label])
             # done
             imshow_loop(img, "synthetic")
             count += 1
@@ -889,6 +873,4 @@ if __name__ == "__main__":
     )
     # gen.debug_show_loop()
 
-    create_yolo_obb_dataset(
-        gen, output_dir="../data/yolo_mtg_dataset_seg", num_train=10000, ext="jpg"
-    )
+    create_yolo_obb_dataset(gen, output_dir="../data/yolo_mtg_dataset_seg", num_train=10000, ext="jpg")

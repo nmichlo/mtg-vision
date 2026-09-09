@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import subprocess
+import tempfile
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING
+from typing import Literal
 
 import torch
 from torch import nn
 from tqdm import tqdm
 
 from mtgvision.models.ae_base import AeBase
-from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
+from mtgvision.models.convnextv2 import Block
+from mtgvision.models.convnextv2 import LayerNorm
+from mtgvision.models.convnextv2 import trunc_normal_
 
 if TYPE_CHECKING:
-    from coremltools.models import MLModel
+    from litert_torch.model import LiteRTModel
+    from torch.onnx import ONNXProgram
 
 # ========================================================================= #
 # Helper                                                                    #
@@ -32,9 +39,7 @@ class Reshape(nn.Module):
         return x.reshape(self.shape)
 
 
-def Norm2d(
-    normalized_shape: int, eps: float = 1e-6, data_format: str = "channels_last"
-) -> LayerNorm:
+def Norm2d(normalized_shape: int, eps: float = 1e-6, data_format: str = "channels_last") -> LayerNorm:
     return LayerNorm(normalized_shape, eps=eps, data_format=data_format)
 
 
@@ -166,8 +171,136 @@ class _Base(nn.Module):
 
 
 # ========================================================================= #
+# Exporters                                                                 #
+# ========================================================================= #
+
+
+class Export:
+    @staticmethod
+    def to_coreml(
+        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
+        in_name: str,
+        out_name: str,
+        **convert_kwargs: object,
+    ) -> object:
+        from coremltools import TensorType
+        from coremltools import convert
+
+        model, i = obj.get_trace_items()
+        m_jit = torch.jit.trace(func=model, example_inputs=i)
+        c = convert(
+            m_jit,
+            inputs=[TensorType(name=in_name, shape=i.shape)],
+            outputs=[TensorType(name=out_name)],
+            **convert_kwargs,
+        )
+        return c  # coremltools.models.MLModel
+
+    @staticmethod
+    def to_onnx(
+        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
+        **export_kwargs: object,
+    ) -> ONNXProgram:
+        model, i = obj.get_trace_items()
+        # `dynamo=True` always returns an ONNXProgram (never None); the `| None`
+        # in torch's signature only applies to the legacy `dynamo=False` path.
+        program = torch.onnx.export(model, (i,), dynamo=True)
+        assert program is not None
+        return program
+
+    @staticmethod
+    def to_tflite(
+        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder,
+    ) -> LiteRTModel:
+        import litert_torch
+
+        model, i = obj.get_trace_items()
+        converted: LiteRTModel = litert_torch.convert(model, (i,))
+        return converted
+
+    @staticmethod
+    def _run_isolated(package: str, command: str, *args: str) -> None:
+        """Run a converter in its own uv-managed env.
+
+        The tensorflow toolchain cannot live in this project: `keras<3` pins
+        tensorflow to 2.15, which only ships wheels for cp39-cp311, while this
+        package needs 3.12+ for PEP 695 syntax. uvx fetches each converter into
+        an isolated env instead, so nothing here depends on tensorflow.
+        """
+        try:
+            subprocess.run(
+                ["uvx", "--from", package, command, *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"--- {command} failed ---")
+            print("Command:", e.cmd)
+            print("Return Code:", e.returncode)
+            print("Stdout:", e.stdout)
+            print("Stderr:", e.stderr)
+            raise
+        except FileNotFoundError:
+            print("ERROR: 'uvx' command not found.")
+            print("Install uv (https://docs.astral.sh/uv/) so the converter can be fetched on demand.")
+            raise
+
+    @staticmethod
+    def export_tfjs(obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder, path: str | Path) -> None:
+        """Export a tfjs graph model, the format `www/` loads via `tf.loadGraphModel`.
+
+        Routed torch -> onnx -> saved_model -> tfjs. The previous torch -> keras
+        route used nobuco, which needs tensorflow in-process; onnx2tf does the
+        same job out-of-process.
+        """
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            onnx_path = Path(temp_dir) / "model.onnx"
+            saved_model_path = Path(temp_dir) / "saved_model"
+
+            # 1. torch -> onnx, in-process
+            print(f"Saving temporary ONNX model to: {onnx_path}")
+            Export.to_onnx(obj).save(str(onnx_path))
+
+            # 2. onnx -> tf saved_model
+            # NOTE: blocked on onnx2tf 2.6.8, whose SavedModel exporter raises
+            # "`input.shape.rank` must be at least 5" on depthwise convs, which
+            # ConvNeXt uses throughout. Its tflite output is unaffected, and
+            # `to_tflite` covers that target directly. Older onnx2tf releases
+            # pin ai-edge-litert==2.1.0, which has linux-only wheels.
+            print(f"Converting ONNX model to SavedModel at: {saved_model_path}")
+            Export._run_isolated(
+                "onnx2tf",
+                "onnx2tf",
+                "-i",
+                str(onnx_path),
+                "-o",
+                str(saved_model_path),
+                "-osd",  # signaturedefs, required by tensorflowjs_converter
+            )
+
+            # 3. tf saved_model -> tfjs
+            print(f"Converting SavedModel to TFJS at: {path}")
+            Export._run_isolated(
+                "tensorflowjs",
+                "tensorflowjs_converter",
+                "--input_format",
+                "tf_saved_model",
+                "--output_format",
+                "tfjs_graph_model",
+                str(saved_model_path),
+                str(path),
+            )
+            print("TFJS conversion successful.")
+
+
+# ========================================================================= #
 # Encoder                                                                   #
 # ========================================================================= #
+
 
 HeadHint = Literal["conv+linear", "conv+mlp", "conv+act+mlp", "pool+linear", "pool+mlp"]
 
@@ -234,14 +367,10 @@ class ConvNeXtV2Encoder(_Base):
         # --> Bx[3]x6x4
         if head_type in ("conv+linear", "conv+mlp", "conv+act+mlp"):
             self.pool = nn.Sequential(
-                nn.Conv2d(
-                    dims[3], z_size // self.internal_num, kernel_size=1, stride=1
-                ),
+                nn.Conv2d(dims[3], z_size // self.internal_num, kernel_size=1, stride=1),
                 # --> Bx<z_size//(6*4)>x6x4
                 Act() if "+act" in head_type else nn.Identity(),
-                Norm2d(
-                    z_size // self.internal_num, eps=1e-6, data_format="channels_first"
-                ),
+                Norm2d(z_size // self.internal_num, eps=1e-6, data_format="channels_first"),
                 Reshape((-1, z_size)),
             )
             # --> Bx<z_size>
@@ -281,17 +410,13 @@ class ConvNeXtV2Encoder(_Base):
         x = x.reshape(x.size(0), self.z_size)
         return x
 
-    def to_coreml(self) -> MLModel:
-        from coremltools import TensorType, convert
-
+    def get_trace_items(self) -> tuple[ConvNeXtV2Encoder, torch.Tensor]:
         i = torch.randn((1, *self.tensor_shape)).to("cpu")
-        m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
-        c = convert(
-            m_jit,
-            inputs=[TensorType(name="x", shape=i.shape)],
-            outputs=[TensorType(name="z")],
-        )
-        return c  # coremltools.models.MLModel
+        model = self.to("cpu").eval()
+        return model, i
+
+    def to_coreml(self, **convert_kwargs: object) -> object:
+        return Export.to_coreml(self, "x", "z")
 
 
 # ========================================================================= #
@@ -340,13 +465,9 @@ class ConvNeXtV2Decoder(_Base):
             self.unpool = nn.Sequential(
                 Reshape((-1, z_size // self.internal_num, *self.internal_hw)),
                 # --> Bx<z_size//(6*4)>x6x4
-                Norm2d(
-                    z_size // self.internal_num, eps=1e-6, data_format="channels_first"
-                ),
+                Norm2d(z_size // self.internal_num, eps=1e-6, data_format="channels_first"),
                 Act() if "+act" in head_type else nn.Identity(),
-                nn.ConvTranspose2d(
-                    z_size // self.internal_num, dims[-1], kernel_size=1, stride=1
-                ),
+                nn.ConvTranspose2d(z_size // self.internal_num, dims[-1], kernel_size=1, stride=1),
             )
         elif head_type in ("pool+linear", "pool+mlp"):
             if "+mlp" in head_type:
@@ -357,13 +478,9 @@ class ConvNeXtV2Decoder(_Base):
             self.unpool = nn.Sequential(
                 Index((slice(None), slice(None), None, None)),  # arr[:, :, None, None]
                 # --> Bx[3]x1x1
-                Norm2d(
-                    dims[-1], eps=1e-6, data_format="channels_first"
-                ),  # extra, not in encoder
+                Norm2d(dims[-1], eps=1e-6, data_format="channels_first"),  # extra, not in encoder
                 # Act() if "+act" in head_type else nn.Identity(),
-                nn.ConvTranspose2d(
-                    dims[-1], dims[-1], kernel_size=self.internal_hw, stride=1
-                ),
+                nn.ConvTranspose2d(dims[-1], dims[-1], kernel_size=self.internal_hw, stride=1),
             )
         else:
             raise KeyError(f"head_type={head_type} not recognized")
@@ -413,18 +530,13 @@ class ConvNeXtV2Decoder(_Base):
             x = (x + 1) / 2
         return x
 
-    def to_coreml(self) -> MLModel:
-        from coremltools import TensorType, convert
-
+    def get_trace_items(self) -> tuple[ConvNeXtV2Decoder, torch.Tensor]:
         i = torch.randn((1, self.z_size)).to("cpu")
-        m_jit = torch.jit.trace(func=self.to("cpu").eval(), example_inputs=i)
-        input_shape = (self.z_size,)
-        c = convert(
-            m_jit,
-            inputs=[TensorType(name="z", shape=(1, *input_shape))],
-            outputs=[TensorType(name="x_hat")],
-        )
-        return c  # coremltools.models.MLModel
+        model = self.to("cpu").eval()
+        return model, i
+
+    def to_coreml(self, **convert_kwargs: object) -> object:
+        return Export.to_coreml(self, "z", "x_hat")
 
 
 # ========================================================================= #
@@ -490,6 +602,37 @@ class ConvNeXtV2Ae(_Base, AeBase):
         if self.decoder is None:
             raise RuntimeError(f"decoder is not enabled on: {self.__class__.__name__}")
         return [self.decoder(z)]
+
+    def save(
+        self,
+        base_path: str | Path,
+        fmt: Literal["coreml", "onnx", "tflite", "tfjs"],
+    ) -> tuple[Path | None, Path | None]:
+        base_path = Path(base_path)
+        # get paths
+        _exporters = {
+            "coreml": (lambda m, p: m.to_coreml().save(p), "mlpackage"),
+            "onnx": (lambda m, p: Export.to_onnx(m).save(p), "onnx"),
+            "tflite": (lambda m, p: Export.to_tflite(m).export(p), "tflite"),
+            "tfjs": (lambda m, p: Export.export_tfjs(m, p), "web_model"),
+            # TODO: https://github.com/PINTO0309/onnx2tf
+            # TODO: https://github.com/AlexanderLutsenko/nobuco
+        }
+        export_fn, suffix = _exporters[fmt]
+        # export encoder
+        encoder_path = None
+        if self.encoder is not None:
+            encoder_path = base_path.with_suffix(f".encoder.{suffix}")
+            export_fn(self.encoder, str(encoder_path))
+            print(f"Encoder exported to {encoder_path}")
+        # export decoder
+        decoder_path = None
+        if self.decoder is not None:
+            decoder_path = base_path.with_suffix(f".decoder.{suffix}")
+            export_fn(self.decoder, str(decoder_path))
+            print(f"Decoder exported to {decoder_path}")
+        # done!
+        return encoder_path, decoder_path
 
 
 # ========================================================================= #

@@ -1,5 +1,5 @@
-import { LitElement, html, css } from 'lit';
-import { StoreController } from '@nanostores/lit';
+import { LitElement, html, css } from "lit";
+import { StoreController } from "@nanostores/lit";
 import {
   $selectedDevice,
   $isStreaming,
@@ -8,13 +8,11 @@ import {
   $sendPeriodMs,
   populateDevices,
   $sendQuality,
-  $stats
-} from './util-store';
-import { wsSendBlob, wsCanSend } from './util-websocket';
-
+  $stats,
+} from "./util-store";
+import { wsSendBlob, wsCanSend } from "./util-websocket";
 
 class ComponentVideo extends LitElement {
-
   #selectedDeviceController = new StoreController(this, $selectedDevice);
   #isStreamingController = new StoreController(this, $isStreaming);
 
@@ -45,7 +43,7 @@ class ComponentVideo extends LitElement {
     super();
     this.currentStream = null;
     this.currentDeviceId = null;
-    this.readyPromise = new Promise(resolve => (this.resolveReady = resolve));
+    this.readyPromise = new Promise((resolve) => (this.resolveReady = resolve));
   }
 
   // OVERRIDES //
@@ -61,30 +59,32 @@ class ComponentVideo extends LitElement {
     this.stopStreamAndClearVideo();
   }
 
-firstUpdated() {
-  this.video = this.shadowRoot.getElementById('video') as HTMLVideoElement;
+  firstUpdated() {
+    this.video = this.shadowRoot.getElementById("video") as HTMLVideoElement;
 
-  // Existing listener for initial dimensions
-  this.video.addEventListener('loadedmetadata', () => {
-    $videoDimensions.set({
-      width: this.video.videoWidth,
-      height: this.video.videoHeight,
+    // Existing listener for initial dimensions
+    this.video.addEventListener("loadedmetadata", () => {
+      $videoDimensions.set({
+        width: this.video.videoWidth,
+        height: this.video.videoHeight,
+      });
+      if ($isStreaming.get()) {
+        this.video
+          .play()
+          .catch((e) => console.error("Failed to play video initially:", e));
+      }
     });
-    if ($isStreaming.get()) {
-      this.video.play().catch(e => console.error('Failed to play video initially:', e));
-    }
-  });
 
-  // New listener for dimension changes on rotation
-  this.video.addEventListener('resize', () => {
-    $videoDimensions.set({
-      width: this.video.videoWidth,
-      height: this.video.videoHeight,
+    // New listener for dimension changes on rotation
+    this.video.addEventListener("resize", () => {
+      $videoDimensions.set({
+        width: this.video.videoWidth,
+        height: this.video.videoHeight,
+      });
     });
-  });
 
-  this.resolveReady();
-}
+    this.resolveReady();
+  }
 
   async updated() {
     await this.manageStreamState();
@@ -94,13 +94,15 @@ firstUpdated() {
 
   async tryAutoStart() {
     try {
-      const storedDeviceId = localStorage.getItem('selectedDeviceId');
-      const constraints = {video: {
-        width: 640,
-        height: 480,
-        //   height: 720,
-        deviceId: undefined
-      }};
+      const storedDeviceId = localStorage.getItem("selectedDeviceId");
+      const constraints = {
+        video: {
+          width: 640,
+          height: 480,
+          //   height: 720,
+          deviceId: undefined,
+        },
+      };
       if (storedDeviceId) {
         constraints.video.deviceId = { exact: storedDeviceId };
       }
@@ -108,7 +110,7 @@ firstUpdated() {
       this.currentStream = stream;
       const deviceId = stream.getVideoTracks()[0].getSettings().deviceId;
       $selectedDevice.set(deviceId);
-      localStorage.setItem('selectedDeviceId', deviceId);
+      localStorage.setItem("selectedDeviceId", deviceId);
       await populateDevices();
       $isStreaming.set(true); // Indicate streaming should start
       await this.readyPromise;
@@ -117,9 +119,9 @@ firstUpdated() {
       // Video play is handled by loadedmetadata or manageStreamState
       this.startSendingFrames(); // Start sending frames now that stream is ready
     } catch (error) {
-      console.error('Auto-start failed:', error);
+      console.error("Auto-start failed:", error);
       $isStreaming.set(false);
-      $status.set('Camera access failed: ' + error.message);
+      $status.set("Camera access failed: " + error.message);
     }
   }
 
@@ -135,14 +137,20 @@ firstUpdated() {
         await this.startStream(targetDeviceId); // This sets srcObject, plays, and starts sending
       }
       // If stream IS running and matches the target device, but video is paused (e.g., after clicking Start again)
-      else if (this.currentStream && targetDeviceId === this.currentDeviceId && this.video.paused) {
-         this.video.play().catch(e => console.error('Failed to play video on resume:', e));
-         this.startSendingFrames(); // Ensure frame sending restarts
+      else if (
+        this.currentStream &&
+        targetDeviceId === this.currentDeviceId &&
+        this.video.paused
+      ) {
+        this.video
+          .play()
+          .catch((e) => console.error("Failed to play video on resume:", e));
+        this.startSendingFrames(); // Ensure frame sending restarts
       }
     } else {
       // Pause if the stream is running and video is not already paused
       if (this.currentStream && !this.video.paused) {
-         this.pauseVideoAndSending();
+        this.pauseVideoAndSending();
       }
     }
   }
@@ -153,18 +161,22 @@ firstUpdated() {
       this.stopStreamAndClearVideo();
     }
     try {
-      const constraints = { video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
+      const constraints = {
+        video: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
           width: 640,
           height: 480,
           // height: 720,
-        }
+        },
       };
-      this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-      const actualDeviceId = this.currentStream.getVideoTracks()[0].getSettings().deviceId;
+      this.currentStream =
+        await navigator.mediaDevices.getUserMedia(constraints);
+      const actualDeviceId = this.currentStream
+        .getVideoTracks()[0]
+        .getSettings().deviceId;
 
       if (actualDeviceId !== deviceId) {
-        localStorage.setItem('selectedDeviceId', actualDeviceId);
+        localStorage.setItem("selectedDeviceId", actualDeviceId);
         $selectedDevice.set(actualDeviceId); // Update store if deviceId changed
       }
 
@@ -175,14 +187,18 @@ firstUpdated() {
       // Video play is handled by the 'loadedmetadata' event listener the first time,
       // otherwise we need to play it here if metadata is already loaded.
       if (this.video.readyState >= this.video.HAVE_METADATA) {
-        this.video.play().catch(e => console.error('Failed to play video on startStream:', e));
+        this.video
+          .play()
+          .catch((e) =>
+            console.error("Failed to play video on startStream:", e),
+          );
       }
 
       this.startSendingFrames(); // Start sending frames
       await populateDevices(); // Refresh device list potentially with labels
     } catch (error) {
-      console.error('Failed to start stream:', error);
-      $status.set('Failed to start camera: ' + error.message);
+      console.error("Failed to start stream:", error);
+      $status.set("Failed to start camera: " + error.message);
       $isStreaming.set(false); // Set streaming to false on error
       this.stopStreamAndClearVideo(); // Clean up on error
     }
@@ -206,7 +222,7 @@ firstUpdated() {
     this.pauseVideoAndSending(); // Ensure sending stops and video is paused first
 
     if (this.currentStream) {
-      this.currentStream.getTracks().forEach(track => track.stop());
+      this.currentStream.getTracks().forEach((track) => track.stop());
       console.log("MediaStream tracks stopped.");
     }
     this.currentStream = null;
@@ -228,10 +244,10 @@ firstUpdated() {
     console.log("Starting frame sending loop.");
     // Create canvas once if it doesn't exist or dimensions changed (though dimensions are fixed here)
     // For simplicity, recreating each time startSendingFrames is called. Could optimize.
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = 640;
     canvas.height = 480;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     // Start the recursive sending process
     this.sendingActive = true;
     this.sendNextFrame(canvas, ctx);
@@ -254,18 +270,17 @@ firstUpdated() {
 
     // Schedule the next frame capture and send
     this.sendTimeoutId = setTimeout(() => {
-      const shouldSend = (
-        this.sendingActive
-        && $isStreaming.get()
-        && wsCanSend()
-        && this.video
-        && this.video.readyState >= this.video.HAVE_CURRENT_DATA
-      );
+      const shouldSend =
+        this.sendingActive &&
+        $isStreaming.get() &&
+        wsCanSend() &&
+        this.video &&
+        this.video.readyState >= this.video.HAVE_CURRENT_DATA;
       // 1. send frame
       if (shouldSend) {
         try {
           ctx.drawImage(this.video, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob(wsSendBlob, 'image/jpeg', $sendQuality.get());
+          canvas.toBlob(wsSendBlob, "image/jpeg", $sendQuality.get());
         } catch (e) {
           console.error("Error capturing or sending frame:", e); // TODO: could stop?
         }
@@ -285,4 +300,4 @@ firstUpdated() {
   }
 }
 
-customElements.define('video-container', ComponentVideo);
+customElements.define("video-container", ComponentVideo);

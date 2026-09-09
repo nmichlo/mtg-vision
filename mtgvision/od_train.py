@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from ultralytics import YOLO, settings
+from ultralytics import YOLO
+from ultralytics import settings
 
 import mtgvision
 

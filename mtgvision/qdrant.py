@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
 
 import qdrant_client
-from qdrant_client.http.models import Distance, ScoredPoint, VectorParams
+from qdrant_client.conversions.common_types import PointId
+from qdrant_client.http.models import Distance
+from qdrant_client.http.models import ScoredPoint
+from qdrant_client.http.models import VectorParams
 from typing_extensions import TypeIs
 
 from mtgvision.util.json import Json
@@ -49,6 +53,55 @@ class VectorStoreQdrant:
 
     def drop_collection(self) -> None:
         self.client.delete_collection(self._COLLECTION)
+
+    def count(self) -> int:
+        return self.client.count(
+            collection_name=self._COLLECTION,
+        ).count
+
+    def scroll_batches(
+        self,
+        *,
+        batch_size: int = 1000,
+        with_vectors: bool = False,
+        with_payload: bool = True,
+        offset: str | None = None,
+    ) -> Iterator[list[QdrantPoint]]:
+        cursor: PointId | None = offset
+        while True:
+            [results, cursor] = self.client.scroll(
+                collection_name=self._COLLECTION,
+                limit=batch_size,
+                offset=cursor,
+                with_vectors=with_vectors,
+                with_payload=with_payload,
+            )
+            if not results or cursor is None:
+                break
+            yield [
+                QdrantPoint(
+                    id=str(point.id),
+                    vector=_as_flat_vector(point.vector),
+                    payload=point.payload,
+                )
+                for point in results
+            ]
+
+    def scroll(
+        self,
+        *,
+        batch_size: int = 1000,
+        with_vectors: bool = False,
+        with_payload: bool = True,
+        offset: str | None = None,
+    ) -> Iterator[QdrantPoint]:
+        for batch in self.scroll_batches(
+            batch_size=batch_size,
+            with_vectors=with_vectors,
+            with_payload=with_payload,
+            offset=offset,
+        ):
+            yield from batch
 
     def retrieve(
         self,

@@ -29,8 +29,6 @@ dependencies = [
     "mtgdata[convert]~=0.3.0",
     "ultralytics~=8.3.80",
     "wandb",
-    "mlx",
-    "mlx-data",
     "torch",
     "torchvision",
     "coremltools",
@@ -42,7 +40,19 @@ dependencies = [
     "shapely",
     "fastapi[standard]",
     "qdrant-client",
-    "norfair",
+    # norfair-rs: rust port of norfair. upstream norfair pins numpy<2, which
+    # conflicts with the jax that litert-torch needs.
+    "norfair-rs",
+    # onnx export
+    "onnxscript",
+    "pyinstrument",
+    "onnxconverter-common",
+    # ai-edge-torch is a deprecation shim as of 0.9; litert-torch is the package
+    "litert-torch",
+    # embeddings
+    "usearch",
+    "faiss-cpu",
+    "onnxruntime",
 ]
 
 [dependency-groups]
@@ -57,6 +67,7 @@ dev = [
 # ========================================================================= #
 
 [tool.ruff]
+line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
@@ -73,12 +84,33 @@ select = [
 ]
 ignore = [
     "E501",   # line length is handled by the formatter
-    "UP047",  # PEP 695 generics
 ]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"typing.Any".msg = "banned -- use a precise type or a TypeVar"
-"typing.cast".msg = "banned -- narrow with isinstance/assert, or fix the real type"
+"typing.Any".msg = "Any disables type checking wherever it appears. Use a precise type, a TypeVar, a Protocol, or a dedicated sentinel class."
+"typing.cast".msg = "cast asserts a type the checker cannot verify. Narrow with isinstance/assert, or fix the annotation."
+
+[tool.ruff.lint.isort]
+# previously `isort --profile=black --force-single-line-imports`
+force-single-line = true
+
+[tool.ruff.lint.per-file-ignores]
+# `__init__.py` files are re-export hubs -- unsorted and "unused" imports are the point.
+"**/__init__.py" = ["F401", "I001"]
+
+# ========================================================================= #
+# TY                                                                        #
+# ========================================================================= #
+
+# ty runs as a pre-commit hook and gates CI. it needs the dependencies
+# resolvable and auto-detects `.venv`, so create one first:
+#     uv sync && uvx ty check
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+exclude = ["data", "www"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

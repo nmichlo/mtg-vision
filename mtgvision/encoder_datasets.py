@@ -34,19 +34,20 @@ from __future__ import annotations
 import random
 import uuid
 from collections import defaultdict
-from collections.abc import Hashable, Iterable, Iterator
+from collections.abc import Hashable
+from collections.abc import Iterable
+from collections.abc import Iterator
 from math import ceil
 from pathlib import Path
-from typing import (
-    Literal,
-    TypeVar,
-)
+from typing import Literal
 
 import cv2
 import numpy as np
 from filelock import FileLock
-from mtgdata import ScryfallDataset, ScryfallImageType
-from mtgdata.scryfall import ScryfallBulkType, ScryfallCardFace
+from mtgdata import ScryfallDataset
+from mtgdata import ScryfallImageType
+from mtgdata.scryfall import ScryfallBulkType
+from mtgdata.scryfall import ScryfallCardFace
 from tqdm import tqdm
 
 import mtgvision.util.files as ufls
@@ -79,12 +80,8 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def rotate_bounded(
-        img: np.ndarray, deg_min: float = 0, deg_max: float = 360
-    ) -> np.ndarray:
-        return uimg.rotate_bounded(
-            img, deg_min + np.random.random() * (deg_max - deg_min)
-        )
+    def rotate_bounded(img: np.ndarray, deg_min: float = 0, deg_max: float = 360) -> np.ndarray:
+        return uimg.rotate_bounded(img, deg_min + np.random.random() * (deg_max - deg_min))
 
     @staticmethod
     @ensure_float32
@@ -93,19 +90,12 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def warp(
-        img: np.ndarray, warp_ratio: float = 0.3, warp_ratio_min: float = -0.25
-    ) -> np.ndarray:
+    def warp(img: np.ndarray, warp_ratio: float = 0.3, warp_ratio_min: float = -0.25) -> np.ndarray:
         # [top left, top right, bottom left, bottom right]
         (h, w) = (img.shape[0] - 1, img.shape[1] - 1)
         src_pts = np.asarray([(0, 0), (0, w), (h, 0), (h, w)], dtype=np.float32)
-        ran = warp_ratio_min + np.random.rand(4, 2) * (
-            abs(warp_ratio - warp_ratio_min) * 0.5
-        )
-        dst_pts = (
-            ran * np.asarray([(h, w), (h, -w), (-h, w), (-h, -w)], dtype=np.float32)
-            + src_pts
-        )
+        ran = warp_ratio_min + np.random.rand(4, 2) * (abs(warp_ratio - warp_ratio_min) * 0.5)
+        dst_pts = ran * np.asarray([(h, w), (h, -w), (-h, w), (-h, -w)], dtype=np.float32) + src_pts
         dst_pts = np.asarray(dst_pts, dtype=np.float32)
         # transform matrix
         transform = cv2.getPerspectiveTransform(src_pts, dst_pts)
@@ -114,9 +104,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def warp_inv(
-        img: np.ndarray, warp_ratio: float = 0.5, warp_ratio_min: float = 0.25
-    ) -> np.ndarray:
+    def warp_inv(img: np.ndarray, warp_ratio: float = 0.5, warp_ratio_min: float = 0.25) -> np.ndarray:
         return Mutate.warp(img, warp_ratio=-warp_ratio, warp_ratio_min=-warp_ratio_min)
 
     @staticmethod
@@ -190,9 +178,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def brightness_contrast(
-        img: np.ndarray, brightness: float = 0.2, contrast: float = 0.2
-    ) -> np.ndarray:
+    def brightness_contrast(img: np.ndarray, brightness: float = 0.2, contrast: float = 0.2) -> np.ndarray:
         alpha = 1.0 + np.random.uniform(-contrast, contrast)
         beta = np.random.uniform(-brightness, brightness)
         img = alpha * img + beta
@@ -227,17 +213,13 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def gaussian_noise(
-        img: np.ndarray, mean: float = 0, sigma: float = 0.25
-    ) -> np.ndarray:
+    def gaussian_noise(img: np.ndarray, mean: float = 0, sigma: float = 0.25) -> np.ndarray:
         noise = np.random.normal(mean, sigma, img.shape).astype(np.float32)
         return uimg.img_clip(img + noise)
 
     @staticmethod
     @ensure_float32
-    def salt_pepper_noise(
-        img: np.ndarray, salt_prob: float = 0.01, pepper_prob: float = 0.01
-    ) -> np.ndarray:
+    def salt_pepper_noise(img: np.ndarray, salt_prob: float = 0.01, pepper_prob: float = 0.01) -> np.ndarray:
         noisy = img.copy()
         num_salt = np.ceil(salt_prob * img.size)
         num_pepper = np.ceil(pepper_prob * img.size)
@@ -268,9 +250,7 @@ class Mutate:
 
     @staticmethod
     @ensure_float32
-    def cutout(
-        img: np.ndarray, num_holes: int = 8, max_h_size: int = 8, max_w_size: int = 8
-    ) -> np.ndarray:
+    def cutout(img: np.ndarray, num_holes: int = 8, max_h_size: int = 8, max_w_size: int = 8) -> np.ndarray:
         h, w, _ = img.shape
         for _ in range(num_holes):
             y = np.random.randint(h)
@@ -469,9 +449,7 @@ class IlsvrcImages:
         if not root.is_dir():
             print(self._get_download_message(root, subdir))
         self._paths: list[str] = sorted(ufls.get_image_paths(root, prefixed=True))
-        assert len(self._paths) > 0, (
-            f"Dataset is empty. Please download the dataset. {root}"
-        )
+        assert len(self._paths) > 0, f"Dataset is empty. Please download the dataset. {root}"
 
     def _load_image(self, path: str) -> np.ndarray:
         return uimg.imread_float(path)
@@ -520,10 +498,8 @@ class CocoValImages(IlsvrcImages):
 SizeHW = tuple[int, int]
 PathOrImg = str | np.ndarray
 
-H = TypeVar("H", bound=Hashable)
 
-
-def idx_map(items: Iterable[H]) -> dict[H, int]:
+def idx_map[H: Hashable](items: Iterable[H]) -> dict[H, int]:
     """Generate labels for a sequence of items."""
     labels: dict[H, int] = {}
     for i, item in enumerate(sorted(set(items))):
@@ -622,15 +598,11 @@ class SyntheticBgFgMtgImages:
         _, img = self.get_card_and_image_by_id(id_)
         return img
 
-    def get_card_and_image_by_id(
-        self, id_: uuid.UUID | str
-    ) -> tuple[ScryfallCardFace, np.ndarray]:
+    def get_card_and_image_by_id(self, id_: uuid.UUID | str) -> tuple[ScryfallCardFace, np.ndarray]:
         card = self.get_card_by_id(id_)
         return card, self._load_card_image(card)
 
-    def _get_group(
-        self, card: ScryfallCardFace, mode: Literal["name", "set"]
-    ) -> dict[str, ScryfallCardFace]:
+    def _get_group(self, card: ScryfallCardFace, mode: Literal["name", "set"]) -> dict[str, ScryfallCardFace]:
         if mode == "name":
             return self._cards_by_name[card.name]
         elif mode == "set":
@@ -638,9 +610,7 @@ class SyntheticBgFgMtgImages:
         else:
             raise KeyError
 
-    def get_similar_card(
-        self, id_: uuid.UUID | str, mode: Literal["name", "set"] = "name"
-    ) -> ScryfallCardFace | None:
+    def get_similar_card(self, id_: uuid.UUID | str, mode: Literal["name", "set"] = "name") -> ScryfallCardFace | None:
         card = self.get_card_by_id(id_)
         group = self._get_group(card, mode=mode)
         assert card.id in group
@@ -698,9 +668,7 @@ class SyntheticBgFgMtgImages:
             Mutate.tint,
             None,  # Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul
         ),
-        uran.ApplyChoice(
-            Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
-        ),
+        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None),
         # uran.ApplyChoice(Mutate.color_jitter, None),
     )
     _RAN_FG = uran.ApplyOrdered(
@@ -715,9 +683,7 @@ class SyntheticBgFgMtgImages:
             Mutate.tint,
             None,  # Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul
         ),
-        uran.ApplyChoice(
-            Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
-        ),
+        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None),
     )
     _RAN_VRTL = uran.ApplyShuffled(
         uran.ApplyChoice(Mutate.downscale_upscale, None, None, None),
@@ -746,9 +712,7 @@ class SyntheticBgFgMtgImages:
             Mutate.tint,
             None,  # Mutate.rgb_jitter_add, Mutate.rgb_jitter_mul
         ),
-        uran.ApplyChoice(
-            Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None
-        ),
+        uran.ApplyChoice(Mutate.fade_black, Mutate.fade_white, Mutate.brightness_contrast, None),
         # uran.ApplyChoice(Mutate.random_erasing, None),
     )
 
@@ -759,29 +723,19 @@ class SyntheticBgFgMtgImages:
         size_hw: SizeHW | None = None,
         half_upsidedown: bool = False,
     ) -> np.ndarray:
-        card = (
-            uimg.imread_float(path_or_img)
-            if isinstance(path_or_img, str)
-            else path_or_img
-        )
+        card = uimg.imread_float(path_or_img) if isinstance(path_or_img, str) else path_or_img
         ret = uimg.remove_border_resized(
             img=card,
             border_width=ceil(max(0.02 * card.shape[0], 0.02 * card.shape[1])),
             size_hw=size_hw,
         )
-        cropped = (
-            uran.ApplyChoice(Mutate.upsidedown, None)(ret) if half_upsidedown else ret
-        )
+        cropped = uran.ApplyChoice(Mutate.upsidedown, None)(ret) if half_upsidedown else ret
         return cropped
 
     @classmethod
     @ensure_float32
     def make_masked(cls, path_or_img: PathOrImg) -> np.ndarray:
-        card = (
-            uimg.imread_float(path_or_img)
-            if isinstance(path_or_img, str)
-            else path_or_img
-        )
+        card = uimg.imread_float(path_or_img) if isinstance(path_or_img, str) else path_or_img
         card_h, card_w = card.shape[:2]
         mask = uimg.round_rect_mask((card_h, card_w), radius_ratio=0.05)
         ret = cv2.merge(
@@ -797,11 +751,7 @@ class SyntheticBgFgMtgImages:
     @classmethod
     @ensure_float32
     def make_bg(cls, bg_path_or_img: PathOrImg, size_hw: SizeHW) -> np.ndarray:
-        bg = (
-            uimg.imread_float(bg_path_or_img)
-            if isinstance(bg_path_or_img, str)
-            else bg_path_or_img
-        )
+        bg = uimg.imread_float(bg_path_or_img) if isinstance(bg_path_or_img, str) else bg_path_or_img
         bg = cls._RAN_BG(bg)  # augments may gen values out of range
         bg = uimg.crop_to_size(bg, size_hw)
         return bg
@@ -815,14 +765,8 @@ class SyntheticBgFgMtgImages:
         size_hw: SizeHW,
         half_upsidedown: bool = False,
     ) -> np.ndarray:
-        card = (
-            uimg.imread_float(card_path_or_img)
-            if isinstance(card_path_or_img, str)
-            else card_path_or_img
-        )
-        card = (
-            uran.ApplyChoice(Mutate.upsidedown, None)(card) if half_upsidedown else card
-        )
+        card = uimg.imread_float(card_path_or_img) if isinstance(card_path_or_img, str) else card_path_or_img
+        card = uran.ApplyChoice(Mutate.upsidedown, None)(card) if half_upsidedown else card
         # fg - card
         fg = cls.make_masked(card)
         fg = uimg.crop_to_size(fg, size_hw, pad=True)
@@ -844,15 +788,9 @@ class SyntheticBgFgMtgImages:
         y_size_hw: SizeHW,
         half_upsidedown: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
-        card = (
-            uimg.imread_float(card_path_or_img)
-            if isinstance(card_path_or_img, str)
-            else card_path_or_img
-        )
+        card = uimg.imread_float(card_path_or_img) if isinstance(card_path_or_img, str) else card_path_or_img
         # only inputs are flipped
-        x = cls.make_virtual(
-            card, bg_path_or_img, size_hw=x_size_hw, half_upsidedown=half_upsidedown
-        )
+        x = cls.make_virtual(card, bg_path_or_img, size_hw=x_size_hw, half_upsidedown=half_upsidedown)
         y = cls.make_cropped(card, size_hw=y_size_hw)
         return x, y
 
@@ -874,9 +812,7 @@ if __name__ == "__main__":
     for i in tqdm(range(10)):
         _o = mtg.ran()
         _l = ilsvrc.ran()
-        x, y = SyntheticBgFgMtgImages.make_virtual_pair(
-            _o, _l, (192, 128), (192, 128), True
-        )
+        x, y = SyntheticBgFgMtgImages.make_virtual_pair(_o, _l, (192, 128), (192, 128), True)
 
     # 100%|██████████| 1000/1000 [00:10<00:00, 94.77it/s]
     for i in tqdm(range(1000)):
@@ -884,9 +820,7 @@ if __name__ == "__main__":
         # _o = mtg.get_image_by_id('9dd3c43f-c5ff-42ee-a220-82aa7aef88e7')
         _l = ilsvrc.ran()
 
-        x, y = SyntheticBgFgMtgImages.make_virtual_pair(
-            _o, _l, (192, 128), (192, 128), True
-        )
+        x, y = SyntheticBgFgMtgImages.make_virtual_pair(_o, _l, (192, 128), (192, 128), True)
 
         uimg.imshow_loop(x, "asdf")
         uimg.imshow_loop(y, "asdf")

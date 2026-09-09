@@ -31,9 +31,7 @@ from os import PathLike
 # ========================================================================= #
 
 
-def get_image_paths(
-    folder: str | PathLike, extensions: list[str] | None = None, prefixed: bool = False
-) -> list[str]:
+def get_image_paths(folder: str | PathLike, extensions: list[str] | None = None, prefixed: bool = False) -> list[str]:
     if not extensions:
         extensions = [".jpg", ".png", ".jpeg"]
     images = []

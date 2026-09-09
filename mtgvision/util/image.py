@@ -30,7 +30,10 @@ import functools
 from collections.abc import Callable
 from math import ceil
 from os import PathLike
-from typing import Literal, ParamSpec, TypeVar, overload
+from typing import Literal
+from typing import ParamSpec
+from typing import TypeVar
+from typing import overload
 
 import cv2
 import numpy as np
@@ -47,7 +50,7 @@ R = TypeVar("R")
 
 
 @overload
-def ensure_float32(fn: Callable[P, R]) -> Callable[P, R]: ...
+def ensure_float32[**P, R](fn: Callable[P, R]) -> Callable[P, R]: ...
 
 
 @overload
@@ -56,7 +59,7 @@ def ensure_float32(
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
 
-def ensure_float32(
+def ensure_float32[**P, R](
     fn: Callable[P, R] | None = None, *, strict: bool = False, disable: bool = True
 ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """
@@ -71,13 +74,9 @@ def ensure_float32(
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             result = fn(*args, **kwargs)
             if not isinstance(result, np.ndarray):
-                raise Exception(
-                    f"Function {fn} did not return a numpy array, got: {type(result)}"
-                )
+                raise Exception(f"Function {fn} did not return a numpy array, got: {type(result)}")
             if result.dtype != np.float32:
-                raise Exception(
-                    f"Function {fn} did not return a numpy array of type {np.float32}, got: {result.dtype}"
-                )
+                raise Exception(f"Function {fn} did not return a numpy array of type {np.float32}, got: {result.dtype}")
             if strict:
                 if np.min(result) < 0:
                     msg = f"Function {fn} returned a numpy array with negative values, got: {np.min(result)}"
@@ -109,9 +108,7 @@ def asrt_float(x: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
 # ========================================================================= #
 
 
-def imwrite(
-    path: str | PathLike, img: npt.NDArray[np.floating] | npt.NDArray[np.integer]
-) -> None:
+def imwrite(path: str | PathLike, img: npt.NDArray[np.floating] | npt.NDArray[np.integer]) -> None:
     """
     Save an image to disk, support both float images in range [0, 1]
     and int or uint images in range [0, 255]
@@ -133,9 +130,7 @@ def imread_float(path: str | PathLike) -> npt.NDArray[np.float32]:
     return img_float32(img)
 
 
-def imshow(
-    image: np.ndarray, window_name: str = "image", scale: float | None = 1
-) -> None:
+def imshow(image: np.ndarray, window_name: str = "image", scale: float | None = 1) -> None:
     """
     Display an image in a window temporarily, this should be used
     with additional wait logic to keep the window open.
@@ -147,9 +142,7 @@ def imshow(
     cv2.moveWindow(window_name, 100, 100)
 
 
-def imshow_loop(
-    image: np.ndarray, window_name: str = "image", scale: float = 1, delay: int = 100
-) -> None:
+def imshow_loop(image: np.ndarray, window_name: str = "image", scale: float = 1, delay: int = 100) -> None:
     """
     Display an image in a window, the window will stay open until the user
     presses the escape key or closes the window.
@@ -162,9 +155,7 @@ def imshow_loop(
 
 def imwait(delay: int = 100, window_name: str | None = None) -> bool:
     k = cv2.waitKey(delay)
-    if (k == 27) or (
-        window_name and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1
-    ):
+    if (k == 27) or (window_name and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1):
         cv2.destroyAllWindows()
         return True
     return False
@@ -304,9 +295,7 @@ def rgb_mask_over_rgb(
         )
     )
     alpha = 1 - fg_mask
-    bg = cv2.merge(
-        (bg_rgb[:, :, 0] * alpha, bg_rgb[:, :, 1] * alpha, bg_rgb[:, :, 2] * alpha)
-    )
+    bg = cv2.merge((bg_rgb[:, :, 0] * alpha, bg_rgb[:, :, 1] * alpha, bg_rgb[:, :, 2] * alpha))
     ret = img_clip(bg + fg)
     return ret
 
@@ -340,9 +329,7 @@ def flip(img: np.ndarray, horr: bool = True, vert: bool = True) -> np.ndarray:
 
 
 @ensure_float32
-def resize(
-    img: np.ndarray, size_hw: tuple[int, int], shrink: bool = True
-) -> np.ndarray:
+def resize(img: np.ndarray, size_hw: tuple[int, int], shrink: bool = True) -> np.ndarray:
     """Resize an image to a new size."""
     h, w = size_hw
     # OpenCV is W*H not H*W
@@ -356,9 +343,33 @@ def resize(
 
 
 @ensure_float32
-def remove_border_resized(
-    img: np.ndarray, border_width: int, size_hw: tuple[int, int] | None = None
-) -> np.ndarray:
+def pad_to_aspect_and_resize(
+    img: np.ndarray,
+    size_hw: tuple[int, int],
+) -> npt.NDArray[np.float32]:
+    h, w = size_hw
+    ih, iw = img.shape[:2]
+    # pad to target aspect ratio
+    if ih / iw > h / w:
+        # pad height
+        pad_h = int((ih * w / h - iw) / 2)
+        img = cv2.copyMakeBorder(img, pad_h, pad_h, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    else:
+        # pad width
+        pad_w = int((iw * h / w - ih) / 2)
+        img = cv2.copyMakeBorder(img, 0, 0, pad_w, pad_w, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    # resize to target size
+    img = cv2.resize(
+        img,
+        (w, h),
+        interpolation=cv2.INTER_AREA,
+    )
+    # can result in values > 1 ?????????
+    return img_clip(img)
+
+
+@ensure_float32
+def remove_border_resized(img: np.ndarray, border_width: int, size_hw: tuple[int, int] | None = None) -> np.ndarray:
     """Remove a border of specified size (crop) from an image and resize it."""
     (ih, iw) = img.shape[:2]
     crop = img[border_width : ih - border_width, border_width : iw - border_width, :]
@@ -368,9 +379,7 @@ def remove_border_resized(
 
 
 @ensure_float32
-def crop_to_size(
-    img: np.ndarray, size_hw: tuple[int, int], pad: bool = False
-) -> np.ndarray:
+def crop_to_size(img: np.ndarray, size_hw: tuple[int, int], pad: bool = False) -> np.ndarray:
     """
     Crop an image to a new size, if pad is True then the image is padded
     if the new size is smaller than the original. Otherwise, the image is
@@ -425,9 +434,7 @@ def rotate_bounded(img: np.ndarray, deg: float) -> np.ndarray:
 
 
 @ensure_float32
-def round_rect_mask(
-    size_hw: tuple[int, int], radius: int | None = None, radius_ratio: float = 0.045
-) -> np.ndarray:
+def round_rect_mask(size_hw: tuple[int, int], radius: int | None = None, radius_ratio: float = 0.045) -> np.ndarray:
     """
     Create a mask with a rounded edges.
     """
@@ -476,9 +483,7 @@ def noise_gaussian(img: np.ndarray, mean: float = 0, var: float = 0.5) -> np.nda
 
 
 @ensure_float32
-def noise_salt_pepper(
-    img: np.ndarray, strength: float = 0.1, svp: float = 0.5
-) -> np.ndarray:
+def noise_salt_pepper(img: np.ndarray, strength: float = 0.1, svp: float = 0.5) -> np.ndarray:
     """Add salt and pepper noise to an image."""
     out = np.copy(asrt_float(img))
     if img.shape[2] > 3:
@@ -498,9 +503,7 @@ def noise_salt_pepper(
 
 
 @ensure_float32
-def noise_poisson(
-    img: np.ndarray, peak: float = 0.1, amount: float = 0.25
-) -> np.ndarray:
+def noise_poisson(img: np.ndarray, peak: float = 0.1, amount: float = 0.25) -> np.ndarray:
     """Add poisson noise to an image."""
     img = img_clip(asrt_float(img))
     noise = np.zeros_like(img)

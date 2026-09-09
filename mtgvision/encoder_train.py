@@ -13,9 +13,13 @@ import sys
 import uuid
 import warnings
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable
+from collections.abc import Iterator
+from collections.abc import Mapping
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
+from typing import TypedDict
 
 import kornia as K
 import matplotlib.pyplot as plt
@@ -28,19 +32,20 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import wandb
-from mtgdata import ScryfallBulkType, ScryfallImageType
+from mtgdata import ScryfallBulkType
+from mtgdata import ScryfallImageType
 from mtgdata.scryfall import ScryfallCardFace
-from pytorch_lightning.callbacks import (
-    Callback,
-    ModelCheckpoint,
-)
+from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.compile import from_compiled
 from torch._dynamo import OptimizedModule
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader
+from torch.utils.data import IterableDataset
 
 import mtgvision.models.convnextv2ae as cnv2ae
-from mtgvision.encoder_datasets import IlsvrcImages, SyntheticBgFgMtgImages
+from mtgvision.encoder_datasets import IlsvrcImages
+from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.util.image import img_clip
 from mtgvision.util.json import Json
 from mtgvision.util.random import seed_all
@@ -120,9 +125,7 @@ class RanMtgEncDecDataset(IterableDataset[BatchHintTensor]):
         self.targets = targets
         self.x_size_hw = x_size_hw
         self.y_size_hw = y_size_hw
-        self.mtg = SyntheticBgFgMtgImages(
-            img_type=ScryfallImageType.small, predownload=predownload
-        )
+        self.mtg = SyntheticBgFgMtgImages(img_type=ScryfallImageType.small, predownload=predownload)
         self.ilsvrc = IlsvrcImages()
         self.half_upsidedown = half_upsidedown
         self.target_is_input_prob = target_is_input_prob
@@ -194,9 +197,7 @@ class RanMtgEncDecDataset(IterableDataset[BatchHintTensor]):
         y = SyntheticBgFgMtgImages.make_cropped(card_img, size_hw=self.y_size_hw)
         return y
 
-    def __make_x__(
-        self, card_img: np.ndarray, bg: np.ndarray, target_is_input_prob: float | None
-    ) -> np.ndarray:
+    def __make_x__(self, card_img: np.ndarray, bg: np.ndarray, target_is_input_prob: float | None) -> np.ndarray:
         if random.random() < (target_is_input_prob or self.target_is_input_prob):
             x = SyntheticBgFgMtgImages.make_cropped(card_img, size_hw=self.x_size_hw)
         else:
@@ -259,8 +260,7 @@ class RanMtgEncDecDataset(IterableDataset[BatchHintTensor]):
         return cls(
             default_batch_size=hparams.batch_size,
             predownload=hparams.force_download,
-            paired=hparams.loss_contrastive is not None
-            or hparams.loss_set_contrastive is not None,
+            paired=hparams.loss_contrastive is not None or hparams.loss_set_contrastive is not None,
             targets=hparams.loss_recon is not None,
             x_size_hw=hparams.x_size_hw,
             y_size_hw=hparams.y_size_hw,
@@ -288,9 +288,7 @@ class _SkipFirstOptimizerLoadState(torch.optim.Optimizer):
     def load_state_dict(self, state_dict: dict[str, object]) -> None:
         if self._skip_next_load_state:
             self._skip_next_load_state = False
-            print(
-                "Loading state dict... SKIPPED!, resetting load_state_dict to default."
-            )
+            print("Loading state dict... SKIPPED!, resetting load_state_dict to default.")
             return
         super().load_state_dict(state_dict)
 
@@ -317,6 +315,14 @@ class MtgVisionEncoder(pl.LightningModule):
         super().__init__()
         config = Config(**config).model_dump()  # add in missing defaults
         self.save_hyperparameters(config)
+
+    @property
+    def has_encoder(self) -> bool:
+        return self.model.encoder is not None
+
+    @property
+    def has_decoder(self) -> bool:
+        return self.hparams.loss_recon is not None and self.model.decoder is not None
 
     def configure_model(self) -> None:
         model_fn = _MODELS[self.hparams.model_name]
@@ -351,15 +357,9 @@ class MtgVisionEncoder(pl.LightningModule):
             "ssim5": K.losses.SSIMLoss(5),
             "ssim7": K.losses.SSIMLoss(7),
             "ssim9": K.losses.SSIMLoss(9),
-            "ssim5+mse": lambda x, y: (
-                K.losses.ssim_loss(x, y, 5) * 0.5 + F.mse_loss(x, y) * 0.5
-            ),
-            "ssim5+l1": lambda x, y: (
-                K.losses.ssim_loss(x, y, 5) * 0.5 + F.l1_loss(x, y) * 0.5
-            ),
-            "ssim7+l1": lambda x, y: (
-                K.losses.ssim_loss(x, y, 7) * 0.5 + F.l1_loss(x, y) * 0.5
-            ),
+            "ssim5+mse": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5 + F.mse_loss(x, y) * 0.5,
+            "ssim5+l1": lambda x, y: K.losses.ssim_loss(x, y, 5) * 0.5 + F.l1_loss(x, y) * 0.5,
+            "ssim7+l1": lambda x, y: K.losses.ssim_loss(x, y, 7) * 0.5 + F.l1_loss(x, y) * 0.5,
             "ms_ssim": K.losses.MS_SSIMLoss(),
         }[self.hparams.loss_recon]
         if isinstance(loss_fn, torch.nn.Module):
@@ -432,9 +432,7 @@ class MtgVisionEncoder(pl.LightningModule):
         elif name == "arc_face":
             # This loss encourages embeddings of cards from the same set to be closer
             # than those from different sets, providing group-level guidance.
-            return mll.ArcFaceLoss(
-                num_classes=120000, embedding_size=Z_SIZE, margin=28.6, scale=64
-            )
+            return mll.ArcFaceLoss(num_classes=120000, embedding_size=Z_SIZE, margin=28.6, scale=64)
         elif name == "sub_center_arc_face":
             # This loss ensures that embeddings of distorted versions of
             # the same card are mapped closely together.
@@ -456,9 +454,7 @@ class MtgVisionEncoder(pl.LightningModule):
         else:
             raise KeyError(f"Unknown metric: {name}")
 
-    def training_step(
-        self, batch: BatchHintTensor, batch_idx: int
-    ) -> dict[str, torch.Tensor | float]:
+    def training_step(self, batch: BatchHintTensor, batch_idx: int) -> dict[str, torch.Tensor | float]:
         logs: dict[str, torch.Tensor | float] = {}
         loss: torch.Tensor | float = 0
 
@@ -536,14 +532,10 @@ class MtgVisionEncoder(pl.LightningModule):
         elif self.hparams.optimizer == "deepspeed_cpu_adam":
             from deepspeed.ops.adam import DeepSpeedCPUAdam
 
-            class _SkipFirstDeepSpeedCPUAdam(
-                _SkipFirstOptimizerLoadState, DeepSpeedCPUAdam
-            ):
+            class _SkipFirstDeepSpeedCPUAdam(_SkipFirstOptimizerLoadState, DeepSpeedCPUAdam):
                 pass
 
-            deepspeed_cls = (
-                _SkipFirstDeepSpeedCPUAdam if skip_load else DeepSpeedCPUAdam
-            )
+            deepspeed_cls = _SkipFirstDeepSpeedCPUAdam if skip_load else DeepSpeedCPUAdam
             opt = deepspeed_cls(
                 self.parameters(),
                 lr=self.hparams.learning_rate,
@@ -589,9 +581,7 @@ class MtgDataModule(pl.LightningDataModule):
 
 
 class ImageLoggingCallback(Callback):
-    def __init__(
-        self, vis_batches_np: list[BatchHintNumpy], log_every_n_steps: int = 1000
-    ) -> None:
+    def __init__(self, vis_batches_np: list[BatchHintNumpy], log_every_n_steps: int = 1000) -> None:
         self.vis_batches_np = vis_batches_np
         self.log_every_n_steps = log_every_n_steps
         self.last_steps = -(log_every_n_steps * 10)
@@ -634,9 +624,7 @@ class ImageLoggingCallback(Callback):
         elif image.dtype == np.float32:
             m, M = image.min(), image.max()
             if m < 0 or 1 < M:
-                warnings.warn(
-                    f"{caption} image must be in range [0, 1], but got [{m}, {M}], clipping"
-                )
+                warnings.warn(f"{caption} image must be in range [0, 1], but got [{m}, {M}], clipping")
             image = img_clip(image)
         else:
             raise ValueError(f"{caption} image dtype unsupported: {image.dtype}")
@@ -802,9 +790,7 @@ def train(config: Config) -> None:
         max_epochs=config.max_steps,
         logger=wandb_logger,
         callbacks=[
-            ImageLoggingCallback(
-                vis_batches, log_every_n_steps=config.log_every_n_steps
-            ),
+            ImageLoggingCallback(vis_batches, log_every_n_steps=config.log_every_n_steps),
             ModelCheckpoint(
                 monitor="loss",
                 save_top_k=3,
@@ -821,9 +807,7 @@ def train(config: Config) -> None:
         gradient_clip_val=config.gradient_clip_val,
         enable_checkpointing=True,
         default_root_dir=Path(__file__).parent / "lightning_logs",
-        strategy="deepspeed_stage_2_offload"
-        if config.optimizer == "deepspeed_cpu_adam"
-        else "auto",
+        strategy="deepspeed_stage_2_offload" if config.optimizer == "deepspeed_cpu_adam" else "auto",
     )
 
     # allow model architecture to be changed
@@ -867,9 +851,7 @@ def _cli() -> None:
             parser.add_argument(
                 f"--{name}".replace("_", "-"),
                 type=str,
-                default="yes"
-                if field.default
-                else (None if field.default is None else "no"),
+                default="yes" if field.default else (None if field.default is None else "no"),
                 help=str(field.description) + " (y/n/yes/no/true/false)",
             )
         else:
@@ -936,9 +918,7 @@ class Config(pydantic.BaseModel):
     optimizer: Literal["adam", "radam"] = "radam"
     learning_rate: float = 1e-3
     weight_decay: float = 1e-7  # hurts performance if < 1e-7, e.g. 1e-5 is really bad
-    batch_size: int = (
-        64  # effectively doubled with loss_contrastive / loss_set_contrastive
-    )
+    batch_size: int = 64  # effectively doubled with loss_contrastive / loss_set_contrastive
     gradient_clip_val: float = 0.5
     accumulate_grad_batches: int = 1
     # loss

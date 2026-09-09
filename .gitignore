@@ -161,3 +161,9 @@ labels.cache
 CLAUDE.md
 CLAUDE.local.md
 .claude/
+# data
+*.gz
+*.bin
+*.part
+*meta.json
+*parts.json

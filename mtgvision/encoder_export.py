@@ -6,20 +6,18 @@ from __future__ import annotations
 
 import argparse
 import functools
-import warnings
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal
 
-import coremltools as ct
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-from mtgvision.encoder_train import (
-    BatchHintNumpy,
-    MtgVisionEncoder,
-    RanMtgEncDecDataset,
-    get_test_image_batches,
-)
+from mtgvision.encoder_train import BatchHintNumpy
+from mtgvision.encoder_train import MtgVisionEncoder
+from mtgvision.encoder_train import RanMtgEncDecDataset
+from mtgvision.encoder_train import get_test_image_batches
 from mtgvision.util.image import img_float32
 
 MODEL_DETAILS = {
@@ -37,46 +35,21 @@ def _get_data() -> list[BatchHintNumpy]:
     )
 
 
-def _export(path: Path, debug: bool = True) -> None:
-    # LOAD
-    print("loading model from", path)
-    model: MtgVisionEncoder = MtgVisionEncoder.load_from_checkpoint(path)
-    has_decoder = model.hparams.loss_recon is not None
-
-    # DEBUG
-    if debug:
-        if has_decoder:
-            for img in _get_data():
-                plt.imshow(img["x"][0])
-                plt.show()
-                plt.imshow(model.forward_img(img["x"][0]))
-                plt.show()
-        else:
-            warnings.warn("Model does not have decoder, skipping debug images.")
-
-    # CONVERT
-    coreml_encoder_path = path.with_suffix(".encoder.mlpackage")
-    if model.model.encoder is not None:
-        print("Exporting encoder to", coreml_encoder_path)
-        encoder_mlmodel = model.model.encoder.to_coreml()
-        encoder_mlmodel.save(str(coreml_encoder_path))
-
-    coreml_decoder_path = path.with_suffix(".decoder.mlpackage")
-    if has_decoder:
-        if model.model.decoder is not None:
-            print("Encoder exported to", coreml_decoder_path)
-            decoder_mlmodel = model.model.decoder.to_coreml()
-            decoder_mlmodel.save(str(coreml_decoder_path))
-
-    # DEBUG
-    if debug:
-        encoder = CoreMlEncoder(coreml_encoder_path)
-        decoder: CoreMlDecoder | None = None
-        if has_decoder:
-            decoder = CoreMlDecoder(coreml_decoder_path)
-        for img in _get_data()[:1]:
-            plt.imshow(img["x"][0])
-            plt.show()
+def _debug(
+    encoder_cls: type[_Encoder] | None,
+    encoder_path: Path | None,
+    decoder_cls: type[_Decoder] | None,
+    decoder_path: Path | None,
+    debug: bool = True,
+) -> None:
+    if not debug:
+        return
+    encoder = encoder_cls(encoder_path) if (encoder_cls and encoder_path) else None
+    decoder = decoder_cls(decoder_path) if (decoder_cls and decoder_path) else None
+    for img in _get_data()[:1]:
+        plt.imshow(img["x"][0])
+        plt.show()
+        if encoder is not None:
             z = encoder.predict(img["x"][0])
             if decoder is not None:
                 x_recon = decoder.predict(z)
@@ -84,23 +57,148 @@ def _export(path: Path, debug: bool = True) -> None:
                 plt.show()
 
 
-class CoreMlEncoder:
-    def __init__(self, model_path: Path | None = None) -> None:
-        if model_path is None:
-            model_path = MODEL_PATH.with_suffix(".encoder.mlpackage")
-        self.model = ct.models.MLModel(str(model_path))
+def _test_infer(enc_cls: type[_Encoder] | None, encoder_path: Path | None, test: bool = True) -> None:
+    if not test or not enc_cls:
+        return
+    encoder = enc_cls(encoder_path)
+    encoder.ran_forward()
+    for _ in tqdm(range(1000)):
+        encoder.ran_forward()
 
-    def predict(self, rgb_im: np.ndarray) -> np.ndarray:
-        rgb_im = img_float32(rgb_im)
+
+def _export(
+    path: Path,
+    debug: bool = False,
+    test: bool = False,
+    # exports
+    formats: Sequence[Literal["onnx", "tfjs", "tflite", "coreml"] | None] = (),
+) -> None:
+    # LOAD
+    print("loading model from", path)
+    model: MtgVisionEncoder = MtgVisionEncoder.load_from_checkpoint(path)
+    # Optional loaders for testing
+    _enc_dec = {
+        "onnx": (OnnxEncoder, OnnxDecoder),
+        "coreml": (CoreMlEncoder, CoreMlDecoder),
+    }
+    # EXPORT
+    for fmt in set(formats):
+        if fmt is None:
+            continue
+        enc_path, dec_path = model.model.save(base_path=path, fmt=fmt)
+        enc_cls, dec_cls = _enc_dec.get(fmt, (None, None))
+        _debug(enc_cls, enc_path, dec_cls, dec_path, debug=debug)
+        _test_infer(enc_cls, enc_path, test=test)
+
+
+class _Encoder:
+    def __init__(self, model_path: Path | None = None) -> None:
+        pass
+
+    def _prepare_input(self, rgb_im: np.ndarray) -> np.ndarray:
+        rgb_im = img_float32(rgb_im)  # shape: [H, W, 3]
         assert rgb_im.ndim == 3, f"{rgb_im.shape}"
         assert rgb_im.shape[-1] == 3, f"{rgb_im.shape}"
         assert rgb_im.dtype == np.float32, f"{rgb_im.dtype}"
         rgb_im = rgb_im.transpose(2, 0, 1)[None, ...]
-        # print(img.dtype, img.shape)
-        z = self.model.predict({"x": np.array(rgb_im)})["z"]
+        return rgb_im  # [1, 3, H, W]
+
+    def _prepare_output(self, z: np.ndarray) -> np.ndarray:
+        # [1, 768]
         assert z.ndim == 2
         assert z.shape[0] == 1
-        return z[0]
+        return z[0]  # [768]
+
+    def predict(self, rgb_im: np.ndarray) -> np.ndarray:
+        x = self._prepare_input(rgb_im)
+        z = self._predict(x)
+        z = self._prepare_output(z)
+        return z
+
+    def _predict(self, x: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("Must be implemented in subclass.")
+
+    @property
+    def input_hwc(self) -> tuple[int, int, int]:
+        raise NotImplementedError
+
+    def ran_forward(self) -> np.ndarray:
+        return self.predict(np.random.rand(*self.input_hwc))
+
+
+class _Decoder:
+    def __init__(self, model_path: Path | None = None) -> None:
+        pass
+
+    def _prepare_input(self, z: np.ndarray) -> np.ndarray:
+        assert z.ndim == 1
+        return z[None, ...]  # [1, 768]
+
+    def _prepare_output(self, y: np.ndarray) -> np.ndarray:
+        # [1, 3, H, W]
+        assert y.ndim == 4
+        assert y.shape[0] == 1
+        y = y[0].transpose(2, 3, 1)
+        assert y.ndim == 3
+        assert y.shape[-1] == 3
+        return y
+
+    def predict(self, z: np.ndarray) -> np.ndarray:
+        x = self._prepare_input(z)
+        y = self._predict(x)
+        y = self._prepare_output(y)
+        return y
+
+    def _predict(self, x: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("Must be implemented in subclass.")
+
+
+class OnnxEncoder(_Encoder):
+    def __init__(self, model_path: Path | None = None) -> None:
+        import onnxruntime as rt
+
+        if model_path is None:
+            model_path = MODEL_PATH.with_suffix(".encoder.onnx")
+        self.model = rt.InferenceSession(str(model_path))
+        [self.input_node] = self.model.get_inputs()
+
+    def _predict(self, x: np.ndarray) -> np.ndarray:
+        z = self.model.run(None, {self.input_node.name: x})[0]
+        assert isinstance(z, np.ndarray)
+        return z
+
+    @property
+    def input_hwc(self) -> tuple[int, int, int]:
+        [x] = self.model.get_inputs()
+        [_, c, h, w] = x.shape
+        return h, w, c
+
+
+class OnnxDecoder(_Decoder):
+    def __init__(self, model_path: Path | None = None) -> None:
+        import onnxruntime as rt
+
+        if model_path is None:
+            model_path = MODEL_PATH.with_suffix(".decoder.onnx")
+        self.model = rt.InferenceSession(str(model_path))
+        [self.input_node] = self.model.get_inputs()
+
+    def _predict(self, x: np.ndarray) -> np.ndarray:
+        y = self.model.run(None, {self.input_node.name: x})[0]
+        assert isinstance(y, np.ndarray)
+        return y
+
+
+class CoreMlEncoder(_Encoder):
+    def __init__(self, model_path: Path | None = None) -> None:
+        import coremltools as ct
+
+        if model_path is None:
+            model_path = MODEL_PATH.with_suffix(".encoder.mlpackage")
+        self.model = ct.models.MLModel(str(model_path))
+
+    def _predict(self, x: np.ndarray) -> np.ndarray:
+        return self.model.predict({"x": x})["z"]
 
     @property
     def input_hwc(self) -> tuple[int, int, int]:
@@ -108,45 +206,56 @@ class CoreMlEncoder:
         [_, c, h, w] = x.type.multiArrayType.shape
         return h, w, c
 
-    def ran_forward(self) -> np.ndarray:
-        return self.predict(np.random.rand(*self.input_hwc))
 
+class CoreMlDecoder(_Decoder):
+    def __init__(self, model_path: Path | None = None) -> None:
+        import coremltools as ct
 
-class CoreMlDecoder:
-    def __init__(self, model_path: Path) -> None:
         if model_path is None:
-            model_path = MODEL_PATH.with_suffix(".encoder.mlpackage")
+            model_path = MODEL_PATH.with_suffix(".decoder.mlpackage")
         self.model = ct.models.MLModel(str(model_path))
 
-    def predict(self, z: np.ndarray) -> np.ndarray:
-        assert z.ndim == 1
-        y = self.model.predict({"z": z[None, ...]})["x_hat"]
-        assert y.ndim == 4
-        assert y.shape[0] == 1
-        y = y[0].transpose(1, 2, 0)
-        assert y.ndim == 3
-        assert y.shape[-1] == 3
-        return y
+    def _predict(self, x: np.ndarray) -> np.ndarray:
+        return self.model.predict({"z": x})["x_hat"]
 
 
-def _test_infer(path: Path) -> None:
-    model = CoreMlEncoder(path.with_suffix(".encoder.mlpackage"))
-    model.ran_forward()
-    for _ in tqdm(range(1000)):
-        model.ran_forward()
+_EXPORT_FORMATS: tuple[Literal["onnx", "tfjs", "tflite", "coreml"], ...] = (
+    "onnx",
+    "coreml",
+    "tfjs",
+    "tflite",
+)
+
+
+def _parse_export_formats(
+    values: list[str],
+) -> list[Literal["onnx", "tfjs", "tflite", "coreml"]]:
+    formats: list[Literal["onnx", "tfjs", "tflite", "coreml"]] = []
+    for value in values:
+        if value not in _EXPORT_FORMATS:
+            raise ValueError(f"Invalid export format: {value!r}")
+        formats.append(value)
+    return formats
 
 
 def _cli() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", default=MODEL_PATH, type=Path)
-    parser.add_argument("--no-export", dest="export", action="store_false")
+    parser.add_argument("--export", action="append", choices=_EXPORT_FORMATS)
     parser.add_argument("--no-test", dest="test", action="store_false")
+    parser.add_argument("--no-debug", dest="debug", action="store_false")
     args = parser.parse_args()
 
-    if args.export:
-        _export(args.path)
-    if args.test:
-        _test_infer(args.path)
+    if not args.export:
+        args.export = ["tfjs"]
+
+    print(f"Exporting {args.path} to all of: {args.export}")
+    _export(
+        args.path,
+        debug=args.debug,
+        test=args.test,
+        formats=_parse_export_formats(args.export),
+    )
 
 
 # Load the pytorch lightning checkpoint

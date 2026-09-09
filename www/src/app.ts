@@ -1,18 +1,18 @@
-import { LitElement, html, css } from 'lit';
-import './util-store';
-import './util-websocket';
-import './component-video';
-import './component-video-overlay-cards';
-import './component-overlay-info';
-import './component-sidebar';
-import { connectWebSocket } from './util-websocket';
-import {fetchSymbology} from "./scryfall";
+import { LitElement, html, css } from "lit";
+import "./util-store";
+import "./util-websocket";
+import "./component-video";
+import "./component-video-overlay-cards";
+import "./component-overlay-info";
+import "./component-sidebar";
+import { connectWebSocket } from "./util-websocket";
+import { fetchSymbology } from "./scryfall";
 
 class AppContainer extends LitElement {
   static styles = css`
     * {
       box-sizing: border-box;
-      font-family: 'goudy', serif;
+      font-family: "goudy", serif;
     }
     :host {
       display: flex;
@@ -22,7 +22,7 @@ class AppContainer extends LitElement {
       height: 100%;
     }
     sidebar-component {
-        width: 400px;
+      width: 400px;
     }
     @media (max-width: 768px) {
       :host {
@@ -42,8 +42,7 @@ class AppContainer extends LitElement {
     `;
   }
 }
-customElements.define('app-container', AppContainer);
-
+customElements.define("app-container", AppContainer);
 
 // Initialize WebSocket connection and fetch Scryfall symbology
 connectWebSocket();

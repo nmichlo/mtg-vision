@@ -17,13 +17,14 @@ from __future__ import annotations
 from functools import lru_cache
 
 import cv2
-import norfair
+import norfair_rs
 import numpy as np
 import requests
 from qdrant_client.http.models import ScoredPoint
 
 from mtgvision.encoder_export import CoreMlEncoder
-from mtgvision.od_export import MODEL_PATH_SEG, CardSegmenter
+from mtgvision.od_export import MODEL_PATH_SEG
+from mtgvision.od_export import CardSegmenter
 from mtgvision.qdrant import VectorStoreQdrant
 from mtgvision.util.image import imwait
 from mtgvision.util.json import Json
@@ -60,7 +61,7 @@ def main() -> None:
     vstore = VectorStoreQdrant()
     encoder = CoreMlEncoder()
     segmenter = CardSegmenter(MODEL_PATH_SEG.with_suffix(".mlpackage"))
-    _tracker = norfair.Tracker(
+    _tracker = norfair_rs.Tracker(
         initialization_delay=1,
         distance_function="euclidean",
         hit_counter_max=10,
@@ -126,9 +127,9 @@ def main() -> None:
             img = seg.extract_dewarped(frame)
             z = encoder.predict(img)
             near = get_nearby(z)
-            det = norfair.Detection(
+            det = norfair_rs.Detection(
                 points=seg.xyxyxyxy,
-                label=seg.label,
+                label=str(seg.label),  # norfair_rs rejects non-str labels
                 embedding=z,
                 data={"set": seg, "near": near, "best": near[0] if near else None},
             )
