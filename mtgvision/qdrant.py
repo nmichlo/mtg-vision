@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 import qdrant_client
+from qdrant_client.conversions.common_types import PointId
 from qdrant_client.http.models import Distance, ScoredPoint, VectorParams
 from typing_extensions import TypeIs
 
@@ -63,7 +64,7 @@ class VectorStoreQdrant:
         with_payload: bool = True,
         offset: str | None = None,
     ) -> Iterator[list[QdrantPoint]]:
-        cursor: int | str | None = offset
+        cursor: PointId | None = offset
         while True:
             [results, cursor] = self.client.scroll(
                 collection_name=self._COLLECTION,
