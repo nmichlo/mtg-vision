@@ -25,7 +25,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
+from collections.abc import Sequence
 
 import cv2
 import numpy as np
@@ -46,9 +47,7 @@ def cv2_poly_is_convex(pts: np.ndarray) -> bool:
         raise Exception("Need at least 3 pts")
     total, i = 0, 0
     points = list(np.array(pts).reshape((-1, 2)))
-    for (ax, ay), (bx, by), (cx, cy) in zip(
-        points, points[1:] + points[:1], points[2:] + points[:2]
-    ):
+    for (ax, ay), (bx, by), (cx, cy) in zip(points, points[1:] + points[:1], points[2:] + points[:2]):
         dx1 = bx - ax
         dy1 = by - ay
         dx2 = cx - bx

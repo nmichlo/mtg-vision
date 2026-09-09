@@ -11,7 +11,9 @@ TODO: card information might not be correctly produced by ScryfallDataset, I don
 from __future__ import annotations
 
 import itertools
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable
+from collections.abc import Iterator
+from collections.abc import Sequence
 
 from mtgdata import ScryfallImageType
 from tqdm import tqdm

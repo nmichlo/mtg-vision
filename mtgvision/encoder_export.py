@@ -14,12 +14,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-from mtgvision.encoder_train import (
-    BatchHintNumpy,
-    MtgVisionEncoder,
-    RanMtgEncDecDataset,
-    get_test_image_batches,
-)
+from mtgvision.encoder_train import BatchHintNumpy
+from mtgvision.encoder_train import MtgVisionEncoder
+from mtgvision.encoder_train import RanMtgEncDecDataset
+from mtgvision.encoder_train import get_test_image_batches
 from mtgvision.util.image import img_float32
 
 MODEL_DETAILS = {
@@ -59,9 +57,7 @@ def _debug(
                 plt.show()
 
 
-def _test_infer(
-    enc_cls: type[_Encoder] | None, encoder_path: Path | None, test: bool = True
-) -> None:
+def _test_infer(enc_cls: type[_Encoder] | None, encoder_path: Path | None, test: bool = True) -> None:
     if not test or not enc_cls:
         return
     encoder = enc_cls(encoder_path)

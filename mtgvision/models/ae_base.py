@@ -40,9 +40,7 @@ class AeBase(nn.Module):
         return self._decode(z)
 
     @final
-    def encode(
-        self, x: torch.Tensor, **kwargs: object
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    def encode(self, x: torch.Tensor, **kwargs: object) -> tuple[torch.Tensor, list[torch.Tensor]]:
         # Input shape: (1, 3, 192, 128) if NCHW, or (1, 192, 128, 3) if NHWC
         # if x.size(1) != 3:
         #     if x.size(3) == 3:
@@ -53,9 +51,7 @@ class AeBase(nn.Module):
         return z, multi
 
     @final
-    def forward(
-        self, x: torch.Tensor, **kwargs: object
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, **kwargs: object) -> tuple[torch.Tensor, list[torch.Tensor]]:
         z, multi = self.encode(x)
         multiout = self.decode(z)
         return z, multiout + multi
@@ -103,9 +99,7 @@ class AeBase(nn.Module):
         model = model.to(device)
 
         # compile
-        runner: Callable[[torch.Tensor], tuple[torch.Tensor, list[torch.Tensor]]] = (
-            model
-        )
+        runner: Callable[[torch.Tensor], tuple[torch.Tensor, list[torch.Tensor]]] = model
         if compile:
             runner = torch.compile(model)
 

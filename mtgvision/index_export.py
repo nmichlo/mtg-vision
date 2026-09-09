@@ -6,7 +6,8 @@ import random
 import shutil
 import uuid
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
+from typing import TypedDict
 
 import faiss
 import numpy as np
@@ -16,7 +17,8 @@ import torch.nn as nn
 import torch.optim as optim
 from cachier import cachier
 from tqdm import tqdm
-from usearch.index import Index, ScalarKind
+from usearch.index import Index
+from usearch.index import ScalarKind
 
 from mtgvision.qdrant import VectorStoreQdrant
 from mtgvision.util.json import Json
@@ -171,14 +173,8 @@ def train_reducer_net(
             # out of range loss
             if model.q_mode == "linear":
                 oor_loss = torch.mean(
-                    torch.abs(
-                        (quantized_vecs <= model.q_min) * (quantized_vecs - model.q_mid)
-                    )
-                ) + torch.mean(
-                    torch.abs(
-                        (quantized_vecs >= model.q_max) * (quantized_vecs - model.q_mid)
-                    )
-                )
+                    torch.abs((quantized_vecs <= model.q_min) * (quantized_vecs - model.q_mid))
+                ) + torch.mean(torch.abs((quantized_vecs >= model.q_max) * (quantized_vecs - model.q_mid)))
             else:
                 oor_loss = torch.full((), fill_value=0.0, device=device)
             # quant loss
@@ -232,15 +228,9 @@ def train_reducer_net(
                 # Print quantization stats
                 with torch.no_grad():
                     quantized = model(vecs)
-                    print(
-                        f"Quantized range: [{quantized.min().item():.1f}, {quantized.max().item():.1f}]"
-                    )
-                    print(
-                        f"Scale range: [{model.scale.min().item():.3f}, {model.scale.max().item():.3f}]"
-                    )
-                    print(
-                        f"Offset range: [{model.offset.min().item():.3f}, {model.offset.max().item():.3f}]"
-                    )
+                    print(f"Quantized range: [{quantized.min().item():.1f}, {quantized.max().item():.1f}]")
+                    print(f"Scale range: [{model.scale.min().item():.3f}, {model.scale.max().item():.3f}]")
+                    print(f"Offset range: [{model.offset.min().item():.3f}, {model.offset.max().item():.3f}]")
             # -------
 
             # optimize
@@ -288,9 +278,7 @@ def fetch_vectors_from_qdrant_cached(
     return fetch_vectors_from_qdrant(max_vectors=max_vectors, dtype=dtype)
 
 
-def print_vectors_info(
-    vectors: npt.NDArray[np.float32], name: str
-) -> npt.NDArray[np.float32]:
+def print_vectors_info(vectors: npt.NDArray[np.float32], name: str) -> npt.NDArray[np.float32]:
     print(f"{name}: {vectors.shape}, {vectors.dtype}, {vectors.nbytes / 1024**2} MB")
     return vectors
 
@@ -448,13 +436,7 @@ def main(
     # ============== CREATE PIPELINE ================== #
 
     # reduce op
-    reduce: (
-        ReducerNet
-        | faiss.PCAMatrix
-        | faiss.OPQMatrix
-        | faiss.RandomRotationMatrix
-        | None
-    ) = None
+    reduce: ReducerNet | faiss.PCAMatrix | faiss.OPQMatrix | faiss.RandomRotationMatrix | None = None
     # only set by the faiss reducers -- `reduce_mode="nn"` emits a
     # NeuralNetReducer chain step instead of a LinearTransform one
     A_mat: npt.NDArray[np.float32] | None = None
@@ -607,9 +589,7 @@ def main(
                     #     x = vmin + x * vdiff
                     #     return x
                     # encode
-                    result = np.clip(((v - vmin) / vdiff) * 255, 0, 255).astype(
-                        np.uint8
-                    )
+                    result = np.clip(((v - vmin) / vdiff) * 255, 0, 255).astype(np.uint8)
                     # decode
                     # v = vmin + ((v + 0.5) / 255) * vdiff
                 elif mode == "manual_loop":
@@ -644,9 +624,7 @@ def main(
         error_lib = ((vlib - vlib) ** 2).sum() / (vlib**2).sum()
         error_manual = ((vlib - vmanual) ** 2).sum() / (vlib**2).sum()
         error_manual_loop = ((vlib - vmanual_loop) ** 2).sum() / (vlib**2).sum()
-        print(
-            f"lib error: {error_lib}, manual error: {error_manual}, manual loop error: {error_manual_loop}"
-        )
+        print(f"lib error: {error_lib}, manual error: {error_manual}, manual loop error: {error_manual_loop}")
 
     # ============== SAVE ================== #
 
@@ -705,9 +683,7 @@ def main(
 
         index.add(
             keys=[uuid_to_int(uid) for uid in uuids],
-            vectors=np.asarray(
-                [process_vector(v, mode="lib", skip_quant=True) for v in vectors]
-            ),
+            vectors=np.asarray([process_vector(v, mode="lib", skip_quant=True) for v in vectors]),
             progress=progress,
         )
 
@@ -723,9 +699,7 @@ def main(
     with tqdm(total=len(vectors)) as pbar:
         count, correct = 0, 0
         for uid, vector in zip(uuids, vectors):
-            results = index.search(
-                process_vector(perturb_vector(vector), skip_quant=True), 1
-            )
+            results = index.search(process_vector(perturb_vector(vector), skip_quant=True), 1)
             count += 1
             correct += uuid_to_int(uid) in results.keys
             pbar.update()

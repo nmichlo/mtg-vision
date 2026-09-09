@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
 
 import qdrant_client
 from qdrant_client.conversions.common_types import PointId
-from qdrant_client.http.models import Distance, ScoredPoint, VectorParams
+from qdrant_client.http.models import Distance
+from qdrant_client.http.models import ScoredPoint
+from qdrant_client.http.models import VectorParams
 from typing_extensions import TypeIs
 
 from mtgvision.util.json import Json

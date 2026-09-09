@@ -8,7 +8,9 @@ import numpy as np
 from shapely.geometry.linestring import LineString
 from shapely.geometry.polygon import Polygon
 
-from mtgvision.util.cv2 import cv2_draw_arrow, cv2_draw_poly, cv2_draw_text
+from mtgvision.util.cv2 import cv2_draw_arrow
+from mtgvision.util.cv2 import cv2_draw_poly
+from mtgvision.util.cv2 import cv2_draw_text
 
 MODEL_PATH_SEG = Path(
     "/Users/nathanmichlo/Desktop/active/mtg/data/gen/"
@@ -108,9 +110,7 @@ class InstanceSeg:
     ) -> np.ndarray:
         h, w = out_size_hw
         dst_pts = np.asarray([[0, 0], [w, 0], [w, h], [0, h]])
-        dst_pts = (1 + expand_ratio) * dst_pts - (0.5 * expand_ratio) * np.asarray(
-            [w, h]
-        )
+        dst_pts = (1 + expand_ratio) * dst_pts - (0.5 * expand_ratio) * np.asarray([w, h])
         M = cv2.getPerspectiveTransform(
             np.asarray(self.xyxyxyxy).astype(np.float32),
             np.asarray(dst_pts).astype(np.float32),

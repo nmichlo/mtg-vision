@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import itertools
 import multiprocessing
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable
+from collections.abc import Iterator
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -11,10 +13,13 @@ from mtgdata import ScryfallImageType
 from mtgdata.scryfall import ScryfallCardFace
 from tqdm import tqdm
 
-from mtgvision.encoder_datasets import SizeHW, SyntheticBgFgMtgImages
+from mtgvision.encoder_datasets import SizeHW
+from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
 from mtgvision.encoder_export import CoreMlEncoder
-from mtgvision.qdrant import QdrantPoint, VectorStoreQdrant
-from mtgvision.util.image import imread_float, resize
+from mtgvision.qdrant import QdrantPoint
+from mtgvision.qdrant import VectorStoreQdrant
+from mtgvision.util.image import imread_float
+from mtgvision.util.image import resize
 
 
 def batched[T](iterable: Iterable[T], n: int) -> Iterator[Sequence[T]]:
@@ -53,9 +58,7 @@ class CardProcessor(multiprocessing.Process):
         """Lazily initialize non-picklable resources in the worker process."""
         if not self._is_init:
             self._is_init = True
-            self._encoder = CoreMlEncoder(
-                self.model_path.with_suffix(".encoder.mlpackage")
-            )
+            self._encoder = CoreMlEncoder(self.model_path.with_suffix(".encoder.mlpackage"))
             h, w, c = self._encoder.input_hwc
             self._x_size_hw = (h, w)
             self._vstore = VectorStoreQdrant()
@@ -90,9 +93,7 @@ class CardProcessor(multiprocessing.Process):
     def _get_card_point(self, card: ScryfallCardFace) -> QdrantPoint:
         """Generate a Point object for a single card."""
         assert self._proxy is not None, "call _initialize() before _get_card_point()"
-        assert self._x_size_hw is not None, (
-            "call _initialize() before _get_card_point()"
-        )
+        assert self._x_size_hw is not None, "call _initialize() before _get_card_point()"
         assert self._encoder is not None, "call _initialize() before _get_card_point()"
         path = card.download(proxy=self._proxy)
         im = imread_float(path)
@@ -115,9 +116,7 @@ def _cli() -> None:
     from mtgvision.encoder_export import MODEL_PATH
 
     # Configuration
-    dataset = SyntheticBgFgMtgImages(
-        img_type=ScryfallImageType.small, predownload=False
-    )
+    dataset = SyntheticBgFgMtgImages(img_type=ScryfallImageType.small, predownload=False)
     num_workers = 4  # Adjust based on CPU cores
     batch_size = 32  # Adjust based on memory/performance
     model_path = MODEL_PATH

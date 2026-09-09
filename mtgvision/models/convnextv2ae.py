@@ -5,14 +5,17 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
+from typing import Literal
 
 import torch
 from torch import nn
 from tqdm import tqdm
 
 from mtgvision.models.ae_base import AeBase
-from mtgvision.models.convnextv2 import Block, LayerNorm, trunc_normal_
+from mtgvision.models.convnextv2 import Block
+from mtgvision.models.convnextv2 import LayerNorm
+from mtgvision.models.convnextv2 import trunc_normal_
 
 if TYPE_CHECKING:
     from litert_torch.model import LiteRTModel
@@ -36,9 +39,7 @@ class Reshape(nn.Module):
         return x.reshape(self.shape)
 
 
-def Norm2d(
-    normalized_shape: int, eps: float = 1e-6, data_format: str = "channels_last"
-) -> LayerNorm:
+def Norm2d(normalized_shape: int, eps: float = 1e-6, data_format: str = "channels_last") -> LayerNorm:
     return LayerNorm(normalized_shape, eps=eps, data_format=data_format)
 
 
@@ -182,7 +183,8 @@ class Export:
         out_name: str,
         **convert_kwargs: object,
     ) -> object:
-        from coremltools import TensorType, convert
+        from coremltools import TensorType
+        from coremltools import convert
 
         model, i = obj.get_trace_items()
         m_jit = torch.jit.trace(func=model, example_inputs=i)
@@ -241,15 +243,11 @@ class Export:
             raise
         except FileNotFoundError:
             print("ERROR: 'uvx' command not found.")
-            print(
-                "Install uv (https://docs.astral.sh/uv/) so the converter can be fetched on demand."
-            )
+            print("Install uv (https://docs.astral.sh/uv/) so the converter can be fetched on demand.")
             raise
 
     @staticmethod
-    def export_tfjs(
-        obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder, path: str | Path
-    ) -> None:
+    def export_tfjs(obj: ConvNeXtV2Encoder | ConvNeXtV2Decoder, path: str | Path) -> None:
         """Export a tfjs graph model, the format `www/` loads via `tf.loadGraphModel`.
 
         Routed torch -> onnx -> saved_model -> tfjs. The previous torch -> keras
@@ -369,14 +367,10 @@ class ConvNeXtV2Encoder(_Base):
         # --> Bx[3]x6x4
         if head_type in ("conv+linear", "conv+mlp", "conv+act+mlp"):
             self.pool = nn.Sequential(
-                nn.Conv2d(
-                    dims[3], z_size // self.internal_num, kernel_size=1, stride=1
-                ),
+                nn.Conv2d(dims[3], z_size // self.internal_num, kernel_size=1, stride=1),
                 # --> Bx<z_size//(6*4)>x6x4
                 Act() if "+act" in head_type else nn.Identity(),
-                Norm2d(
-                    z_size // self.internal_num, eps=1e-6, data_format="channels_first"
-                ),
+                Norm2d(z_size // self.internal_num, eps=1e-6, data_format="channels_first"),
                 Reshape((-1, z_size)),
             )
             # --> Bx<z_size>
@@ -471,13 +465,9 @@ class ConvNeXtV2Decoder(_Base):
             self.unpool = nn.Sequential(
                 Reshape((-1, z_size // self.internal_num, *self.internal_hw)),
                 # --> Bx<z_size//(6*4)>x6x4
-                Norm2d(
-                    z_size // self.internal_num, eps=1e-6, data_format="channels_first"
-                ),
+                Norm2d(z_size // self.internal_num, eps=1e-6, data_format="channels_first"),
                 Act() if "+act" in head_type else nn.Identity(),
-                nn.ConvTranspose2d(
-                    z_size // self.internal_num, dims[-1], kernel_size=1, stride=1
-                ),
+                nn.ConvTranspose2d(z_size // self.internal_num, dims[-1], kernel_size=1, stride=1),
             )
         elif head_type in ("pool+linear", "pool+mlp"):
             if "+mlp" in head_type:
@@ -488,13 +478,9 @@ class ConvNeXtV2Decoder(_Base):
             self.unpool = nn.Sequential(
                 Index((slice(None), slice(None), None, None)),  # arr[:, :, None, None]
                 # --> Bx[3]x1x1
-                Norm2d(
-                    dims[-1], eps=1e-6, data_format="channels_first"
-                ),  # extra, not in encoder
+                Norm2d(dims[-1], eps=1e-6, data_format="channels_first"),  # extra, not in encoder
                 # Act() if "+act" in head_type else nn.Identity(),
-                nn.ConvTranspose2d(
-                    dims[-1], dims[-1], kernel_size=self.internal_hw, stride=1
-                ),
+                nn.ConvTranspose2d(dims[-1], dims[-1], kernel_size=self.internal_hw, stride=1),
             )
         else:
             raise KeyError(f"head_type={head_type} not recognized")

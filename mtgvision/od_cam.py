@@ -23,7 +23,8 @@ import requests
 from qdrant_client.http.models import ScoredPoint
 
 from mtgvision.encoder_export import CoreMlEncoder
-from mtgvision.od_export import MODEL_PATH_SEG, CardSegmenter
+from mtgvision.od_export import MODEL_PATH_SEG
+from mtgvision.od_export import CardSegmenter
 from mtgvision.qdrant import VectorStoreQdrant
 from mtgvision.util.image import imwait
 from mtgvision.util.json import Json

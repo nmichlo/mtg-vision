@@ -7,7 +7,9 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import time
-from collections.abc import Hashable, Iterator, Sequence
+from collections.abc import Hashable
+from collections.abc import Iterator
+from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,10 +18,12 @@ from mtgdata.scryfall import ScryfallCardFace
 from tqdm import tqdm
 
 from mtgvision.encoder_datasets import SyntheticBgFgMtgImages
-from mtgvision.encoder_export import MODEL_PATH, CoreMlEncoder
+from mtgvision.encoder_export import MODEL_PATH
+from mtgvision.encoder_export import CoreMlEncoder
 from mtgvision.encoder_train import RanMtgEncDecDataset
 from mtgvision.qdrant_populate import VectorStoreQdrant
-from mtgvision.util.image import imread_float, resize
+from mtgvision.util.image import imread_float
+from mtgvision.util.image import resize
 
 
 def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")) -> None:
@@ -32,9 +36,7 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")) -> None:
     db = VectorStoreQdrant()
 
     # 2. check accuracy
-    def _yield_virtual_points() -> Iterator[
-        tuple[list[np.ndarray | None], list[list[float] | None], ScryfallCardFace]
-    ]:
+    def _yield_virtual_points() -> Iterator[tuple[list[np.ndarray | None], list[list[float] | None], ScryfallCardFace]]:
         for card in tqdm(dataset.mtg.card_iter(), total=len(dataset.mtg)):
             # get base image
             orig = imread_float(card.download(proxy=proxy))
@@ -95,9 +97,7 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")) -> None:
                 )
 
     virtual = Stat()
-    for i, ([imo, imc, imv], [o, c, v], card) in enumerate(
-        itertools.islice(_yield_virtual_points(), N)
-    ):
+    for i, ([imo, imc, imv], [o, c, v], card) in enumerate(itertools.islice(_yield_virtual_points(), N)):
         # get matches
         v_match = True
         if o is not None:
@@ -112,9 +112,7 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")) -> None:
         # done!
         if not v_match:
             print(card.id, v_near)
-            assert imc is not None, (
-                "'crop' must be in `modes` to render this debug plot"
-            )
+            assert imc is not None, "'crop' must be in `modes` to render this debug plot"
             plt.imshow(imc)
             plt.show()
             assert imv is not None
@@ -122,9 +120,7 @@ def _cli(modes: tuple[str, ...] = ("virtual", "crop", "orig")) -> None:
             plt.show()
             best_id = v_near[0]
             assert isinstance(best_id, str), f"expected a str card id, got {best_id!r}"
-            plt.imshow(
-                dataset.mtg.get_card_by_id(best_id).dl_and_open_im_resized(proxy=proxy)
-            )
+            plt.imshow(dataset.mtg.get_card_by_id(best_id).dl_and_open_im_resized(proxy=proxy))
             plt.show()
 
     virtual.print_correct()
