@@ -8,9 +8,13 @@ on:
 
 jobs:
   release:
+    # a reusable workflow cannot hold more permission than its caller, and this
+    # one pushes tags and creates releases.
+    permissions:
+      contents: write
     uses: nmichlo/.github/.github/workflows/release.yaml@main
     with:
-      # mtgvision is an application, not a published package -- tag and release
-      # only, no PyPI upload.
+      # mtgvision is an application, not a published package -- tag and GitHub
+      # release only, no PyPI upload.
       publish: false
     secrets: inherit
