@@ -6,6 +6,11 @@ on:
   pull_request: {types: [closed], branches: [main]}
   push: {tags: ['v*.*.*']}
 
+# least privilege: jobs that need more declare it themselves, and a job-level
+# `permissions:` replaces this one rather than adding to it.
+permissions:
+  contents: read
+
 jobs:
   release:
     # a reusable workflow cannot hold more permission than its caller, and this
@@ -17,4 +22,4 @@ jobs:
       # mtgvision is an application, not a published package -- tag and GitHub
       # release only, no PyPI upload.
       publish: false
-    secrets: inherit
+    # no secrets: `publish: false`, so nothing is uploaded anywhere.
